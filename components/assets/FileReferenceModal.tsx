@@ -231,7 +231,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
         <div className="px-4 py-2.5 border-b border-slate-800 flex items-center gap-3 bg-slate-900 shrink-0">
           <FileText className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
           <div className="min-w-0">
-            <div className="text-sm font-medium text-white truncate">{tag} <span className="text-body font-medium text-[var(--color-text-faint)]">· {type || "Linked drawings"}</span></div>
+            <div className="text-body font-medium text-white truncate">{tag} <span className="text-body font-medium text-[var(--color-text-faint)]">· {type || "Linked drawings"}</span></div>
           </div>
           <div className="ml-auto flex items-center gap-2 shrink-0">
             {activeFile && (
@@ -255,7 +255,7 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
             <button onClick={() => void toggleFull()} className="p-1.5 rounded-lg hover:bg-white/10 text-[var(--color-text-faint)] hover:text-white transition-colors" title={isFull ? "Exit full screen" : "Full screen"}>
               {isFull ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
             </button>
-            <button onClick={onClose} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-xs font-medium"><X className="w-3.5 h-3.5" /> Close</button>
+            <button onClick={onClose} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-caption font-medium"><X className="w-3.5 h-3.5" /> Close</button>
           </div>
         </div>
 
@@ -280,10 +280,10 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
 
           <div ref={scrollRef} className={`flex-1 overflow-auto bg-slate-950 min-w-0 ${panZoom.cursorClass}`} style={{ touchAction: "pan-x pan-y" }} {...panZoom.panHandlers}>
             {loading ? (
-              <Centered><span className="inline-flex items-center gap-2 text-sm text-[var(--color-text-faint)]"><Loader2 className="w-6 h-6 animate-spin" /> Loading linked drawings…</span></Centered>
+              <Centered><span className="inline-flex items-center gap-2 text-body text-[var(--color-text-faint)]"><Loader2 className="w-6 h-6 animate-spin" /> Loading linked drawings…</span></Centered>
             ) : loadError ? (
               <Centered>
-                <div role="alert" className="text-sm text-red-300 text-center">
+                <div role="alert" className="text-body text-red-300 text-center">
                   Couldn&apos;t load the linked drawings: {loadError}{" "}
                   <button type="button" onClick={() => void loadFiles()} className="font-medium underline">Try again</button>
                 </div>
@@ -292,20 +292,20 @@ export default function FileReferenceModal({ tag, type, orgId, userId, canManage
               <Centered>
                 <div className="text-center text-[var(--color-text-muted)]">
                   <Link2 className="w-10 h-10 mx-auto opacity-30 mb-2" />
-                  <div className="text-sm">No drawing linked to {tag} yet.{canManage ? " Use “Link a drawing”." : ""}</div>
+                  <div className="text-body">No drawing linked to {tag} yet.{canManage ? " Use “Link a drawing”." : ""}</div>
                 </div>
               </Centered>
             ) : resolving ? (
-              <Centered><span className="inline-flex items-center gap-2 text-sm text-[var(--color-text-faint)]"><Loader2 className="w-6 h-6 animate-spin" /> Opening the drawing…</span></Centered>
+              <Centered><span className="inline-flex items-center gap-2 text-body text-[var(--color-text-faint)]"><Loader2 className="w-6 h-6 animate-spin" /> Opening the drawing…</span></Centered>
             ) : !resolvedUrl ? (
-              <Centered><div className="text-[var(--color-text-muted)] text-sm">Couldn’t load this drawing.</div></Centered>
+              <Centered><div className="text-[var(--color-text-muted)] text-body">Couldn’t load this drawing.</div></Centered>
             ) : (
               <div className="flex flex-col gap-3 py-4 px-2" style={{ alignItems: "safe center", zoom }}>
                 <Document options={PDF_DOC_OPTIONS}
                   file={resolvedUrl}
                   onLoadSuccess={({ numPages }) => setPageCount(numPages)}
-                  loading={<Centered><span className="inline-flex items-center gap-2 text-sm text-[var(--color-text-faint)]"><Loader2 className="w-6 h-6 animate-spin" /> Drawing the pages…</span></Centered>}
-                  error={<Centered><div className="text-[var(--color-text-muted)] text-sm">Couldn’t render this PDF</div></Centered>}
+                  loading={<Centered><span className="inline-flex items-center gap-2 text-body text-[var(--color-text-faint)]"><Loader2 className="w-6 h-6 animate-spin" /> Drawing the pages…</span></Centered>}
+                  error={<Centered><div className="text-[var(--color-text-muted)] text-body">Couldn’t render this PDF</div></Centered>}
                   className="flex flex-col items-center gap-3"
                 >
                   {Array.from({ length: pageCount }).map((_, p) => (

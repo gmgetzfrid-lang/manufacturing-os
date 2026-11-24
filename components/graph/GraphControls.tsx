@@ -199,10 +199,10 @@ export default function GraphControls({
             </p>
             {settings.groups.map((g) => (
               <div key={g.id} className="flex items-center gap-1.5">
-                <input type="checkbox" checked={g.enabled}
+                <input aria-label="Use this group" type="checkbox" checked={g.enabled}
                   onChange={(e) => patchGroup(g.id, { enabled: e.target.checked })}
                   className="accent-[var(--color-text)]" />
-                <input value={g.query} onChange={(e) => patchGroup(g.id, { query: e.target.value })}
+                <input aria-label="Group search" value={g.query} onChange={(e) => patchGroup(g.id, { query: e.target.value })}
                   placeholder="e.g. 44-  ·  crude  ·  type:unit"
                   className="flex-1 min-w-0 px-2 py-1 border border-[var(--color-border-strong)] rounded-lg text-body bg-[var(--color-surface)]" />
                 <input type="color" value={g.color}
@@ -210,7 +210,7 @@ export default function GraphControls({
                   aria-label="Group colour"
                   className="w-6 h-6 rounded cursor-pointer border border-[var(--color-border)] bg-transparent p-0" />
                 <button onClick={() => removeGroup(g.id)} aria-label="Remove group"
-                  className="p-0.5 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)]">
+                  className="ui-hit p-0.5 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)]">
                   <X className="w-3.5 h-3.5" />
                 </button>
               </div>

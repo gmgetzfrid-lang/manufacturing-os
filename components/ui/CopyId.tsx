@@ -48,7 +48,7 @@ export function CopyId({
         onClick={copy}
         title={`Copy ${label} ${value}`}
         aria-label={`${value}. Copy ${label}`}
-        className="inline-flex items-center gap-1 min-w-0 rounded-md -mx-1 px-1 font-display font-semibold tabular-nums text-[var(--color-heading)] hover:bg-[var(--color-surface-2)] transition-colors"
+        className="inline-flex items-center gap-1 min-w-0 rounded-md -mx-1 px-1 pointer-coarse:py-2.5 pointer-coarse:-my-2.5 font-display font-semibold tabular-nums text-[var(--color-heading)] hover:bg-[var(--color-surface-2)] transition-colors"
       >
         <span className="truncate">{children ?? value}</span>
         <Copy aria-hidden className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-faint)] opacity-0 group-hover/copy:opacity-100 group-focus-within/copy:opacity-100 pointer-coarse:opacity-100 transition-opacity" />

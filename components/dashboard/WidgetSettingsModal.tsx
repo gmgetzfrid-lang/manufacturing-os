@@ -70,13 +70,13 @@ export default function WidgetSettingsModal({ widget, onClose, onSave }: Props) 
       case "toggle":
         return (
           <label className="inline-flex items-center gap-2 text-reading text-[var(--color-text)] cursor-pointer">
-            <input type="checkbox" checked={(v as boolean) ?? f.default} onChange={(e) => set(f.key, e.target.checked)} className="w-4 h-4 accent-[var(--color-text)]" />
+            <input type="checkbox" aria-label={f.label} checked={(v as boolean) ?? f.default} onChange={(e) => set(f.key, e.target.checked)} className="w-4 h-4 accent-[var(--color-text)]" />
             {(v as boolean) ?? f.default ? "On" : "Off"}
           </label>
         );
       case "number":
         return (
-          <input type="number" min={f.min} max={f.max} value={(v as number) ?? f.default}
+          <input type="number" inputMode="numeric" aria-label={f.label} min={f.min} max={f.max} value={(v as number) ?? f.default}
             onChange={(e) => set(f.key, Math.max(f.min, Math.min(f.max, Number(e.target.value) || f.default)))} className={`${input} w-28`} />
         );
       case "knowledgeLibrary":

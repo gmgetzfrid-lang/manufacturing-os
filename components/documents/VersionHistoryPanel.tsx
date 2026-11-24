@@ -25,6 +25,7 @@ import BackfillVersionModal from "@/components/documents/BackfillVersionModal";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 
 import { friendlyError } from "@/lib/friendlyError";
+import { FieldError } from "@/components/ui/Field";
 interface VersionHistoryPanelProps {
   doc: DocumentRecord;
   currentUserId?: string;
@@ -177,7 +178,7 @@ export default function VersionHistoryPanel({
 
   if (error) {
     return (
-      <p role="alert" className="text-body text-[var(--state-overdue)] border-l-2 border-[var(--state-overdue)] pl-3 py-1">{error}</p>
+      <FieldError>{error}</FieldError>
     );
   }
 
@@ -328,7 +329,7 @@ export default function VersionHistoryPanel({
                   <button
                     onClick={() => onOpenVersion(v)}
                     title="Open this revision in the viewer" aria-label={`Open Rev ${v.revisionLabel || ""}`}
-                    className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-main)] hover:bg-[var(--color-surface)]"
+                    className="inline-flex items-center justify-center pointer-coarse:size-11 p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-main)] hover:bg-[var(--color-surface)]"
                   >
                     <Eye className="w-3.5 h-3.5" />
                   </button>
@@ -336,7 +337,7 @@ export default function VersionHistoryPanel({
                     <button
                       onClick={() => setDiffBaseVersion(v)}
                       title={`Compare Rev ${v.revisionLabel} with current revision`} aria-label={`Compare Rev ${v.revisionLabel} with current`}
-                      className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-main)] hover:bg-[var(--color-surface)]"
+                      className="inline-flex items-center justify-center pointer-coarse:size-11 p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-main)] hover:bg-[var(--color-surface)]"
                     >
                       <GitCompare className="w-3.5 h-3.5" />
                     </button>
@@ -345,7 +346,7 @@ export default function VersionHistoryPanel({
                     onClick={() => void handleDownload(v)}
                     disabled={downloadingId === v.id || !currentUserId}
                     title="Download this revision (uncontrolled stamp)" aria-label={`Download Rev ${v.revisionLabel || ""}`}
-                    className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-main)] hover:bg-[var(--color-surface)] disabled:opacity-40"
+                    className="inline-flex items-center justify-center pointer-coarse:size-11 p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-main)] hover:bg-[var(--color-surface)] disabled:opacity-40"
                   >
                     {downloadingId === v.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <DownloadIcon className="w-3.5 h-3.5" />}
                   </button>
@@ -354,7 +355,7 @@ export default function VersionHistoryPanel({
                     <button
                       onClick={() => openCorrect(v)}
                       title={`Correct the revision label (currently "${v.revisionLabel || "-"}"): audited`} aria-label={`Correct the label of Rev ${v.revisionLabel || ""}`}
-                      className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-main)] hover:bg-[var(--color-surface)]"
+                      className="inline-flex items-center justify-center pointer-coarse:size-11 p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-main)] hover:bg-[var(--color-surface)]"
                     >
                       <Pencil className="w-3.5 h-3.5" />
                     </button>
@@ -364,7 +365,7 @@ export default function VersionHistoryPanel({
                     <button
                       onClick={() => onRevertVersion(v)}
                       title="Revert document to this revision" aria-label={`Revert to Rev ${v.revisionLabel || ""}`}
-                      className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-main)] hover:bg-[var(--color-surface)]"
+                      className="inline-flex items-center justify-center pointer-coarse:size-11 p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-main)] hover:bg-[var(--color-surface)]"
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
                     </button>
@@ -453,7 +454,7 @@ export default function VersionHistoryPanel({
             onClick={(e) => e.stopPropagation()}
             onSubmit={(e) => { e.preventDefault(); void saveLabelCorrection(); }}
           >
-            <div className="text-sm font-medium text-[var(--color-text)] flex items-center gap-2">
+            <div className="text-body font-medium text-[var(--color-text)] flex items-center gap-2">
               <Pencil className="w-4 h-4 text-[var(--color-text-muted)]" /> Correct revision label
             </div>
             <p className="text-body text-[var(--color-text-muted)] mt-1">
@@ -469,7 +470,7 @@ export default function VersionHistoryPanel({
                 value={labelDraft}
                 onChange={(e) => setLabelDraft(e.target.value)}
                 placeholder="e.g. 38"
-                className="mt-1 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-2 text-sm font-display tabular-nums"
+                className="mt-1 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-2 text-body font-display tabular-nums"
               />
             </label>
             <label className="block mt-2 text-body font-medium text-[var(--color-text-muted)]">
@@ -478,11 +479,11 @@ export default function VersionHistoryPanel({
                 value={reasonDraft}
                 onChange={(e) => setReasonDraft(e.target.value)}
                 placeholder="e.g. mislabeled at upload, title block reads 38"
-                className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm"
+                className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-body"
               />
             </label>
             {labelError && (
-              <p role="alert" className="mt-2 text-body text-[var(--state-overdue)] border-l-2 border-[var(--state-overdue)] pl-2.5">{labelError}</p>
+              <div className="mt-2"><FieldError>{labelError}</FieldError></div>
             )}
             <div className="mt-3 flex items-center justify-end gap-2">
               <button

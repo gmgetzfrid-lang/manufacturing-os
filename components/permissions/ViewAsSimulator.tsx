@@ -6,7 +6,7 @@
 // ACL chain for content) — not a re-implementation that could drift.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Minus, Eye, EyeOff, UploadCloud } from "lucide-react";
+import { Check, Minus, Eye, EyeOff, UploadCloud, CircleAlert } from "lucide-react";
 import { Section, sheet, btnLink, shortDate } from "@/components/admin/kit";
 import { said } from "@/components/admin/said";
 import { Button } from "@/components/ui/Button";
@@ -104,7 +104,7 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
 
   const doRevoke = async (cap: CapabilityId) => {
     if (!activeOrgId || !actorUid || !who) return;
-    if (!(await appConfirm({ message: `Take back "${capLabel(cap)}" from ${who.name}? They lose it now, unless their role gives it.`, tone: "danger", confirmLabel: "Take back" }))) return;
+    if (!(await appConfirm({ title: `Take back "${capLabel(cap)}" from ${who.name}?`, message: "They lose it now, unless their role gives it.", tone: "danger", confirmLabel: "Take back" }))) return;
     setGrantBusy(true); setGrantErr(null);
     try {
       await revokeUserGrant({ orgId: activeOrgId, uid: who.uid, cap, actorUserId: actorUid, actorEmail });
@@ -233,7 +233,7 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
                     <Button type="submit" variant="secondary" loading={grantBusy}>Delegate</Button>
                     <span className="text-body text-[var(--color-text-muted)]">Only adds to what {who.name} can do; nobody else loses anything.</span>
                   </div>
-                  {grantErr && <p role="alert" className="sm:col-span-2 text-body font-medium text-[var(--state-overdue-text)]">{grantErr}</p>}
+                  {grantErr && <p role="alert" className="sm:col-span-2 text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" /><span>{grantErr}</span></p>}
                 </form>
               )}
             </div>

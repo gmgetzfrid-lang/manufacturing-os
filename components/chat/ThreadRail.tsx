@@ -66,16 +66,17 @@ export default function ThreadRail(p: RailProps) {
               value={q} onChange={(e) => setQ(e.target.value)}
               placeholder="Search conversations"
               aria-label="Search conversations"
-              className="w-full h-9 pl-8 pr-2 text-body rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
+              type="search" enterKeyHint="search"
+              className="w-full h-9 pointer-coarse:h-11 pl-8 pr-2 text-body pointer-coarse:text-reading rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
             />
           </div>
           <button onClick={p.onNew} title="New conversation" aria-label="New conversation"
-            className="shrink-0 h-9 w-9 inline-flex items-center justify-center rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+            className="shrink-0 h-9 w-9 pointer-coarse:size-11 inline-flex items-center justify-center rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
             <Plus className="w-4 h-4" />
           </button>
           {p.onClose && (
             <button onClick={p.onClose} title="Hide conversations" aria-label="Hide conversations"
-              className="shrink-0 h-9 w-9 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+              className="shrink-0 h-9 w-9 pointer-coarse:size-11 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
               <PanelLeftClose className="w-4 h-4" />
             </button>
           )}
@@ -93,7 +94,7 @@ export default function ThreadRail(p: RailProps) {
           {p.libraryFilter && (
             // The filter as a solid tag: its x shows every conversation again.
             <button onClick={p.onClearLibraryFilter} title="Show every conversation" aria-label={`Stop showing only ${p.libraryFilter.name}`}
-              className="ui-tag ml-auto min-w-0">
+              className="ui-tag ui-hit ml-auto min-w-0">
               <span className="truncate">{p.libraryFilter.name}</span> <X className="w-3.5 h-3.5 shrink-0" />
             </button>
           )}
@@ -127,7 +128,7 @@ export default function ThreadRail(p: RailProps) {
               <div className="mt-3">
                 <button onClick={() => setSettledOpen((v) => !v)}
                   aria-expanded={settledOpen}
-                  className="w-full flex items-center gap-1.5 px-3 py-1.5 text-body font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                  className="w-full flex items-center gap-1.5 px-3 py-1.5 pointer-coarse:min-h-11 text-body font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                   <ChevronRight className={`w-3.5 h-3.5 ui-chevron${(settledOpen) ? " rotate-90" : ""}`} />
                   Settled <span className="ui-count">{settled.length}</span>
                 </button>
@@ -188,7 +189,7 @@ function Row({ t, p }: { t: ChatThread; p: RailProps }) {
             onBlur={commitRename}
             onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") { setTitle(t.title); setRenaming(false); } }}
             aria-label="Conversation name"
-            className="w-full h-9 px-2 text-body rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] focus:outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40"
+            className="w-full h-9 px-2 text-body rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)]"
           />
         </div>
       ) : (
@@ -207,11 +208,11 @@ function Row({ t, p }: { t: ChatThread; p: RailProps }) {
             {libName && (p.onFilterLibrary && t.libraryId && p.libraryFilter?.id !== t.libraryId ? (
               <button type="button" onClick={() => p.onFilterLibrary?.(t.libraryId!)}
                 title={`Show only ${libName}`} aria-label={`Show only ${libName} conversations`}
-                className="ui-tag relative z-[1] min-w-0 !h-[22px] !px-1.5 !text-[12.5px]">
+                className="ui-tag relative z-[1] min-w-0 !h-[22px] !px-1.5 !text-caption">
                 <span className="truncate">{libName}</span>
               </button>
             ) : (
-              <span className="ui-tag min-w-0 !h-[22px] !px-1.5 !text-[12.5px]"><span className="truncate">{libName}</span></span>
+              <span className="ui-tag min-w-0 !h-[22px] !px-1.5 !text-caption"><span className="truncate">{libName}</span></span>
             ))}
             <span className="ml-auto shrink-0 tabular-nums">{relativeTime(t.lastMessageAt)}</span>
           </div>
@@ -223,7 +224,7 @@ function Row({ t, p }: { t: ChatThread; p: RailProps }) {
         aria-label="More"
         aria-haspopup="menu"
         aria-expanded={menu}
-        className={`absolute z-[1] right-1.5 top-2 w-7 h-7 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-opacity ${menu ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus:opacity-100 [@media(hover:none)]:opacity-100"}`}>
+        className={`ui-hit absolute z-[1] right-1.5 top-2 w-7 h-7 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-opacity ${menu ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus:opacity-100 [@media(hover:none)]:opacity-100"}`}>
         <MoreHorizontal className="w-4 h-4" />
       </button>
       {menu && (
@@ -245,8 +246,8 @@ function MenuItem({ icon: Icon, label, onClick, danger }: {
 }) {
   return (
     <button onClick={onClick} role="menuitem"
-      className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-md text-body font-medium transition-colors ${danger
-        ? "text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)]"
+      className={`w-full flex items-center gap-2 px-2.5 py-2 pointer-coarse:min-h-11 rounded-md text-body font-medium transition-colors ${danger
+        ? "text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)]"
         : "text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
       <Icon className="w-3.5 h-3.5" /> {label}
     </button>

@@ -26,12 +26,12 @@ export function SlowNotice({ secs, onStartOver, dark = false, what = "The server
   if (secs < 8) return null;
   return (
     <div role="status" className={`mt-3 border-l-2 pl-3 py-0.5 text-body text-left ${dark
-      ? "border-amber-300 text-amber-100"
+      ? "border-[var(--state-held)] text-[var(--color-ink-text)]"
       : "border-[var(--state-held)] text-[var(--color-text-muted)]"}`}>
       <span className={`font-medium ${dark ? "" : "text-[var(--state-held-text)]"}`}>Taking longer than usual ({secs} s).</span>{" "}
       {what} is slow to answer, often because it&rsquo;s busy with a big upload or indexing job. It&rsquo;s still trying.
       {secs >= 25 && onStartOver && (
-        <button type="button" onClick={onStartOver} className="block mt-1.5 min-h-8 font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">
+        <button type="button" onClick={onStartOver} className="block mt-1.5 min-h-8 pointer-coarse:min-h-11 font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">
           Start over
         </button>
       )}

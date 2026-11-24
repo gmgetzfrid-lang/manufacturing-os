@@ -286,12 +286,12 @@ export function ExampleFrame({ children, note, className = "" }: {
   return (
     <div className={`relative rounded-2xl border-2 border-dashed border-[var(--color-border-strong)] overflow-hidden ${className}`}>
       <div aria-hidden className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-        <span className="rotate-[-18deg] text-4xl font-medium text-[var(--color-text)] opacity-[0.07] select-none">
+        <span className="rotate-[-18deg] text-hero font-medium text-[var(--color-text)] opacity-[0.07] select-none">
           Example
         </span>
       </div>
       <div className="px-3 pt-2.5 pb-1 flex items-center gap-2">
-        <span className="text-body font-medium px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/40">
+        <span className="text-body font-medium px-1.5 py-0.5 rounded text-[var(--state-held-text)] border border-[var(--state-held)]">
           Example data
         </span>
         <span className="text-caption text-[var(--color-text-muted)]">

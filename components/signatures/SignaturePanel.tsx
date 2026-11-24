@@ -103,7 +103,7 @@ export default function SignaturePanel({
         {!sigs ? (
           <p aria-busy="true" className="px-4 py-4 text-body text-[var(--color-text-muted)]">Loading signatures…</p>
         ) : failed ? (
-          <p role="alert" className="px-4 py-4 text-body text-[var(--state-overdue)]">
+          <p role="alert" className="px-4 py-4 text-body text-[var(--state-overdue-text)]">
             <span className="font-medium">Couldn&apos;t load the signatures.</span>{" "}
             <button type="button" onClick={() => void load()} className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Try again</button>
           </p>

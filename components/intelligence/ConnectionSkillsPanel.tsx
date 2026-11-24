@@ -140,7 +140,7 @@ export default function ConnectionSkillsPanel() {
                       {(r.config?.patterns?.length ?? 0) > 0 && (
                         <div className="flex items-center gap-1 flex-wrap mt-1">
                           {r.config.patterns!.slice(0, 4).map((p) => (
-                            <code key={p} className="ui-tag !font-mono !text-[12.5px] !h-6">{p}</code>
+                            <code key={p} className="ui-tag !font-mono !text-caption !h-6">{p}</code>
                           ))}
                           {r.config.patterns!.length > 4 && <span className="ui-tag is-more !h-6" title={r.config.patterns!.slice(4).join("\n")}>+{r.config.patterns!.length - 4}</span>}
                         </div>
@@ -153,7 +153,7 @@ export default function ConnectionSkillsPanel() {
                       {!r.builtin_key && mayManage ? (
                         <button type="button" onClick={() => void flipVisibility(r)} disabled={busyId === r.id}
                           title={r.visibility === "org" ? "Make private: only you see it; what it finds still waits for review" : "Share with everyone"}
-                          className={`ui-pill ${r.visibility === "org" ? "" : "is-muted"} hover:ring-2 hover:ring-[color-mix(in_srgb,var(--color-main)_30%,transparent)] transition-shadow`}>
+                          className={`ui-pill ui-hit ${r.visibility === "org" ? "" : "is-muted"} hover:ring-2 hover:ring-[color-mix(in_srgb,var(--color-main)_30%,transparent)] transition-shadow`}>
                           {r.visibility === "org" ? <Users className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}{who}
                         </button>
                       ) : (
@@ -167,7 +167,7 @@ export default function ConnectionSkillsPanel() {
                         <button type="button" role="switch" aria-checked={r.enabled} onClick={() => void toggle(r)} disabled={busyId === r.id}
                           aria-label={`${r.name}: ${r.enabled ? "on" : "off"}`}
                           title={r.enabled ? "Turn off: the engine skips this skill" : "Turn on"}
-                          className="inline-flex items-center gap-2 h-8 rounded-md disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)]">
+                          className="ui-hit inline-flex items-center gap-2 h-8 rounded-md disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-ring)]">
                           <span className={`relative inline-flex w-9 h-5 rounded-full transition-colors ${r.enabled ? "bg-[var(--color-main)]" : "bg-[var(--color-border-strong)]"}`}>
                             <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-[var(--color-surface)] shadow grid place-items-center transition-transform ${r.enabled ? "translate-x-4" : ""}`}>
                               {busyId === r.id && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-muted)]" />}

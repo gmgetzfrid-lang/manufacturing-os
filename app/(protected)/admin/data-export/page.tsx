@@ -10,7 +10,7 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Download, Loader2, Plus, Trash2, TestTube, RefreshCw, Lock, ExternalLink, Edit3, Play } from "lucide-react";
+import { Download, Loader2, Plus, Trash2, TestTube, RefreshCw, Lock, ExternalLink, Edit3, Play, CircleAlert } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { startGlobalBackup, subscribeBackup, cancelBackup, backupIsRunning, type BackupProgress } from "@/lib/clientBackup";
@@ -21,7 +21,7 @@ import { tbl, sheet, link, btnQuiet, btnRow, btnIcon, FormRow, Section, StatusTa
 import { said, responseError } from "@/components/admin/said";
 import { errorKind } from "@/lib/friendlyError";
 import HelpTooltip from "@/components/ui/HelpTooltip";
-import { Field, Input, Select } from "@/components/ui/Field";
+import { Field, Input, PasswordInput, Select } from "@/components/ui/Field";
 import { Button } from "@/components/ui/Button";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 import MoreMenu from "@/components/ui/MoreMenu";
@@ -191,7 +191,7 @@ export default function DataExportPage() {
 
   const deleteDestination = async (d: Destination) => {
     if (!activeOrgId) return;
-    if (!(await appConfirm({ message: `Delete ${d.name}? Scheduled exports to it stop. Files already sent stay where they are. This can't be undone.`, tone: "danger", confirmLabel: "Delete" }))) return;
+    if (!(await appConfirm({ title: `Delete ${d.name}?`, message: "Scheduled exports to it stop. Files already sent stay where they are. You can't undo this.", tone: "danger", confirmLabel: "Delete destination" }))) return;
     setError(null);
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -420,7 +420,7 @@ function DestinationRow({
           {!dest.enabled && <StatusTag tone="none">Turned off</StatusTag>}
         </div>
         <div className="mt-0.5 text-body text-[var(--color-text-muted)] truncate max-w-[52ch]" title={target ?? undefined}>{target}{dest.retention_days ? `, kept ${dest.retention_days} days` : ""}</div>
-        {dest.last_run_error && <p className="mt-1 text-body font-medium text-[var(--state-overdue-text)]">{pushError(dest.last_run_error, "The last push failed.")}</p>}
+        {dest.last_run_error && <p className="mt-1 text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" /><span>{pushError(dest.last_run_error, "The last push failed.")}</span></p>}
         {testResult && (
           <p role="status" className="mt-1 text-body">
             {testResult.ok ? <StatusTag tone="good" colored={false}>Connection works</StatusTag> : <span className="font-medium text-[var(--state-overdue-text)]">{pushError(testResult.error, "The test failed.")}</span>}
@@ -489,7 +489,7 @@ function RunRow({ run }: { run: Run }) {
         <span className="font-medium text-[var(--color-text)]">{run.destination_name || "Direct download"}</span>
         {run.trigger_type && <span className="ml-1.5 text-body text-[var(--color-text-muted)]">{TRIGGER_WORD[run.trigger_type] ?? run.trigger_type}</span>}
         {run.destination_path && <div className="text-body text-[var(--color-text-muted)] truncate max-w-[48ch]" title={run.destination_path}>{run.destination_path}</div>}
-        {run.error_message && <p className="mt-0.5 text-body font-medium text-[var(--state-overdue-text)]">{pushError(run.error_message)}</p>}
+        {run.error_message && <p className="mt-0.5 text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" /><span>{pushError(run.error_message)}</span></p>}
       </td>
       <td className={`${tbl.td} align-top max-md:col-start-2 max-md:row-start-1 max-md:py-0.5 whitespace-nowrap`}>
         <StatusTag tone={st.tone} colored={st.tone === "bad"}>{run.status === "running" && <Loader2 aria-hidden className="w-3.5 h-3.5 animate-spin" />}{st.word}</StatusTag>
@@ -619,10 +619,10 @@ function DestinationModal({
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="Access key ID" hint={mode === "edit" && existing?.has_access_key ? kept : undefined}>
-                <Input type="password" value={accessKeyId} onChange={(e) => setAccessKeyId(e.target.value)} autoComplete="off" />
+                <PasswordInput what="key" value={accessKeyId} onChange={(e) => setAccessKeyId(e.target.value)} autoComplete="off" />
               </Field>
               <Field label="Secret access key" hint={mode === "edit" && existing?.has_secret_key ? kept : undefined}>
-                <Input type="password" value={secretAccessKey} onChange={(e) => setSecretAccessKey(e.target.value)} autoComplete="off" />
+                <PasswordInput what="key" value={secretAccessKey} onChange={(e) => setSecretAccessKey(e.target.value)} autoComplete="off" />
               </Field>
             </div>
           </>
@@ -634,7 +634,7 @@ function DestinationModal({
               <Input type="url" inputMode="url" value={webhookUrl} onChange={(e) => setWebhookUrl(e.target.value)} placeholder="https://example.com/backups/incoming" />
             </Field>
             <Field label="Signing secret" hint={mode === "edit" && existing?.has_webhook_secret ? kept : "Optional. When set, requests carry X-MOS-Signature: sha256=<HMAC>."}>
-              <Input type="password" value={webhookSecret} onChange={(e) => setWebhookSecret(e.target.value)} autoComplete="off" />
+              <PasswordInput what="key" value={webhookSecret} onChange={(e) => setWebhookSecret(e.target.value)} autoComplete="off" />
             </Field>
           </>
         )}
@@ -684,13 +684,13 @@ function DestinationModal({
           <input type="checkbox" className="w-4 h-4" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Turned on
         </label>
 
-        {error && <p role="alert" className="text-body font-medium text-[var(--state-overdue-text)]">{error}</p>}
+        {error && <p role="alert" className="text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" /><span>{error}</span></p>}
       </ModalBody>
       <ModalFooter>
         {missing && <span className="mr-auto text-body text-[var(--color-text-muted)]">{missing}</span>}
         <Button variant="secondary" onClick={onClose} disabled={busy}>Cancel</Button>
         <Button onClick={() => void save()} loading={busy} disabled={!!missing}>
-          {mode === "create" ? "Add destination" : "Save changes"}
+          {busy ? (mode === "create" ? "Adding" : "Saving") : mode === "create" ? "Add destination" : "Save changes"}
         </Button>
       </ModalFooter>
     </Modal>

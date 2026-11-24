@@ -12,7 +12,7 @@ import { Loader2, Save, Link2 } from "lucide-react";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { useToast } from "@/components/providers/ToastProvider";
 import { Button } from "@/components/ui/Button";
-import { Textarea } from "@/components/ui/Field";
+import { Textarea, FieldError } from "@/components/ui/Field";
 import {
   listKnowledgeLibraries, listLibraryLinks, setLibraryLinks, saveLibraryAiInstructions,
   saveLibraryAiFeatures, listKnowledgeDocuments, LIBRARY_KINDS,
@@ -142,7 +142,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
               Injected into every question against this library - write plain-English rules about how
               these documents work and how answers should behave.
             </p>
-            <Textarea value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={6}
+            <Textarea aria-label="Standing instructions" value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={6}
               placeholder={INSTRUCTIONS_PLACEHOLDER} className="text-body" />
           </div>
 
@@ -156,7 +156,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
               trailing dash, <code className="font-mono"> X- = Exchanger</code> - those override
               the built-in category guesses everywhere (tables, census, CSV).
             </p>
-            <Textarea value={decoder} onChange={(e) => setDecoder(e.target.value)} rows={4}
+            <Textarea aria-label="Numbering and code decoder" value={decoder} onChange={(e) => setDecoder(e.target.value)} rows={4}
               placeholder={DECODER_PLACEHOLDER} className="text-body" />
           </div>
 
@@ -275,7 +275,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
             {!loaded ? (
               <SkeletonRows rows={3} cols={0} sheet={false} what="the other libraries" />
             ) : loadError ? (
-              <p role="alert" className="text-body font-medium text-[var(--state-overdue)]">Couldn&apos;t load the other libraries: {loadError}</p>
+              <FieldError>Couldn&apos;t load the other libraries: {loadError}</FieldError>
             ) : allLibraries.length === 0 ? (
               <p className="text-body text-[var(--color-text-muted)] italic">No other libraries yet. Make a second library (e.g. Code Books) to link it.</p>
             ) : (
@@ -300,7 +300,7 @@ export default function LibraryAiModal({ library, orgId, open, onClose, onSaved 
         <ModalFooter>
             <Button variant="secondary" onClick={onClose} disabled={saving}>Cancel</Button>
             <Button onClick={() => void save()} disabled={saving || !!loadError}>
-              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save setup
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}{" "}{saving ? "Saving" : "Save setup"}
             </Button>
         </ModalFooter>
     </Modal>

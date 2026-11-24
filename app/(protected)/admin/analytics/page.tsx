@@ -417,7 +417,7 @@ export default function AnalyticsPage() {
                 <div className="flex items-center gap-3 min-w-0 flex-1">
                   <UserAvatar uid={userProfile.metric.uid} name={userProfile.metric.name} size={44} rounded="full" />
                   <div className="min-w-0">
-                    <h2 className="font-display text-[26px] leading-none font-semibold text-[var(--color-text)] truncate">{userProfile.metric.name}</h2>
+                    <h2 className="font-display text-title leading-none font-semibold text-[var(--color-text)] truncate">{userProfile.metric.name}</h2>
                     <p className="mt-1 text-body text-[var(--color-text-muted)]">{viewMode === 'drafter' ? 'Drafter' : 'Requester'}, {plural(userProfile.metric.totalAssigned, "request")}</p>
                   </div>
                 </div>

@@ -9,7 +9,7 @@
 // schedule moves.
 
 import React, { useMemo, useRef, useState } from "react";
-import { ListChecks, Search, X } from "lucide-react";
+import { ListChecks, Search, X, CircleAlert } from "lucide-react";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { searchPlanPool, planToSave, type PlanChoiceGroup } from "@/lib/nightPlan";
 import { workOrderOfStep } from "@/lib/shiftSheet";
@@ -85,7 +85,7 @@ export function ShiftPlanPicker({ next, groups, pool, byId, plan, locked, fmt, b
     const when = r.start >= next.end ? `planned ${fmt.DTs(r.start)}` : r.carryOver ? `was due ${fmt.DTs(r.dueAt)}` : r.start < next.start ? "under way" : `planned ${fmt.T(r.start)}`;
     const left = Math.round(Math.min(r.hoursLeft, shiftHours) * 10) / 10;
     return (
-      <div key={id} className={`flex items-start gap-3 px-4 py-2.5 ${yes ? "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]" : ""}`}>
+      <div key={id} className={`flex items-start gap-3 px-4 py-2.5 ${yes ? "bg-[var(--color-surface-2)]" : ""}`}>
         <label className="flex flex-1 min-w-0 items-start gap-3 cursor-pointer">
           <input type="checkbox" checked={yes} disabled={locked || (isHeld && !yes)} onChange={(e) => toggle(id, e.target.checked)}
             aria-label={`${yes ? "Take off" : "Put on"} the plan: ${r.leaf.name}`}
@@ -119,8 +119,8 @@ export function ShiftPlanPicker({ next, groups, pool, byId, plan, locked, fmt, b
     const all = ids.every((id) => on.has(id));
     return (
       <div key={key}>
-        <div className="sticky top-0 z-10 flex items-center gap-2 px-4 py-1.5 bg-slate-100 dark:bg-slate-800">
-          <span className="flex-1 min-w-0 text-caption font-medium text-slate-600 dark:text-slate-300">{title} · {rows.length}</span>
+        <div className="sticky top-0 z-10 flex items-center gap-2 px-4 py-1.5 bg-[var(--color-surface-2)]">
+          <span className="flex-1 min-w-0 text-caption font-medium text-[var(--color-text-muted)]">{title} · {rows.length}</span>
           {!locked && (
             <button type="button" onClick={() => setMany(ids, !all)} className="shrink-0 text-body text-[var(--color-accent-text)] hover:underline">
               {all ? "Untick all" : "Tick all"}
@@ -147,8 +147,8 @@ export function ShiftPlanPicker({ next, groups, pool, byId, plan, locked, fmt, b
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)]" />
             <input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search the job for a step"
               placeholder="Find any step: WO #, equipment (V-01), step or crew"
-              className="w-full h-10 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-8 text-body text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
-            {query && <button type="button" onClick={() => { setQuery(""); searchRef.current?.focus(); }} aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>}
+              className="w-full h-10 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-8 text-body text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
+            {query && <button type="button" onClick={() => { setQuery(""); searchRef.current?.focus(); }} aria-label="Clear search" className="ui-hit absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>}
           </label>
           {!plan && !query && picked.length === 0 && (
             <div className="mt-2 text-caption text-[var(--color-text-muted)]">Nothing is on the plan yet. Tick each job the {kind} shift will work.</div>
@@ -179,7 +179,7 @@ export function ShiftPlanPicker({ next, groups, pool, byId, plan, locked, fmt, b
           <span className="mr-auto text-caption font-medium text-[var(--color-text)] tabular-nums">
             {picked.length} step{picked.length === 1 ? "" : "s"}{picked.length ? ` · ${hrs} h` : ""}
           </span>
-          {err && <span className="w-full text-caption text-[var(--state-overdue-text)]" role="alert">{err}</span>}
+          {err && <span role="alert" className="w-full text-caption text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{err}</span></span>}
           {plan && !locked && (
             <button type="button" disabled={busy} onClick={() => void remove()}
               className="rounded-lg border border-[var(--color-border-strong)] px-3 py-2 text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">

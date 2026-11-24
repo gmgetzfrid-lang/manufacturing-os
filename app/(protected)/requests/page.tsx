@@ -537,7 +537,8 @@ export default function RequestPortal() {
 
   const handleBulkArchive = useCallback(async () => {
     if (selectedTicketIds.size === 0) return;
-    if (!(await appConfirm({ message: `Close ${selectedTicketIds.size} request${selectedTicketIds.size === 1 ? '' : 's'}?`, tone: 'danger', confirmLabel: 'Close them' }))) return;
+    const closeWhat = `${selectedTicketIds.size} request${selectedTicketIds.size === 1 ? '' : 's'}`;
+    if (!(await appConfirm({ title: `Close ${closeWhat}?`, message: 'They move to the closed list.', tone: 'danger', confirmLabel: `Close ${closeWhat}` }))) return;
 
     setProcessingBulk(true);
     try {
@@ -799,7 +800,8 @@ export default function RequestPortal() {
                 className={`${heroQuiet} max-sm:px-3 ${isFilterPanelOpen ? 'bg-[var(--color-surface-2)]' : ''}`}>
                 <SlidersHorizontal aria-hidden className="w-4 h-4" /><span className="max-sm:sr-only">More filters</span>{extraChips.length > 0 && <span className="font-normal tabular-nums text-[var(--color-text-muted)]">{extraChips.length}</span>}
               </button>
-              {filtersOn && <button type="button" onClick={() => { clearAllFilters(); setCurrentPage(1); }} className="h-10 px-1 text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Clear filters</button>}
+              {filtersOn && <span className="text-body text-[var(--color-text-muted)] tabular-nums whitespace-nowrap">{filteredTickets.length} of {tickets.length}</span>}
+              {filtersOn && <button type="button" onClick={() => { clearAllFilters(); setCurrentPage(1); }} className="h-10 pointer-coarse:h-11 px-1 text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Clear filters</button>}
             </div>
           </div>
 
@@ -807,7 +809,7 @@ export default function RequestPortal() {
             <ul aria-label="Other filters on" className="flex flex-wrap gap-2">
               {extraChips.map((c) => (
                 <li key={c.key}>
-                  <button type="button" onClick={c.clear} aria-label={`Remove filter: ${c.label}`} className="ui-tag !font-sans !font-medium gap-1.5">
+                  <button type="button" onClick={c.clear} aria-label={`Remove filter: ${c.label}`} className="ui-tag ui-hit !font-sans !font-medium gap-1.5">
                     {c.label}<X aria-hidden className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                   </button>
                 </li>
@@ -923,7 +925,7 @@ export default function RequestPortal() {
                 <div className="flex items-center gap-3">
                   <span className="tabular-nums">{(currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, filteredTickets.length)} of {filteredTickets.length}</span>
                   <label className="sr-only" htmlFor="req-per-page">Rows per page</label>
-                  <select id="req-per-page" value={itemsPerPage} onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }} className="h-8 pointer-coarse:h-11 px-2 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-body text-[var(--color-text)]">
+                  <select id="req-per-page" value={itemsPerPage} onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }} className="h-8 pointer-coarse:h-11 px-2 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] text-body pointer-coarse:text-reading text-[var(--color-text)]">
                     {[10, 25, 50, 100].map((n) => <option key={n} value={n}>{n} per page</option>)}
                   </select>
                 </div>

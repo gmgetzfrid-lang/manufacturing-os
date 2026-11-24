@@ -262,7 +262,7 @@ export default function SetupPage() {
                         {s.checks.map((c) => (
                           <li key={c.label} className={`flex items-start gap-2 text-body ${c.ok ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>
                             {c.ok
-                              ? <Check aria-label="Done" className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-released)]" />
+                              ? <Check aria-label="Done" className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-released-text)]" />
                               : <span aria-label="Not yet" className="w-4 h-4 mt-0.5 shrink-0 grid place-items-center"><span className="w-2 h-2 rounded-full border-2 border-[var(--color-text-faint)]" /></span>}
                             {c.label}
                           </li>

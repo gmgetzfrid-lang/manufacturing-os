@@ -99,7 +99,7 @@ export default function ReverseConfirmModal({
               </div>
             </div>
           </div>
-          <button aria-label="Close" onClick={onCancel} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
+          <button aria-label="Close" onClick={onCancel} className="ui-hit p-1.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -132,7 +132,7 @@ export default function ReverseConfirmModal({
               onChange={(e) => setReason(e.target.value)}
               rows={3}
               placeholder='e.g. "Wrong split count: should have been 3 sheets, not 2."'
-              className="mt-1 w-full text-sm border border-[var(--color-border-strong)] rounded px-2.5 py-1.5"
+              className="mt-1 w-full text-body border border-[var(--color-border-strong)] rounded px-2.5 py-1.5"
               autoFocus
             />
           </label>
@@ -170,18 +170,18 @@ export default function ReverseConfirmModal({
 
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
           {result ? (
-            <button onClick={onSuccess} className="text-sm font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded">
+            <button onClick={onSuccess} className="text-body font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded">
               Done
             </button>
           ) : (
             <>
-              <button onClick={onCancel} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">
+              <button onClick={onCancel} disabled={busy} className="text-body text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">
                 Cancel
               </button>
               <button
                 onClick={submit}
                 disabled={busy || !valid}
-                className="inline-flex items-center gap-1.5 text-sm font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40"
+                className="inline-flex items-center gap-1.5 text-body font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40"
               >
                 {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Undo2 className="w-3.5 h-3.5" />}
                 Confirm Reverse

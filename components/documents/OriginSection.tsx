@@ -11,6 +11,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import OriginBadge from "@/components/documents/OriginBadge";
 import { setDocumentOrigin } from "@/lib/documentOrigin";
 import type { DocumentRecord } from "@/types/schema";
+import { Field } from "@/components/ui/Field";
 
 export default function OriginSection({ doc, orgId, canManage }: {
   doc: DocumentRecord;
@@ -79,10 +80,18 @@ export default function OriginSection({ doc, orgId, canManage }: {
           </div>
           {origin === "external" && (
             <div className="space-y-1.5">
-              <input value={source} onChange={(e) => setSource(e.target.value)} placeholder="Source (e.g. API, Emerson, OSHA)" className={`${inp} w-full`} />
-              <input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Source reference (e.g. API 610)" className={`${inp} w-full`} />
-              <input value={edition} onChange={(e) => setEdition(e.target.value)} placeholder="Source edition (e.g. 11th Ed / 2020)" className={`${inp} w-full`} />
-              <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Source URL (optional)" className={`${inp} w-full`} />
+              <Field label="Source">
+                <input value={source} onChange={(e) => setSource(e.target.value)} placeholder="API, Emerson, OSHA" className={`${inp} w-full`} />
+              </Field>
+              <Field label="Source reference">
+                <input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="API 610" className={`${inp} w-full`} />
+              </Field>
+              <Field label="Source edition">
+                <input value={edition} onChange={(e) => setEdition(e.target.value)} placeholder="11th Ed / 2020" className={`${inp} w-full`} />
+              </Field>
+              <Field label="Source URL (optional)">
+                <input type="url" value={url} onChange={(e) => setUrl(e.target.value)} className={`${inp} w-full`} />
+              </Field>
             </div>
           )}
           <div className="flex justify-end gap-2">

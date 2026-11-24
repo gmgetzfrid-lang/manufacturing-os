@@ -268,6 +268,7 @@ export default function DraftingConfigPage() {
                 />
                 <input 
                   type="number"
+                  inputMode="numeric"
                   value={opt.value}
                   onChange={(e) => updateOption('priorities', i, 'value', Number(e.target.value))}
                   className={`${fieldBox} h-10 pointer-coarse:h-11 text-reading w-24 shrink-0 tabular-nums`}
@@ -381,7 +382,7 @@ function CustomCategoriesSection({
     onChange(categories.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
   };
   const removeCategory = async (idx: number) => {
-    if (!(await appConfirm({ message: `Remove "${categories[idx].label}" and all its fields? Requests made before keep what was filled in. It's gone from the form once you save.`, tone: "danger", confirmLabel: "Remove" }))) return;
+    if (!(await appConfirm({ title: `Remove "${categories[idx].label}" and all its fields?`, message: "Requests made before keep what was filled in. It's gone from the form once you save.", tone: "danger", confirmLabel: "Remove category" }))) return;
     onChange(categories.filter((_, i) => i !== idx));
   };
   const moveCategory = (idx: number, dir: -1 | 1) => {

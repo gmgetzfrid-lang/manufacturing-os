@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import StepPath from "@/components/ui/StepPath";
-import { Textarea } from "@/components/ui/Field";
+import { Textarea, FieldError } from "@/components/ui/Field";
 import {
   referencedQuote, hasSource, parseAnswerBlocks, extractCitationNumbers, proofTerms, highlightQuote, splitVerdict, quoteWindow,
   structureAnswer, isMissingFact, extractAnswerMeta, type AnswerBlock, type Verdict,
@@ -43,7 +43,7 @@ export type DocLink = NonNullable<KnowledgeAnswer["mentionedDocs"]>[number];
 /** The small name of a group (13 px, muted, sentence case). */
 const LABEL = "text-body font-medium text-[var(--color-text-muted)]";
 /** The direct answer: the one big line, in the condensed display face. */
-const HERO = "font-display text-[22px] sm:text-[24px] leading-[1.2] font-semibold text-[var(--color-text)] max-w-[40ch]";
+const HERO = "font-display text-section sm:text-title leading-[1.2] font-semibold text-[var(--color-text)] max-w-[40ch]";
 /** A longer direct answer (a sentence or two): still the display face, at a
  *  size that reads as a paragraph, not a poster. */
 const HERO_LONG = "font-display text-section leading-normal font-medium text-[var(--color-text)] max-w-[60ch]";
@@ -254,7 +254,7 @@ function ProofCard({ proof, onClose, onOpenPage }: {
               {pastJob ? "Past job" : <>Page {c.page}{c.section ? ` · ${c.section.slice(0, 30)}` : ""}</>}
             </span>
             <button onClick={onClose} aria-label="Close"
-              className="shrink-0 w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+              className="ui-hit shrink-0 w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
               <X className="w-4 h-4" />
             </button>
           </div>
@@ -1043,13 +1043,13 @@ function ExportButtons({ question, answer }: { question: string; answer: Knowled
   return (
     <div className="flex items-center gap-1.5 shrink-0">
       <div className="relative inline-flex">
-        <button type="button" onClick={() => void copy("formatted")} className={`${QUIET_CORE} h-8 px-3 text-body rounded-l-md`}
+        <button type="button" onClick={() => void copy("formatted")} className={`pointer-coarse:h-11 ${QUIET_CORE} h-8 px-3 text-body rounded-l-md`}
           title="Copy the answer and its proof, formatted - pastes into email or Word looking like the card">
           {state.s === "copied" ? <Check className="w-3.5 h-3.5 text-[var(--state-released)]" /> : <Copy className="w-3.5 h-3.5" />}
           {state.s === "copied" ? `Copied: ${state.label}` : state.s === "failed" ? "Copy blocked" : "Copy"}
         </button>
         <button type="button" onClick={() => setMenu((v) => !v)} aria-haspopup="menu" aria-expanded={menu} title="Other ways to copy" aria-label="Other ways to copy"
-          className={`${QUIET_CORE} h-8 px-1.5 rounded-r-md border-l-0`}>
+          className={`pointer-coarse:h-11 pointer-coarse:w-11 ${QUIET_CORE} h-8 px-1.5 rounded-r-md border-l-0`}>
           <ChevronDown className="w-3.5 h-3.5" />
         </button>
         {menu && (
@@ -1781,7 +1781,7 @@ export function AnswerFeedback({ questionId, onRated, question, citations }: {
     }
   };
   const btn = (active: boolean) =>
-    `w-9 h-9 grid place-items-center rounded-md border transition-colors ${active
+    `w-9 h-9 pointer-coarse:size-11 grid place-items-center rounded-md border transition-colors ${active
       ? "border-[var(--color-text)] text-[var(--color-text)] bg-[var(--color-surface-2)]"
       : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
   return (
@@ -1793,7 +1793,7 @@ export function AnswerFeedback({ questionId, onRated, question, citations }: {
           </button>
         )}
         {testSaved && <span className="mr-auto text-[var(--color-text)]">Saved as a test case. See Answer tests on the library page.</span>}
-        {rateError && <span role="alert" className="font-medium text-[var(--state-overdue)]">{rateError}</span>}
+        {rateError && <FieldError>{rateError}</FieldError>}
         {!rateError && state === 1 && <StatusTag dot={DOT_GOOD}>Saved. Similar questions will start from these pages.</StatusTag>}
         {!rateError && state === -1 && <span className="text-[var(--color-text)]">{reasonsSent ? "Thanks. That tells us where to look." : "What went wrong?"}</span>}
         {!rateError && state === 0 && <span>Did this answer it?</span>}

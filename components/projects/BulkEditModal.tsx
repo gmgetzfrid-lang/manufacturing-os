@@ -7,7 +7,7 @@
 // once took the crew off 100 steps).
 
 import React, { useMemo, useState } from "react";
-import { Replace, Loader2, ArrowRight, Search } from "lucide-react";
+import { Replace, Loader2, ArrowRight, Search, CircleAlert } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { BULK_FIELDS, valuesIn, planReplace, planSet, valueLabel, type BulkField } from "@/lib/bulkEdit";
@@ -54,7 +54,7 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
     if (clears > 0 && !field.options && !(await appConfirm({
       title: `Leave ${clears} task${clears === 1 ? "" : "s"} with no ${field.label.split(" - ")[0].toLowerCase()} name?`,
       message: mode === "replace" ? `“${from}” comes off ${clears === 1 ? "it" : "them"} and nothing goes in its place. To rename it instead, type the new name in "With".` : "The value is cleared on them. To set a value instead, type it in.",
-      tone: "danger", confirmLabel: "Yes, leave them blank",
+      tone: "danger", confirmLabel: clears === 1 ? "Leave it blank" : `Leave ${clears} blank`,
     }))) return;
     setBusy(true); setError(null);
     try {
@@ -78,7 +78,7 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
     // A fixed-choice field (the crew) is set on the selection.
     if (f.options && selectedIds.size > 0) setMode("set");
   };
-  const inp = "w-full h-9 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm text-[var(--color-text)] ";
+  const inp = "w-full h-9 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body text-[var(--color-text)] ";
 
   return (
     <Modal onClose={busy ? () => undefined : onClose} size="lg" dismissable={!busy}>
@@ -86,7 +86,7 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
         subtitle="Swap a contractor, crew, company or location everywhere it appears, or set it (or day or night) on the tasks you selected." onClose={busy ? undefined : onClose} />
       <ModalBody className="space-y-3">
         <div className="inline-flex flex-wrap rounded-lg bg-[var(--color-surface-2)] p-0.5 gap-0.5 text-caption font-medium" role="group" aria-label="What to change">
-          <button onClick={() => setMode("replace")} aria-pressed={mode === "replace"} className={`h-8 px-3 rounded-lg ${mode === "replace" ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>Replace a name everywhere</button>
+          <button onClick={() => setMode("replace")} aria-pressed={mode === "replace"} className={`h-8 pointer-coarse:h-11 px-3 rounded-lg ${mode === "replace" ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>Replace a name everywhere</button>
           <button onClick={() => selectedIds.size > 0 && setMode("set")} disabled={selectedIds.size === 0} aria-pressed={mode === "set"}
             title={selectedIds.size === 0 ? "Select tasks on the timeline first" : undefined}
             className={`h-8 px-3 rounded-lg disabled:opacity-40 ${mode === "set" ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
@@ -114,7 +114,7 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
                 {values.length > 8 && (
                   <div className="relative mb-1.5">
                     <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
-                    <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Narrow this list…" aria-label="Narrow the list of names" className={`${inp} h-8 pointer-coarse:h-11 pl-8 text-xs`} />
+                    <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Narrow this list…" aria-label="Narrow the list of names" className={`${inp} h-8 pointer-coarse:h-11 pl-8 text-caption`} />
                   </div>
                 )}
                 <ul className="max-h-44 overflow-y-auto border-y border-[var(--color-border)] divide-y divide-[var(--color-border)]">
@@ -152,7 +152,7 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
               <datalist id="bulk-values">{values.filter((v) => v.value !== from).map((v) => <option key={v.value} value={v.value} />)}</datalist>
             </label>
             <label className="inline-flex items-center gap-2 text-caption text-[var(--color-text-muted)] cursor-pointer select-none">
-              <input type="checkbox" checked={clear} onChange={(e) => { setClear(e.target.checked); if (e.target.checked) setTo(""); }} className="w-4 h-4 accent-rose-600" />
+              <input type="checkbox" checked={clear} onChange={(e) => { setClear(e.target.checked); if (e.target.checked) setTo(""); }} className="w-4 h-4 accent-[var(--state-overdue)]" />
               {mode === "replace" ? <>Take &ldquo;{from}&rdquo; off and leave no name</> : "Clear it on the selected tasks"}
             </label>
             {!ready && <p className="text-caption text-[var(--color-text-muted)]">Nothing changes until you type the new name{mode === "replace" ? ", or tick the box to take it off" : ""}.</p>}
@@ -175,10 +175,10 @@ export default function BulkEditModal({ milestones, selectedIds, startMode, orgI
             </ul>
           </div>
         )}
-        {error && <div className="text-caption font-medium text-[var(--state-overdue-text)]">{error}</div>}
+        {error && <div role="alert" className="text-caption font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{error}</span></div>}
       </ModalBody>
       <ModalFooter>
-        <button onClick={onClose} disabled={busy} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+        <button onClick={onClose} disabled={busy} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
         <button onClick={() => void apply()} disabled={busy || plan.length === 0}
           className="inline-flex items-center gap-1.5 h-10 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-40">
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Replace className="w-4 h-4" />}

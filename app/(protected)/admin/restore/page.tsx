@@ -168,8 +168,8 @@ export default function RestorePage() {
     const envelope = envelopeRef.current;
     if (!activeOrgId || !envelope || !plan) return;
     const ok = await appConfirm({
-      title: "Apply restore",
-      message: `Write ${fmtNum(plan.counts.totalRows)} record(s) into this workspace? ${plan.counts.newUsers} restored placeholder user(s) will be created (inactive, no seat). Existing data is kept. This adds records and can't be undone automatically.`,
+      title: `Restore ${fmtNum(plan.counts.totalRows)} record(s) into this workspace?`,
+      message: `${plan.counts.newUsers} restored placeholder user(s) will be created (inactive, no seat). Existing data is kept. This adds records and can't be undone automatically.`,
       tone: "danger",
       confirmLabel: "Apply restore",
     });

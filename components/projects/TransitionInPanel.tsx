@@ -155,26 +155,26 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
           {flaggedCount > 0 && <> · <b className="text-[var(--state-held-text)]">{flaggedCount} need review</b></>}
           {scanning && <> · scanning…</>}
         </span>
-        <button onClick={() => void refresh()} disabled={loading} title="Scan again" aria-label="Scan again" className="ml-auto p-1 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
+        <button onClick={() => void refresh()} disabled={loading} title="Scan again" aria-label="Scan again" className="ui-hit ml-auto p-1 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
         </button>
       </div>
 
-      {msg && <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 px-3 py-2 text-xs font-medium text-[var(--color-text)]">{msg}</div>}
+      {msg && <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 px-3 py-2 text-caption font-medium text-[var(--color-text)]">{msg}</div>}
 
       {canManage && (
         <div className="flex items-center gap-2 flex-wrap rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface-2)]/40 p-2.5">
           <span className="text-caption font-medium text-[var(--color-text-muted)]">Adopt into</span>
-          <select value={destLib} onChange={(e) => setDestLib(e.target.value)} className="h-7 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
+          <select value={destLib} onChange={(e) => setDestLib(e.target.value)} aria-label="Adopt into library" className="h-7 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption">
             <option value="">Library…</option>
             {libs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
           </select>
-          <select value={destCol} onChange={(e) => setDestCol(e.target.value)} disabled={!destLib} className="h-7 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs disabled:opacity-50">
+          <select value={destCol} onChange={(e) => setDestCol(e.target.value)} disabled={!destLib} aria-label="Adopt into collection" className="h-7 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption disabled:opacity-50">
             <option value="">Folder (library root)…</option>
             {cols.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
           <button onClick={() => void adoptAllClean()} disabled={busy === "bulk" || cleanCount === 0 || !destLib}
-            className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+            className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {busy === "bulk" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
             Adopt {cleanCount} clean
           </button>
@@ -186,15 +186,15 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
           const impact = impacts.get(c.docId);
           const expanded = open === c.docId;
           return (
-            <li key={c.docId} className={`rounded-xl border px-2.5 py-1.5 ${!impact ? "border-[var(--color-border)]" : impact.clean ? "border-[var(--state-released)] bg-[var(--state-released)]/[0.04]" : "border-[var(--state-held)] bg-[var(--state-held)]/[0.05]"}`}>
+            <li key={c.docId} className={`rounded-xl border px-2.5 py-1.5 border-[var(--color-border)] ${impact && !impact.clean ? "border-l-2 border-l-[var(--state-held)]" : ""}`}>
               <button onClick={() => setOpen(expanded ? null : c.docId)} className="w-full flex items-center gap-2 text-left">
                 <ChevronRight className={`w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0 ui-chevron${(expanded) ? " rotate-90" : ""}`} />
                 <span className="text-body font-medium text-[var(--color-text)] truncate">{c.label}</span>
-                <span className="text-xs text-[var(--color-text-muted)] shrink-0">Rev {c.rev ?? "-"}{c.company ? ` · ${c.company}` : ""}</span>
+                <span className="text-caption text-[var(--color-text-muted)] shrink-0">Rev {c.rev ?? "-"}{c.company ? ` · ${c.company}` : ""}</span>
                 <span className="ml-auto flex items-center gap-1.5 shrink-0">
                   {!impact && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-faint)]" />}
                   {impact?.matchedAssets.length ? (
-                    <span className="inline-flex items-center gap-0.5 text-caption font-medium text-[var(--color-text)] dark:text-[var(--color-text)]" title={`Equipment in the registry: ${impact.matchedAssets.map((a) => a.tag).join(", ")}`}>
+                    <span className="inline-flex items-center gap-0.5 text-caption font-medium text-[var(--color-text)]" title={`Equipment in the registry: ${impact.matchedAssets.map((a) => a.tag).join(", ")}`}>
                       <Cable className="w-3 h-3" /> {impact.matchedAssets.length}
                     </span>
                   ) : null}
@@ -209,7 +209,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
               </button>
 
               {expanded && impact && (
-                <div className="mt-2 pt-2 border-t border-[var(--color-border)] space-y-2 text-xs">
+                <div className="mt-2 pt-2 border-t border-[var(--color-border)] space-y-2 text-caption">
                   {impact.numberCollision && (
                     <div className="border-l-2 border-[var(--state-overdue)] pl-2.5">
                       <b className="text-[var(--state-overdue-text)]">Number collision:</b>{" "}
@@ -241,10 +241,11 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
                   {canManage && (
                     <div className="flex items-center gap-2 flex-wrap">
                       <input
+                        aria-label="New document number"
                         value={renumber.get(c.docId) ?? ""}
                         onChange={(e) => setRenumber(new Map(renumber).set(c.docId, e.target.value))}
                         placeholder={`Renumber (now ${c.number ?? "unnumbered"})…`}
-                        className="h-7 w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs"
+                        className="h-7 w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption"
                       />
                       <button onClick={() => void adoptOne(c)} disabled={busy === c.docId || !destLib}
                         title={!destLib ? "Pick the destination library above" : undefined}
@@ -253,7 +254,7 @@ export default function TransitionInPanel({ orgId, projectId, intakeCollectionId
                       </button>
                       {!impact.clean && onFlagCollision && (
                         <button onClick={() => onFlagCollision(c, impact)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--state-held)] text-[var(--state-held-text)] text-caption font-medium hover:bg-[var(--state-held)]">
+                          className="inline-flex items-center gap-1 px-2.5 py-1 pointer-coarse:min-h-11 rounded-lg border border-[var(--state-held)] text-[var(--state-held-text)] text-caption font-medium hover:bg-[color-mix(in_srgb,var(--state-held)_10%,transparent)]">
                           <ShieldAlert className="w-3 h-3" /> Flag to drafting
                         </button>
                       )}

@@ -33,13 +33,13 @@ export default function MemoryStrip({ past, changed, onReview, onReuse, onDismis
           <AlertTriangle className="w-3.5 h-3.5" /> Sources changed
         </span>
       )}
-      <button onClick={onReview} className="shrink-0 inline-flex items-center gap-1 h-8 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+      <button onClick={onReview} className="shrink-0 inline-flex items-center gap-1 h-8 pointer-coarse:h-11 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
         <Eye className="w-3.5 h-3.5" /> Review
       </button>
-      <button onClick={onReuse} className="shrink-0 inline-flex items-center gap-1 h-8 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+      <button onClick={onReuse} className="shrink-0 inline-flex items-center gap-1 h-8 pointer-coarse:h-11 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
         <Redo2 className="w-3.5 h-3.5" /> Use it
       </button>
-      <button onClick={onDismiss} title="Ask fresh" aria-label="Dismiss, ask fresh" className="shrink-0 w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]">
+      <button onClick={onDismiss} title="Ask fresh" aria-label="Dismiss, ask fresh" className="shrink-0 w-8 h-8 pointer-coarse:size-11 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]">
         <X className="w-4 h-4" />
       </button>
     </div>

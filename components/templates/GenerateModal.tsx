@@ -190,7 +190,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between sticky top-0 bg-[var(--color-surface)] rounded-t-xl z-10">
           <div>
             <div className="text-body font-medium text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5" /> Generate documents</div>
-            <h2 className="mt-1 font-display text-[24px] leading-tight font-semibold text-[var(--color-text)]">{template.name}</h2>
+            <h2 className="mt-1 font-display text-title leading-tight font-semibold text-[var(--color-text)]">{template.name}</h2>
           </div>
           <button onClick={onClose} aria-label="Close" title="Close" className="w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
@@ -279,7 +279,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
                 {mapping.missing.map((m) => (
                   <li key={m.tag} className="flex items-center gap-2 text-body">
                     <code className="font-mono font-medium text-[var(--color-text)] w-40 truncate">{`{${m.tag}}`}</code>
-                    <Select className="flex-1"
+                    <Select aria-label={`Column for ${m.tag}`} className="flex-1"
                       value={mapping.columnMap[m.tag] ?? ""}
                       onChange={(e) => setMapping((prev) => prev && ({
                         ...prev, columnMap: { ...prev.columnMap, [m.tag]: e.target.value },
@@ -328,7 +328,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
                       <div className="px-3 pb-3 space-y-2 border-t border-[var(--color-border)] pt-2">
                         <label className="block">
                           <span className="block text-body font-medium text-[var(--color-text)] mb-1.5">File name</span>
-                          <Input value={d.filename} onChange={(e) => updateFilename(i, e.target.value)} className="text-xs font-mono" />
+                          <Input value={d.filename} onChange={(e) => updateFilename(i, e.target.value)} className="text-caption font-mono" />
                         </label>
                         {Object.entries(d.values).map(([tag, value]) => (
                           <label key={tag} className="block">
@@ -376,7 +376,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
               {libraries.length > 0 && (
                 <div className="flex items-center gap-2 flex-wrap text-body">
                   <span className="font-medium text-[var(--color-text)]">File into document control:</span>
-                  <Select value={fileInto} onChange={(e) => setFileInto(e.target.value)} className="!w-56 text-body">
+                  <Select aria-label="File into document control" value={fileInto} onChange={(e) => setFileInto(e.target.value)} className="!w-56 text-body">
                     <option value="">- download only -</option>
                     {libraries.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
                   </Select>

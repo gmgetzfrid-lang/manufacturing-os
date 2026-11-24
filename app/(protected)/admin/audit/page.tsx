@@ -254,6 +254,8 @@ export default function AuditLogPage() {
             <div className="relative flex-1 min-w-[200px]">
               <Filter className={bandInputIcon} />
               <input
+                type="search"
+                enterKeyHint="search"
                 value={userQuery}
                 onChange={(e) => setUserQuery(e.target.value)}
                 aria-label="Filter by user email"
@@ -327,7 +329,15 @@ export default function AuditLogPage() {
               </table>
               {/* The log keeps going: say how much is shown and fetch more. */}
               <div className={tbl.foot}>
-                <span className="text-[var(--color-text-muted)] tabular-nums">{filtered.length.toLocaleString()} of {rows.length.toLocaleString()} loaded</span>
+                <span className="text-[var(--color-text-muted)] tabular-nums">
+                  {filtered.length.toLocaleString()} of {rows.length.toLocaleString()} loaded
+                  {(range !== "all" || actionFilter !== "ALL" || resourceFilter !== "ALL" || libraryFilter !== "ALL" || userQuery) && (
+                    <>{" · "}<button type="button" className={`ui-hit ${link} font-medium`}
+                      onClick={() => { setRange("all"); setActionFilter("ALL"); setResourceFilter("ALL"); setLibraryFilter("ALL"); setUserQuery(""); }}>
+                      Clear filters
+                    </button></>
+                  )}
+                </span>
                 {rows.length >= limit && (
                   <button type="button" onClick={() => setLimit((n) => n + 200)} className={link}>
                     Show 200 more
@@ -407,7 +417,7 @@ function AuditRowItem({ row, docMeta, open, onToggle, onFilterAction, onFilterRe
           <span className="inline-flex items-center gap-2 min-w-0 max-w-[48ch]">
             {onFilterResource ? (
               <button type="button" onClick={() => onFilterResource(row.resourceType)} title={`Show only ${row.resourceType} events`} aria-label={`Show only ${row.resourceType} events`}
-                className="shrink-0 w-6 h-6 pointer-coarse:w-9 pointer-coarse:h-9 -ml-1 grid place-items-center rounded-md text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"><ResIcon className="w-4 h-4" /></button>
+                className="shrink-0 w-6 h-6 pointer-coarse:size-11 -ml-1 grid place-items-center rounded-md text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"><ResIcon className="w-4 h-4" /></button>
             ) : <span aria-hidden className="shrink-0 text-[var(--color-text-faint)]"><ResIcon className="w-4 h-4" /></span>}
             {resourceHref
               ? <Link href={resourceHref} className="truncate hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{itemLabel}</Link>

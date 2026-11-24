@@ -16,7 +16,7 @@ export function SourceLine({ source, tz, className = "" }: { source: Source; tz:
 export function Switch({ on, label, disabled, onChange }: { on: boolean; label: string; disabled?: boolean; onChange: () => void }) {
   return (
     <button type="button" role="switch" aria-checked={on} aria-label={label} disabled={disabled} onClick={onChange}
-      className="shrink-0 inline-flex items-center justify-center w-11 h-9 -mx-1 disabled:opacity-60">
+      className="shrink-0 inline-flex items-center justify-center w-11 h-9 pointer-coarse:h-11 -mx-1 disabled:opacity-60">
       <span className={`relative w-9 h-5 rounded-full transition-colors ${on ? "bg-[var(--color-main)]" : "bg-[var(--color-border-strong)]"}`}>
         <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-[var(--color-surface)] shadow transition-all ${on ? "left-[18px]" : "left-0.5"}`} />
       </span>

@@ -66,7 +66,7 @@ export default function RenumberModal(props: RenumberModalProps) {
               <div className="text-body text-[var(--color-text-muted)] mt-0.5">Existing revisions and history are preserved.</div>
             </div>
           </div>
-          <button aria-label="Close" type="button" onClick={onCancel} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
+          <button aria-label="Close" type="button" onClick={onCancel} className="ui-hit p-1.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -79,7 +79,7 @@ export default function RenumberModal(props: RenumberModalProps) {
 
           <label className="block">
             <span className="text-body font-medium text-[var(--color-text)] ">Current number</span>
-            <div className="mt-1 px-2.5 py-1.5 text-sm font-display tabular-nums bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded text-[var(--color-text)]">
+            <div className="mt-1 px-2.5 py-1.5 text-body font-display tabular-nums bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded text-[var(--color-text)]">
               {doc.documentNumber || "(none)"}
             </div>
           </label>
@@ -89,7 +89,7 @@ export default function RenumberModal(props: RenumberModalProps) {
             <input
               value={newNumber}
               onChange={(e) => setNewNumber(e.target.value)}
-              className="mt-1 w-full text-sm font-display tabular-nums border border-[var(--color-border-strong)] rounded px-2.5 py-1.5"
+              className="mt-1 w-full text-body font-display tabular-nums border border-[var(--color-border-strong)] rounded px-2.5 py-1.5"
               autoFocus
             />
           </label>
@@ -101,7 +101,7 @@ export default function RenumberModal(props: RenumberModalProps) {
               onChange={(e) => setReason(e.target.value)}
               rows={2}
               placeholder='e.g. "Scheme migration from P-001 to P-101 series."'
-              className="mt-1 w-full text-sm border border-[var(--color-border-strong)] rounded px-2.5 py-1.5"
+              className="mt-1 w-full text-body border border-[var(--color-border-strong)] rounded px-2.5 py-1.5"
             />
           </label>
 
@@ -113,8 +113,8 @@ export default function RenumberModal(props: RenumberModalProps) {
         </div>
 
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
-          <button type="button" onClick={onCancel} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
-          <button type="submit" disabled={!valid || busy} className="inline-flex items-center gap-1.5 text-sm font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40">
+          <button type="button" onClick={onCancel} disabled={busy} className="text-body text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
+          <button type="submit" disabled={!valid || busy} className="inline-flex items-center gap-1.5 text-body font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
             Renumber
           </button>

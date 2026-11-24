@@ -126,7 +126,7 @@ export default function SkillLibraryPage() {
       <button type="button" role="switch" aria-checked={opts.enabled} onClick={() => void guard(opts.id, opts.onToggle)} disabled={busyId === opts.id}
         aria-label={`${opts.name}: ${opts.enabled ? "on" : "off"}`}
         title={opts.enabled ? "Turn off: it stops running" : "Turn on"}
-        className="inline-flex items-center gap-2 text-body font-medium text-[var(--color-text)] disabled:opacity-50">
+        className="ui-hit inline-flex items-center gap-2 text-body font-medium text-[var(--color-text)] disabled:opacity-50">
         <span className={`relative inline-flex w-9 h-5 rounded-full transition-colors ${opts.enabled ? "bg-[var(--color-main)]" : "bg-[var(--color-border-strong)]"}`}>
           <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-[var(--color-surface)] shadow transition-transform ${opts.enabled ? "translate-x-4" : ""}`} />
         </span>

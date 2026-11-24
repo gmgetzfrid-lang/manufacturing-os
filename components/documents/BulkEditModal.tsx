@@ -99,10 +99,10 @@ export default function BulkEditModal({
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="p-2 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)]"><Pencil className="w-5 h-5" /></div>
           <div className="flex-1">
-            <div className="text-sm font-medium text-[var(--color-text)]">Bulk edit · {docs.length} document{docs.length === 1 ? "" : "s"}</div>
+            <div className="text-body font-medium text-[var(--color-text)]">Bulk edit · {docs.length} document{docs.length === 1 ? "" : "s"}</div>
             <div className="text-body text-[var(--color-text-muted)]">Apply one change to every selected row. Each insert is independent, a single failure doesn&apos;t roll back the rest.</div>
           </div>
-          <button aria-label="Close" onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
+          <button aria-label="Close" onClick={onClose} disabled={busy} className="ui-hit p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -110,7 +110,7 @@ export default function BulkEditModal({
         <div className="px-5 py-4 space-y-4">
           <div>
             <label className="text-body font-medium text-[var(--color-text)] mb-1.5 block">Field to change</label>
-            <select
+            <select aria-label="Field to change"
               value={target.kind === "custom" ? `custom:${target.def.key}` : target.kind}
               onChange={(e) => {
                 const v = e.target.value;
@@ -127,7 +127,7 @@ export default function BulkEditModal({
                   }
                 }
               }}
-              className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm"
+              className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-body"
               disabled={busy}
             >
               <option value="status">Status</option>
@@ -141,26 +141,26 @@ export default function BulkEditModal({
           <div>
             <label className="text-body font-medium text-[var(--color-text)] mb-1.5 block">New value</label>
             {target.kind === "status" ? (
-              <select
+              <select aria-label="New value"
                 value={newValue} onChange={(e) => setNewValue(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm"
+                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-body"
                 disabled={busy}
               >
                 {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
             ) : selectOptions ? (
-              <select
+              <select aria-label="New value"
                 value={newValue} onChange={(e) => setNewValue(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm"
+                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-body"
                 disabled={busy}
               >
                 <option value="">- pick one -</option>
                 {selectOptions.map((o, i) => <option key={i} value={o}>{o}</option>)}
               </select>
             ) : (
-              <input
+              <input aria-label="New value"
                 value={newValue} onChange={(e) => setNewValue(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm"
+                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-body"
                 placeholder="Value to set on every selected doc"
                 disabled={busy}
               />

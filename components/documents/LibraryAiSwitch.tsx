@@ -11,6 +11,7 @@ import { estatePost } from "@/lib/estate/client";
 import { StatusTag } from "@/components/documents/StatusTag";
 
 import { friendlyError } from "@/lib/friendlyError";
+import { appConfirm } from "@/components/providers/DialogProvider";
 export default function LibraryAiSwitch({ orgId, libraryId, libraryName, excluded, canChange, onChanged, compact = false }: {
   orgId: string; libraryId: string; libraryName: string; excluded: boolean; canChange: boolean;
   onChanged?: (excluded: boolean) => void;
@@ -23,8 +24,8 @@ export default function LibraryAiSwitch({ orgId, libraryId, libraryName, exclude
   const on = !excluded;
   const flip = async () => {
     const next = !excluded;
-    if (next && !window.confirm(`Never send "${libraryName}" to AI?\n\nNothing in it will be read by AI, indexed for questions, read off drawings or attached to an AI review. Copies the AI already holds are deleted now. The documents themselves are not touched.`)) return;
-    if (!next && !window.confirm(`Allow "${libraryName}" to be sent to AI again?\n\nNothing is read until someone links it in Intelligence or presses Connect everything.`)) return;
+    if (next && !(await appConfirm({ title: `Never send "${libraryName}" to AI?`, message: "Nothing in it will be read by AI, indexed for questions, read off drawings or attached to an AI review. Copies the AI already holds are deleted now. The documents themselves are not touched.", confirmLabel: "Never send to AI", tone: "danger" }))) return;
+    if (!next && !(await appConfirm({ title: `Allow "${libraryName}" to be sent to AI again?`, message: "Nothing is read until someone links it in Intelligence or presses Connect everything.", confirmLabel: "Allow AI" }))) return;
     setBusy(true); setNote(null);
     try {
       const r = await estatePost<{ excluded: boolean; purged: number }>("/api/documents/library-ai", { orgId, libraryId, excluded: next });

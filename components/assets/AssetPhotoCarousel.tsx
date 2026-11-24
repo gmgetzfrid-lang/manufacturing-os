@@ -264,7 +264,7 @@ export default function AssetPhotoCarousel({
         </div>
       )}
       {active?.caption && (
-        <div className="shrink-0 px-6 py-2 text-center text-sm text-white/80 max-w-3xl mx-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="shrink-0 px-6 py-2 text-center text-body text-white/80 max-w-3xl mx-auto" onClick={(e) => e.stopPropagation()}>
           {active.caption}
         </div>
       )}
@@ -312,7 +312,7 @@ function EmptyState({ canUpload, onUpload }: { canUpload: boolean; onUpload?: ()
       {canUpload && onUpload && (
         <button
           onClick={onUpload}
-          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-medium"
+          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-body font-medium"
         >
           <Upload className="w-4 h-4" /> Upload first photo
         </button>

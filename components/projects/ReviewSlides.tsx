@@ -149,7 +149,7 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
           {edit && !editing && <button type="button" onClick={() => { setEditing(true); setMore(null); }} className={bar} data-slide-edit-open><Pencil className="w-4 h-4" /> Edit</button>}
           <button type="button" onClick={onDownload} disabled={downloading} className={bar}>{downloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}<span className="hidden sm:inline">Download </span>PowerPoint</button>
           {canFull && wide && <button type="button" onClick={toggleFull} className={bar}><Maximize2 className="w-4 h-4" /> Full screen</button>}
-          <button type="button" onClick={onClose} aria-label="Close" className="p-2 rounded-md hover:bg-white/10"><X className="w-5 h-5" /></button>
+          <button type="button" onClick={onClose} aria-label="Close" className="ui-hit p-2 rounded-md hover:bg-white/10"><X className="w-5 h-5" /></button>
         </div>
       )}
       {ready && !full && (
@@ -210,7 +210,7 @@ export default function ReviewSlides({ slides, name, onClose, onDownload, downlo
           <div className="w-full sm:max-w-2xl max-h-[86%] overflow-y-auto rounded-t-2xl sm:rounded-2xl px-5 py-5" style={{ background: C.bg, color: C.ink }}>
             <div className="flex items-start gap-3">
               <h3 className="min-w-0 flex-1 text-section font-semibold leading-tight">{T(more.title)}</h3>
-              <button type="button" onClick={() => setMore(null)} aria-label="Close" className="shrink-0 w-9 h-9 rounded-lg inline-flex items-center justify-center" style={{ background: C.band }}><X className="w-5 h-5" /></button>
+              <button type="button" onClick={() => setMore(null)} aria-label="Close" className="ui-hit shrink-0 w-9 h-9 rounded-lg inline-flex items-center justify-center" style={{ background: C.band }}><X className="w-5 h-5" /></button>
             </div>
             {more.sections.map((sec, i) => (
               <div key={i} className="mt-4">

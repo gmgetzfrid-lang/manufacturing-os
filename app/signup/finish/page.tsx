@@ -9,6 +9,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AlertCircle, Check, Loader2 } from "lucide-react";
 import { AuthCard, authField, authBtn } from "@/components/marketing/AuthCard";
+import { PasswordInput } from "@/components/ui/Field";
 import { Button } from "@/components/ui/Button";
 import { btnPrimary, link, label } from "@/components/admin/kit";
 import { MIN_PASSWORD, passwordProblem } from "@/lib/signinPolicy";
@@ -22,12 +23,11 @@ function Finish() {
   const sessionId = useSearchParams().get("session_id") ?? "";
   const [state, setState] = useState<State>({ k: "loading" });
   const [pw, setPw] = useState("");
-  const [pw2, setPw2] = useState("");
   const [busy, setBusy] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // A field's problem shows after the person leaves it, never while typing.
-  const [left, setLeft] = useState<{ pw?: boolean; pw2?: boolean }>({});
+  const [left, setLeft] = useState<{ pw?: boolean }>({});
 
   useEffect(() => {
     let live = true;
@@ -49,7 +49,6 @@ function Finish() {
     if (state.k !== "set") return;
     const weak = passwordProblem(pw, state.email);
     if (weak) { setError(weak); return; }
-    if (pw !== pw2) { setError("The two passwords don't match."); return; }
     setBusy(true); setError(null);
     try {
       const res = await fetch("/api/signup/finish", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId, password: pw }) });
@@ -92,8 +91,7 @@ function Finish() {
     );
   }
   const weakNow = left.pw && pw ? passwordProblem(pw, state.email) : null;
-  const mismatchNow = left.pw2 && pw2 && pw2 !== pw ? "The two passwords don't match." : null;
-  const ready = !!pw && pw === pw2 && !passwordProblem(pw, state.email);
+  const ready = !!pw && !passwordProblem(pw, state.email);
   return (
     <AuthCard title="Set your password." sub={[state.company, state.email].filter(Boolean).join(", ")}>
       {error && (
@@ -105,21 +103,14 @@ function Finish() {
       <form onSubmit={submit}>
         <div>
           <label htmlFor="fin-pw" className={label}>Password</label>
-          <input id="fin-pw" type="password" value={pw} onChange={(e) => setPw(e.target.value)} onBlur={() => setLeft((l) => ({ ...l, pw: true }))}
-            className={authField} autoComplete="new-password" minLength={MIN_PASSWORD} required
+          <PasswordInput id="fin-pw" value={pw} onChange={(e) => setPw(e.target.value)} onBlur={() => setLeft((l) => ({ ...l, pw: true }))}
+            fieldClassName={authField} autoComplete="new-password" minLength={MIN_PASSWORD} required
             aria-invalid={!!weakNow} aria-describedby="fin-pw-note" />
           <p id="fin-pw-note" className={`mt-1.5 text-body ${weakNow ? "font-medium text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]"}`}>
             {weakNow ?? (pw && !passwordProblem(pw, state.email)
               ? <span className="inline-flex items-center gap-1 text-[var(--state-released-text)]"><Check aria-hidden className="w-3.5 h-3.5" /> Strong enough</span>
               : `At least ${MIN_PASSWORD} characters, with numbers or symbols.`)}
           </p>
-        </div>
-        <div className="mt-4">
-          <label htmlFor="fin-pw2" className={label}>Password again</label>
-          <input id="fin-pw2" type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} onBlur={() => setLeft((l) => ({ ...l, pw2: true }))}
-            className={authField} autoComplete="new-password" minLength={MIN_PASSWORD} required
-            aria-invalid={!!mismatchNow} aria-describedby={mismatchNow ? "fin-pw2-note" : undefined} />
-          {mismatchNow && <p id="fin-pw2-note" className="mt-1.5 text-body font-medium text-[var(--state-overdue-text)]">{mismatchNow}</p>}
         </div>
         <Button type="submit" variant={ready ? "primary" : "secondary"} loading={busy} done={signedIn} doneLabel="Signed in" className={`mt-6 ${authBtn}`}>
           {busy ? "Setting it" : "Set password and sign in"}

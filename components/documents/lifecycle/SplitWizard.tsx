@@ -20,6 +20,7 @@ import type { DocumentRecord, AssetTag } from "@/types/schema";
 import FirstRunHint from "@/components/ui/FirstRunHint";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import DuplicateAwareInput from "@/components/ui/DuplicateAwareInput";
+import { Field } from "@/components/ui/Field";
 import { translatePostgresError } from "@/lib/inputValidation";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 import { useDraft } from "@/hooks/useDraft";
@@ -154,7 +155,7 @@ export default function SplitWizard(props: SplitWizardProps) {
               </div>
             </div>
           </div>
-          <button aria-label="Close" type="button" onClick={onCancel} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
+          <button aria-label="Close" type="button" onClick={onCancel} className="ui-hit p-1.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -212,7 +213,7 @@ export default function SplitWizard(props: SplitWizardProps) {
             type="button"
             onClick={step === 1 ? onCancel : () => setStep((s) => (s - 1) as 1 | 2 | 3)}
             disabled={submitting}
-            className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] inline-flex items-center gap-1"
+            className="text-body text-[var(--color-text-muted)] hover:text-[var(--color-text)] inline-flex items-center gap-1"
           >
             <ChevronLeft className="w-3.5 h-3.5" /> {step === 1 ? "Cancel" : "Back"}
           </button>
@@ -221,7 +222,7 @@ export default function SplitWizard(props: SplitWizardProps) {
               type="button"
               onClick={() => setStep((s) => (s + 1) as 1 | 2 | 3)}
               disabled={step === 1 ? !step1Valid : false}
-              className="inline-flex items-center gap-1.5 text-sm font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 text-body font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40"
             >
               Next <ArrowRight className="w-3.5 h-3.5" />
             </button>
@@ -230,7 +231,7 @@ export default function SplitWizard(props: SplitWizardProps) {
               type="button"
               onClick={onSubmit}
               disabled={submitting || !step3Valid}
-              className="inline-flex items-center gap-1.5 text-sm font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 text-body font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40"
             >
               {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
               Confirm Split
@@ -273,37 +274,42 @@ function Step1Targets({
               )}
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-              <DuplicateAwareInput
-                value={t.documentNumber}
-                onChange={(v) => onUpdate(i, { documentNumber: v })}
-                onDuplicateChange={(isDup) => onUpdate(i, { docNumberConflict: isDup })}
-                check={{
-                  table: "documents",
-                  column: "document_number",
-                  scope: { library_id: libraryId },
-                }}
-                fieldLabel="document number"
-                placeholder="Document number"
-                className="font-display tabular-nums"
-              />
-              <input
-                value={t.title}
-                onChange={(e) => onUpdate(i, { title: e.target.value })}
-                placeholder="Title"
-                className="text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5"
-              />
-              <input
-                value={t.initialRevLabel}
-                onChange={(e) => onUpdate(i, { initialRevLabel: e.target.value })}
-                placeholder="Initial rev (e.g. 0)"
-                className="text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5 font-display tabular-nums"
-              />
-              <input
-                value={t.sheetNumber}
-                onChange={(e) => onUpdate(i, { sheetNumber: e.target.value })}
-                placeholder="Sheet # (optional)"
-                className="text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5 font-display tabular-nums"
-              />
+              <Field label="Document number">
+                <DuplicateAwareInput
+                  value={t.documentNumber}
+                  onChange={(v) => onUpdate(i, { documentNumber: v })}
+                  onDuplicateChange={(isDup) => onUpdate(i, { docNumberConflict: isDup })}
+                  check={{
+                    table: "documents",
+                    column: "document_number",
+                    scope: { library_id: libraryId },
+                  }}
+                  fieldLabel="document number"
+                  className="font-display tabular-nums"
+                />
+              </Field>
+              <Field label="Title">
+                <input
+                  value={t.title}
+                  onChange={(e) => onUpdate(i, { title: e.target.value })}
+                  className="w-full text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5"
+                />
+              </Field>
+              <Field label="Initial revision">
+                <input
+                  value={t.initialRevLabel}
+                  onChange={(e) => onUpdate(i, { initialRevLabel: e.target.value })}
+                  placeholder="0"
+                  className="w-full text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5 font-display tabular-nums"
+                />
+              </Field>
+              <Field label="Sheet number (optional)">
+                <input
+                  value={t.sheetNumber}
+                  onChange={(e) => onUpdate(i, { sheetNumber: e.target.value })}
+                  className="w-full text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5 font-display tabular-nums"
+                />
+              </Field>
             </div>
             <div className="mt-2 flex items-center gap-2">
               <PdfDrop onFile={(f) => onUpdate(i, { file: f })} file={t.file}>
@@ -322,12 +328,13 @@ function Step1Targets({
                 )}
               </PdfDrop>
             </div>
-            <input
-              value={t.changeLog}
-              onChange={(e) => onUpdate(i, { changeLog: e.target.value })}
-              placeholder={`Initial change note (default: "Created via split of ${doc.documentNumber ?? "source"}")`}
-              className="mt-2 w-full text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5"
-            />
+            <Field label="Initial change note (optional)" hint={`Left empty, it reads "Created via split of ${doc.documentNumber ?? "source"}".`} className="mt-2">
+              <input
+                value={t.changeLog}
+                onChange={(e) => onUpdate(i, { changeLog: e.target.value })}
+                className="w-full text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5"
+              />
+            </Field>
           </div>
         ))}
       </div>
@@ -385,7 +392,7 @@ function Step2Tags({
                 </div>
                 {targets.map((t, i) => (
                   <div key={i} className="px-2 py-2 text-center border-l border-[var(--color-border)]">
-                    <input
+                    <input aria-label={`${tag.tag} on target ${i + 1}`}
                       type="checkbox"
                       checked={t.assetTagKeys.has(key)}
                       onChange={() => onToggle(i, key)}
@@ -448,7 +455,7 @@ function Step3Confirm({
           onChange={(e) => setReason(e.target.value)}
           rows={2}
           placeholder='e.g. "Sheet 3 became too cluttered; split into 3A (north side) and 3B (south side)."'
-          className="mt-1 w-full text-sm border border-[var(--color-border-strong)] rounded px-2.5 py-1.5"
+          className="mt-1 w-full text-body border border-[var(--color-border-strong)] rounded px-2.5 py-1.5"
         />
       </label>
 
@@ -463,7 +470,7 @@ function Step3Confirm({
         <input
           value={moc}
           onChange={(e) => setMoc(e.target.value)}
-          className="mt-1 w-full text-sm border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 font-display tabular-nums"
+          className="mt-1 w-full text-body border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 font-display tabular-nums"
         />
       </label>
 

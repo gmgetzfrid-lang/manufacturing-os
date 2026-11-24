@@ -93,7 +93,7 @@ export default function SupersedeModal({
             <Layers className="w-5 h-5 text-[var(--state-held)]" />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-[var(--color-text)] inline-flex items-center gap-1">
+            <div className="text-body font-medium text-[var(--color-text)] inline-flex items-center gap-1">
               Supersede Document
               <IsoGuidance topic="supersede" />
             </div>
@@ -101,13 +101,13 @@ export default function SupersedeModal({
               {doc.documentNumber || doc.title || doc.name}
             </div>
           </div>
-          <button aria-label="Close" onClick={onClose} disabled={busy} className="p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg">
+          <button aria-label="Close" onClick={onClose} disabled={busy} className="ui-hit p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg">
             <X className="w-4 h-4" />
           </button>
         </div>
 
         <div className="px-6 py-5 space-y-4">
-          <div className="text-sm text-[var(--color-text)]">
+          <div className="text-body text-[var(--color-text)]">
             <p>
               Marks this drawing as <b>Superseded</b> - no longer the authoritative document. This is for retirement
               or splits (e.g. P-101 is replaced by P-101A and P-101B). For a new revision of the same drawing,
@@ -117,11 +117,11 @@ export default function SupersedeModal({
 
           <div>
             <label className="text-body font-medium text-[var(--color-text)] ">Reason *</label>
-            <textarea
+            <textarea aria-label="Reason"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               rows={3}
-              className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y"
+              className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-body resize-y"
               placeholder="e.g. P-101 has been split into north (P-101A) and south (P-101B) loops to reflect 2026 expansion. Original P-101 retired."
             />
           </div>
@@ -134,17 +134,18 @@ export default function SupersedeModal({
               Optional. Add by document number: they must already exist in this library.
             </div>
             <div className="mt-1.5 flex gap-1.5">
-              <input
+              <input aria-label="Replacement document number"
                 value={replacementInput}
                 onChange={(e) => setReplacementInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addReplacement(); } }}
-                className="flex-1 px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm"
+                className="flex-1 px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-body"
                 placeholder="P-101A"
               />
               <button
                 onClick={addReplacement}
                 disabled={!replacementInput.trim()}
-                className="px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-body font-medium disabled:opacity-40"
+                aria-label="Add replacement"
+                className="ui-hit px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-body font-medium disabled:opacity-40"
               >
                 <Plus className="w-3.5 h-3.5" />
               </button>
@@ -156,7 +157,8 @@ export default function SupersedeModal({
                     {r}
                     <button
                       onClick={() => removeReplacement(r)}
-                      className="ml-0.5 text-[var(--state-held)] hover:text-[var(--state-overdue)]"
+                      aria-label={`Remove ${r}`}
+                      className="ui-hit ml-0.5 text-[var(--state-held)] hover:text-[var(--state-overdue)]"
                       title="Remove"
                     >
                       <Trash2 className="w-3 h-3" />
@@ -175,10 +177,10 @@ export default function SupersedeModal({
 
           <div>
             <label className="text-body font-medium text-[var(--color-text)] ">MOC Reference</label>
-            <input
+            <input aria-label="MOC reference"
               value={mocRef}
               onChange={(e) => setMocRef(e.target.value)}
-              className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm"
+              className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-body"
               placeholder="MOC-2026-0142 (optional)"
             />
           </div>

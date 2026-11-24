@@ -317,7 +317,7 @@ export default function PlotPlanBoard() {
           <div className="md:w-72 shrink-0 border-t md:border-t-0 md:border-l border-[var(--color-border)] p-5">
             <div className="flex items-center gap-2 mb-2">
               <div className="text-body font-medium text-[var(--color-text-muted)] flex-1">On this drawing</div>
-              <button type="button" onClick={() => setSelectedMarker(null)} aria-label="Close" className="w-9 h-9 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+              <button type="button" onClick={() => setSelectedMarker(null)} aria-label="Close" className="ui-hit w-9 h-9 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
             </div>
             <div className="font-display text-[26px] leading-tight font-semibold text-[var(--color-text)] break-words mb-2"><CopyId value={selAsset.tag} label="tag" /></div>
             {selAsset.description && <p className="text-body text-[var(--color-text-muted)] mb-3">{selAsset.description}</p>}

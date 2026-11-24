@@ -10,6 +10,7 @@ import { undoRun } from "@/lib/drawingCensusClient";
 import type { RunSummary } from "@/lib/estate/runJournal";
 
 import { friendlyError } from "@/lib/friendlyError";
+import { appConfirm } from "@/components/providers/DialogProvider";
 export default function RunsPanel({ orgId, onUndone }: { orgId: string; onUndone?: () => void }) {
   const [state, setState] = useState<{ runs: RunSummary[]; available: boolean } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -37,14 +38,14 @@ export default function RunsPanel({ orgId, onUndone }: { orgId: string; onUndone
             </div>
             {r.undone
               ? <span className="text-body text-[var(--color-text-muted)]">undone</span>
-              : <button disabled={!!busy} onClick={() => {
-                  if (!window.confirm(`Undo "${r.label ?? "this run"}"? Equipment columns, links and readings go back to how they were before it. Registry items it created are removed unless someone has since added to them. Anything a person changed later is left alone.`)) return;
+              : <button disabled={!!busy} onClick={async () => {
+                  if (!(await appConfirm({ title: `Undo "${r.label ?? "this run"}"?`, message: "Equipment columns, links and readings go back to how they were before it. Registry items it created are removed unless someone has since added to them. Anything a person changed later is left alone.", confirmLabel: "Undo run" }))) return;
                   setBusy(r.runId);
                   void undoRun(orgId, r.runId)
                     .then((u) => { setNote(`Undone: ${u.drawings} drawings put back, ${u.assetsRemoved} registry items removed${u.skipped.length ? `, ${u.skipped.length} left as a person changed them since` : ""}.`); setTick((t) => t + 1); onUndone?.(); })
                     .catch((e) => setNote(friendlyError(e)))
                     .finally(() => setBusy(null));
-                }} className="shrink-0 rounded-full border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)] px-2 py-0.5 text-body font-medium inline-flex items-center gap-1 disabled:opacity-50">
+                }} className="pointer-coarse:min-h-11 shrink-0 rounded-full border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)] px-2 py-0.5 text-body font-medium inline-flex items-center gap-1 disabled:opacity-50">
                   {busy === r.runId ? <Loader2 className="w-3 h-3 animate-spin" /> : <Undo2 className="w-3 h-3" />} Undo
                 </button>}
           </li>

@@ -190,10 +190,10 @@ export default function GraphShapeWizard({
                 <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)] shrink-0">
           <Waypoints className="w-4 h-4 text-[var(--color-text-muted)]" />
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-[var(--color-text)]">Shape the graph from this answer</div>
+            <div className="text-body font-medium text-[var(--color-text)]">Shape the graph from this answer</div>
             <div className="text-body text-[var(--color-text-muted)] truncate">{question || "This answer"}</div>
           </div>
-          <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
+          <button onClick={onClose} aria-label="Close" className="ui-hit p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -204,7 +204,7 @@ export default function GraphShapeWizard({
               <span className="relative inline-flex">
                 <BrainCircuit className="w-8 h-8 text-[var(--color-text-muted)]" />
               </span>
-              <div className="text-sm font-medium text-[var(--color-text)]">Reading the answer&hellip;</div>
+              <div className="text-body font-medium text-[var(--color-text)]">Reading the answer&hellip;</div>
               <div className="text-body text-[var(--color-text-muted)] max-w-sm">
                 Grounding it in your controlled documents and equipment registry, then asking your
                 model which of them this answer actually ties together.
@@ -226,7 +226,7 @@ export default function GraphShapeWizard({
               {stage === "done" ? (
                 <div className="py-8 flex flex-col items-center gap-3 text-center">
                   <CheckCircle2 className="w-9 h-9 text-[var(--state-released)]" style={{ animation: "pop 0.3s var(--ease-fluid) both" }} />
-                  <div className="text-sm font-medium text-[var(--color-text)]">
+                  <div className="text-body font-medium text-[var(--color-text)]">
                     {written} connection{written === 1 ? "" : "s"} written to the graph
                   </div>
                   <div className="text-body text-[var(--color-text-muted)] max-w-sm">
@@ -254,7 +254,7 @@ export default function GraphShapeWizard({
                           <div className="flex items-start gap-2.5">
                             <button type="button"
                               onClick={() => setRows((prev) => prev.map((x) => x.key === r.key ? { ...x, accepted: !x.accepted } : x))}
-                              className={`mt-0.5 shrink-0 w-5 h-5 rounded-md border-2 flex items-center justify-center transition-colors ${r.accepted
+                              className={`ui-hit mt-0.5 shrink-0 w-5 h-5 rounded-md border-2 flex items-center justify-center transition-colors ${r.accepted
                                 ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]"
                                 : "border-[var(--color-border-strong)] text-transparent"}`}
                               aria-label={r.accepted ? "Reject this connection" : "Accept this connection"}>
@@ -271,7 +271,7 @@ export default function GraphShapeWizard({
                                   </span>
                                 )}
                               </div>
-                              <input
+                              <input aria-label="Connection name"
                                 value={r.label}
                                 onChange={(e) => setRows((prev) => prev.map((x) => x.key === r.key ? { ...x, label: e.target.value } : x))}
                                 className="w-full px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)]"
@@ -295,20 +295,20 @@ export default function GraphShapeWizard({
                         Connect manually - same verified entities
                       </div>
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <select value={manual.a} onChange={(e) => setManual((m) => ({ ...m, a: e.target.value }))}
+                        <select aria-label="From" value={manual.a} onChange={(e) => setManual((m) => ({ ...m, a: e.target.value }))}
                           className="flex-1 min-w-[8rem] px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body">
                           <option value="">From…</option>
                           {candidates.map((c) => <option key={c.ref} value={c.ref}>{c.type === "document" ? "📄" : "⚙"} {c.label}</option>)}
                         </select>
                         <ArrowRight className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
-                        <select value={manual.b} onChange={(e) => setManual((m) => ({ ...m, b: e.target.value }))}
+                        <select aria-label="To" value={manual.b} onChange={(e) => setManual((m) => ({ ...m, b: e.target.value }))}
                           className="flex-1 min-w-[8rem] px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body">
                           <option value="">To…</option>
                           {candidates.filter((c) => c.ref !== manual.a).map((c) => <option key={c.ref} value={c.ref}>{c.type === "document" ? "📄" : "⚙"} {c.label}</option>)}
                         </select>
                       </div>
                       <div className="flex items-center gap-1.5">
-                        <input value={manual.label} onChange={(e) => setManual((m) => ({ ...m, label: e.target.value }))}
+                        <input aria-label="Relationship (optional)" value={manual.label} onChange={(e) => setManual((m) => ({ ...m, label: e.target.value }))}
                           placeholder="What is the relationship? (optional)"
                           className="flex-1 px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body" />
                         <button type="button" onClick={addManual} disabled={!manual.a || !manual.b}

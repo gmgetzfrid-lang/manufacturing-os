@@ -90,9 +90,9 @@ function Switch({ on, onChange, label, disabled }: { on: boolean; onChange: (v: 
     <button
       type="button" role="switch" aria-checked={on} aria-label={label} disabled={disabled}
       onClick={() => onChange(!on)}
-      className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors shrink-0 disabled:opacity-50 ${on ? "bg-[var(--color-main)]" : "bg-[var(--color-border-control)]"}`}
+      className={`ui-hit relative inline-flex h-7 w-12 items-center rounded-full transition-colors shrink-0 disabled:opacity-50 ${on ? "bg-[var(--color-main)]" : "bg-[var(--color-border-control)]"}`}
     >
-      <span className={`inline-block h-6 w-6 transform rounded-full bg-[var(--color-surface)] ring-1 ring-black/10 transition-transform motion-reduce:transition-none ${on ? "translate-x-[22px]" : "translate-x-0.5"}`} />
+      <span className={`inline-block h-6 w-6 transform rounded-full bg-[var(--color-surface)] ring-1 ring-[var(--color-ink)]/10 transition-transform motion-reduce:transition-none ${on ? "translate-x-[22px]" : "translate-x-0.5"}`} />
     </button>
   );
 }
@@ -266,7 +266,7 @@ export default function SendSheet({ orgId, docs, markedUp, markedUpIds, onClose 
         {/* Title: what is being sent. */}
         <div className="flex items-start gap-3 px-5 pt-3 sm:pt-4 pb-3 border-b border-[var(--color-border)] shrink-0">
           <div className="min-w-0 flex-1">
-            <h2 id="send-sheet-title" className="font-display text-[21px] leading-tight font-semibold truncate">{title}</h2>
+            <h2 id="send-sheet-title" className="font-display text-section leading-tight font-semibold truncate">{title}</h2>
             {sub && <p className="text-body text-[var(--color-text-muted)] mt-0.5 truncate">{sub}</p>}
             {!single && (
               <button type="button" onClick={() => setListOpen((v) => !v)} aria-expanded={listOpen}
@@ -276,7 +276,7 @@ export default function SendSheet({ orgId, docs, markedUp, markedUpIds, onClose 
               </button>
             )}
           </div>
-          <button type="button" onClick={onClose} disabled={!!busy} aria-label="Close" className={`${btnIcon} w-10 h-10 -mr-2 -mt-1`}>
+          <button type="button" onClick={onClose} disabled={!!busy} aria-label="Close" className={`ui-hit ${btnIcon} w-10 h-10 -mr-2 -mt-1`}>
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -574,7 +574,7 @@ function MadeStep({ made, docs, until, withCode, copied, copy, showQr, setShowQr
         <div className="mt-4 rounded-lg border-2 border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-4">
           <div className="text-body font-medium text-[var(--color-text-muted)]">Code</div>
           <div className="mt-1 flex items-center gap-3 flex-wrap">
-            <span className="text-[36px] leading-none font-bold tracking-[0.14em] tabular-nums text-[var(--color-text)] select-all" aria-label={`Code ${made.code.split("").join(" ")}`}>
+            <span className="text-title sm:text-hero leading-none font-bold tracking-[0.14em] tabular-nums text-[var(--color-text)] select-all" aria-label={`Code ${made.code.split("").join(" ")}`}>
               {made.code.slice(0, 3)}<span className="inline-block w-3" />{made.code.slice(3)}
             </span>
             <div className="flex-1" />

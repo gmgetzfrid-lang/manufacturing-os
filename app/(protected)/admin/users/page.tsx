@@ -12,7 +12,7 @@ import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
 import type { Role } from '@/types/schema';
 import { addableRoles, capabilitiesAdded, primaryRole, CAPABILITY_LABELS } from '@/lib/roleCapabilities';
-import { UserPlus, KeyRound, UserMinus, Loader2, Plus, X, ShieldCheck, Search } from 'lucide-react';
+import { UserPlus, KeyRound, UserMinus, Loader2, Plus, X, ShieldCheck, Search, CircleAlert } from 'lucide-react';
 import { PageShell } from '@/components/ui/PageShell';
 import { PageHero, PageBody, heroPrimary } from '@/components/ui/PageHero';
 import { tbl, btnIcon, link, shortDate, StatusTag, type Tone } from '@/components/admin/kit';
@@ -200,7 +200,7 @@ export default function AdminUsersPage() {
   const handleResetPassword = async (member: MemberRow) => {
     if (!activeOrgId || !member.uid) return;
     const who = member.display_name || member.email || 'this person';
-    if (!(await appConfirm({ message: `Give ${who} a new one-time password? Their current password stops working, and they must set their own today.`, confirmLabel: 'Reset password' }))) return;
+    if (!(await appConfirm({ title: `Reset the password for ${who}?`, message: 'They get a new one-time password. Their current password stops working, and they must set their own today.', confirmLabel: 'Reset password' }))) return;
     setResettingId(member.id);
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -229,7 +229,7 @@ export default function AdminUsersPage() {
     const who = member.display_name || member.email || 'this person';
     // On the server: when this was their last workspace, their sign-in is
     // deleted too, so no account is left that belongs to no workspace.
-    if (!(await appConfirm({ message: `Remove ${who} from this workspace? They lose access now, and their sign-in is deleted unless they're in another workspace. To bring them back, add them again.`, tone: 'danger', confirmLabel: 'Remove' }))) {
+    if (!(await appConfirm({ title: `Remove ${who} from this workspace?`, message: "They lose access now, and their sign-in is deleted unless they're in another workspace. To bring them back, add them again.", tone: 'danger', confirmLabel: 'Remove from workspace' }))) {
       return;
     }
     setRemovingId(member.id);
@@ -587,11 +587,11 @@ function AddPersonDialog({ formData, setFormData, policy, members, processing, e
             </Select>
           </Field>
 
-          {error && <p role="alert" className="text-body font-medium text-[var(--state-overdue-text)]">{error}</p>}
+          {error && <p role="alert" className="text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" /><span>{error}</span></p>}
 
           <div className="pt-1">
             <Button type="submit" loading={processing} disabled={blocked} className="w-full">
-              {already ? 'Add them again' : 'Add to workspace'}
+              {processing ? 'Adding' : already ? 'Add them again' : 'Add to workspace'}
             </Button>
             <p className="text-body text-center text-[var(--color-text-muted)] mt-2.5">
               {already ? 'Their sign-in stays as it is.'

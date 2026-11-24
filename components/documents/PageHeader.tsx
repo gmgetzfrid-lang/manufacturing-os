@@ -32,9 +32,9 @@ export default function PageHeader({ header, actions }: { header: ResolvedHeader
           <NodeIcon name={header.icon} className="w-5 h-5" />
         </span>
         <div className="min-w-0 flex-1">
-          <h1 className="text-lg sm:text-xl font-medium text-white drop-shadow truncate">{header.title}</h1>
+          <h1 className="text-section font-medium text-white drop-shadow truncate">{header.title}</h1>
           {header.description && header.height !== "compact" && (
-            <p className="text-sm text-white/85 drop-shadow line-clamp-1">{header.description}</p>
+            <p className="text-body text-white/85 drop-shadow line-clamp-1">{header.description}</p>
           )}
         </div>
         {actions && <div className="shrink-0">{actions}</div>}

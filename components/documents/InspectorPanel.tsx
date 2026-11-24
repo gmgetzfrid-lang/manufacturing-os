@@ -651,7 +651,7 @@ export default function InspectorPanel({
           <button
             type="button"
             onClick={onFullScreen}
-            className="absolute inset-0 z-10 bg-black/0 hover:bg-black/10 transition-colors cursor-zoom-in"
+            className="absolute inset-0 z-10 bg-transparent hover:bg-[var(--color-ink)]/10 transition-colors cursor-zoom-in"
             title="Open full size"
             aria-label="Open full size"
           />
@@ -1052,7 +1052,7 @@ export default function InspectorPanel({
           {!isController && isOwner && selectedDoc.id && selectedDoc.orgId && (
             <button
               onClick={async () => {
-                const reason = await appPrompt({ title: "Request deletion", message: "Admin / Doc Control will review. Why should this document be deleted?", placeholder: "Reason" });
+                const reason = await appPrompt({ title: "Request deletion", message: "Admin / Doc Control will review. Why should this document be deleted?", placeholder: "Reason", confirmLabel: "Request deletion" });
                 if (!reason?.trim() || !uid) return;
                 try {
                   await requestDeletion({

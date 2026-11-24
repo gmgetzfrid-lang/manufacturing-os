@@ -10,6 +10,8 @@ import { estatePost } from "@/lib/estate/client";
 import type { SuspectList } from "@/lib/estate/discoveredServer";
 
 import { friendlyError } from "@/lib/friendlyError";
+import { appConfirm } from "@/components/providers/DialogProvider";
+import { FieldError } from "@/components/ui/Field";
 export default function SuspectEquipment({ orgId, refreshKey = "", onRemoved }: { orgId: string; refreshKey?: string; onRemoved?: () => void }) {
   const [state, setState] = useState<{ key: string; list: SuspectList | null; error: string | null }>({ key: "", list: null, error: null });
   const [picked, setPicked] = useState<Set<string> | null>(null);
@@ -24,13 +26,13 @@ export default function SuspectEquipment({ orgId, refreshKey = "", onRemoved }: 
     return () => { alive = false; };
   }, [orgId, key]);
   const list = state.key === key ? state.list : null;
-  if (done) return <div className="rounded-xl border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] px-3 py-2 text-xs text-[var(--state-released)] inline-flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5" /> {done}</div>;
+  if (done) return <div className="rounded-xl border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] px-3 py-2 text-caption text-[var(--state-released)] inline-flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5" /> {done}</div>;
   if (!list || list.items.length === 0) return null;
   const sel = picked ?? new Set(list.items.map((i) => i.id));
   const toggle = (id: string) => { const n = new Set(sel); if (n.has(id)) n.delete(id); else n.add(id); setPicked(n); };
   const remove = async () => {
     if (!sel.size) return;
-    if (!window.confirm(`Remove ${sel.size} item${sel.size === 1 ? "" : "s"} from the equipment registry? Only items the drawings created and nobody has touched are removed; each is checked again on the server first.`)) return;
+    if (!(await appConfirm({ title: `Remove ${sel.size} item${sel.size === 1 ? "" : "s"} from the equipment registry?`, message: "Only items the drawings created and nobody has touched are removed; each is checked again on the server first.", confirmLabel: `Remove ${sel.size} item${sel.size === 1 ? "" : "s"}`, tone: "danger" }))) return;
     setBusy(true);
     try {
       const r = await estatePost<{ removed: number; columnsCleaned: number }>("/api/estate/discovered", { orgId, action: "remove", ids: [...sel] });
@@ -48,12 +50,12 @@ export default function SuspectEquipment({ orgId, refreshKey = "", onRemoved }: 
           <div className="text-body text-[var(--color-text-muted)]">Drawing numbers, pipe specs, nameplates and revisions that an earlier reader took for equipment. Items with photos, files, notes, manual tags or edits are never listed.{list.readingInProgress ? " Drawings are still being read, so items on no sheet yet are not judged." : ""}</div>
         </div>
       </div>
-      {state.error && <div className="text-[var(--state-overdue)]">{state.error}</div>}
+      {state.error && <FieldError>{state.error}</FieldError>}
       <ul className="max-h-56 overflow-y-auto space-y-0.5">
         {list.items.map((i) => (
           <li key={i.id}>
             <label className="flex items-start gap-1.5 cursor-pointer rounded px-1 py-0.5 hover:bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)]">
-              <input type="checkbox" checked={sel.has(i.id)} onChange={() => toggle(i.id)} className="mt-0.5 w-3.5 h-3.5 accent-amber-600" />
+              <input type="checkbox" checked={sel.has(i.id)} onChange={() => toggle(i.id)} className="mt-0.5 w-3.5 h-3.5 accent-[var(--state-held)]" />
               <span className="min-w-0">
                 <span className="font-bold font-display tabular-nums">{i.tag}</span>
                 <span className="text-[var(--color-text-muted)]"> · {i.reason === "on-no-sheet" ? "on no sheet any more" : <>read from &ldquo;<span className="font-display tabular-nums">{(i.readFrom ?? "").slice(0, 60)}</span>&rdquo;</>}{i.sheets ? ` · ${i.sheets} sheet${i.sheets === 1 ? "" : "s"}` : ""}</span>
@@ -63,7 +65,7 @@ export default function SuspectEquipment({ orgId, refreshKey = "", onRemoved }: 
         ))}
       </ul>
       <button onClick={() => void remove()} disabled={busy || !sel.size} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] px-3 py-1.5 font-medium inline-flex items-center gap-1.5 disabled:opacity-50">
-        {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} Remove {sel.size} from the registry
+        {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}{" "}{busy ? "Removing" : `Remove ${sel.size} from the registry`}
       </button>
     </div>
   );

@@ -298,7 +298,7 @@ export default function PackagesPage() {
               if (open) { setOpenIds((s) => { const n = new Set(s); n.delete(pkg.id); return n; }); setClosedIds((s) => new Set(s).add(pkg.id)); }
               else { setOpenIds((s) => new Set(s).add(pkg.id)); setClosedIds((s) => { const n = new Set(s); n.delete(pkg.id); return n; }); }
             };
-            const small = "inline-flex items-center gap-1.5 h-8 pointer-coarse:h-10 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
+            const small = "inline-flex items-center gap-1.5 h-8 pointer-coarse:h-11 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
             return (
               <tbody key={pkg.id} data-package-id={pkg.id} className={`border-t border-[var(--color-border)] first-of-type:border-t-0 scroll-mt-24 ${highlightId === pkg.id ? "bg-[var(--color-accent-soft)]" : ""}`}>
                 <tr className="hover:bg-[var(--color-surface-2)] max-md:block max-md:relative">
@@ -354,7 +354,7 @@ export default function PackagesPage() {
                       <MoreMenu
                         iconOnly
                         label={`More for ${pkg.name}`}
-                        triggerClass="inline-grid place-items-center w-8 h-8 pointer-coarse:w-10 pointer-coarse:h-10 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                        triggerClass="inline-grid place-items-center w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                         items={[
                           ...(stale ? [{ icon: <Printer className="w-4 h-4" />, label: printing === pkg.id ? "Printing…" : "Print pack", onClick: () => { if (printing !== pkg.id) void handlePrintPack(pkg); } }] : []),
                           { icon: <Archive className="w-4 h-4" />, label: busyId === pkg.id ? "Closing…" : "Close package (job done)", line: stale, onClick: () => { if (busyId !== pkg.id) void handleClose(pkg); } },
@@ -400,7 +400,7 @@ export default function PackagesPage() {
                 <h2 className="font-display text-section font-semibold text-[var(--color-heading)]">New work package</h2>
                 <div className="text-body text-[var(--color-text-muted)]">Revisions are pinned as of right now.</div>
               </div>
-              <button aria-label="Close" onClick={() => setShowCreate(false)} className="w-10 h-10 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-5 h-5" /></button>
+              <button aria-label="Close" onClick={() => setShowCreate(false)} className="ui-hit w-10 h-10 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-5 h-5" /></button>
             </div>
 
             <div className="p-5 space-y-4">
@@ -429,7 +429,7 @@ export default function PackagesPage() {
                 <label htmlFor="pkg-find" className={kitLabel}>Drawings</label>
                 <div className="relative">
                   <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)] pointer-events-none" />
-                  <input
+                  <input type="search"
                     id="pkg-find"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
@@ -458,7 +458,7 @@ export default function PackagesPage() {
                       <div key={p.id} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--color-border)] text-body">
                         <span className="ui-id text-reading flex-1 truncate">{p.label}</span>
                         <span className="text-body text-[var(--color-text-muted)]">Pins rev <span className="ui-id text-[var(--color-text)]">{p.rev ?? "-"}</span></span>
-                        <button aria-label={`Remove ${p.label}`} onClick={() => setPicked((prev) => prev.filter((x) => x.id !== p.id))} className="w-8 h-8 pointer-coarse:w-10 pointer-coarse:h-10 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)]">
+                        <button aria-label={`Remove ${p.label}`} onClick={() => setPicked((prev) => prev.filter((x) => x.id !== p.id))} className="w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)]">
                           <X className="w-4 h-4" />
                         </button>
                       </div>

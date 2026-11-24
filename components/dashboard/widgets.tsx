@@ -23,7 +23,7 @@ import {
   Plus, Zap, Rocket, Loader2, Bell, Layers, Send,
   XCircle, LayoutDashboard,
   Sparkles,
-  type LucideIcon, History, PenLine, FileLock, OctagonPause, Flag,
+  type LucideIcon, History, PenLine, FileLock, OctagonPause, Flag, CircleAlert,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { friendlyError } from "@/lib/friendlyError";
@@ -365,7 +365,7 @@ function OutstandingBody() {
       <div className={`space-y-5 ${SCROLL}`}>
         {snap.markupRequestsToMe.length > 0 && (
           <WidgetCard icon={PenLine} title="Markup requests for you" count={snap.markupRequestsToMe.length}>
-            {resolveError && <p role="alert" className="mt-2 text-body font-medium text-[var(--state-overdue)]">{resolveError}</p>}
+            {resolveError && <p role="alert" className="mt-2 text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" /><span>{resolveError}</span></p>}
             <ul className="divide-y divide-[var(--color-border)]">
               {snap.markupRequestsToMe.slice(0, 6).map((mr) => (
                 <li key={mr.id} className={`${row} flex-wrap`}>
@@ -532,7 +532,7 @@ function AdminAnalyticsBody() {
           <ul className="divide-y divide-[var(--color-border)]">
             {data!.topLibs.map((l, i) => (
               <li key={l.id}>
-                <Link href={`/documents/${l.id}`} className="group flex items-center gap-3 py-2">
+                <Link href={`/documents/${l.id}`} className="group flex items-center gap-3 py-2 pointer-coarse:min-h-11">
                   <span className="text-reading font-medium text-[var(--color-text)] truncate w-40 group-hover:text-[var(--color-accent-text)]">{l.name}</span>
                   <span className="flex-1 h-2 rounded-sm bg-[var(--color-surface-2)] overflow-hidden">
                     {/* The busiest one in the brand color, the rest gray. */}

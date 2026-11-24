@@ -629,7 +629,7 @@ export default function MetadataStagingModal({
           <button aria-label="Close"
             onClick={requestClose}
             title={submitting ? "Stop the upload and close" : "Close"}
-            className="w-10 h-10 grid place-items-center rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+            className="ui-hit w-10 h-10 grid place-items-center rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
           >
             <X className="w-5 h-5" />
           </button>
@@ -645,7 +645,7 @@ export default function MetadataStagingModal({
             <div className="flex items-start gap-3">
               <FolderTree className="w-5 h-5 text-[var(--color-text-muted)] shrink-0 mt-0.5" />
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium text-[var(--color-text)]">
+                <div className="text-body font-medium text-[var(--color-text)]">
                   Goes into {folderUpload.destination}, in the same folders as on your computer
                 </div>
                 <div className="text-body text-[var(--color-text-muted)] mt-0.5">
@@ -783,7 +783,7 @@ export default function MetadataStagingModal({
               <Wand2 className="w-3 h-3" /> Apply to all:
             </span>
             <div className="inline-flex items-center gap-1.5">
-              <select value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value)} className="text-body border border-[var(--color-border-strong)] rounded-md px-2 py-1 bg-[var(--color-surface)]">
+              <select aria-label="Status for all" value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value)} className="text-body border border-[var(--color-border-strong)] rounded-md px-2 py-1 bg-[var(--color-surface)]">
                 <option value="">Status...</option>
                 {statusOptions.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
@@ -791,13 +791,13 @@ export default function MetadataStagingModal({
             </div>
             {typeCol && (
               <div className="inline-flex items-center gap-1.5">
-                <input value={bulkType} onChange={(e) => setBulkType(e.target.value)} placeholder={typeCol.label} className="text-body border border-[var(--color-border-strong)] rounded-md px-2 py-1 bg-[var(--color-surface)] w-32" />
+                <input aria-label={`${typeCol.label} for all`} value={bulkType} onChange={(e) => setBulkType(e.target.value)} placeholder={typeCol.label} className="text-body border border-[var(--color-border-strong)] rounded-md px-2 py-1 bg-[var(--color-surface)] w-32" />
                 <button onClick={applyBulkType} disabled={!bulkType} className="text-body font-medium h-8 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] disabled:opacity-40">Apply</button>
               </div>
             )}
             {unitCol && (
               <div className="inline-flex items-center gap-1.5">
-                <input value={bulkUnit} onChange={(e) => setBulkUnit(e.target.value)} placeholder={unitCol.label} className="text-body border border-[var(--color-border-strong)] rounded-md px-2 py-1 bg-[var(--color-surface)] w-24" />
+                <input aria-label={`${unitCol.label} for all`} value={bulkUnit} onChange={(e) => setBulkUnit(e.target.value)} placeholder={unitCol.label} className="text-body border border-[var(--color-border-strong)] rounded-md px-2 py-1 bg-[var(--color-surface)] w-24" />
                 <button onClick={applyBulkUnit} disabled={!bulkUnit} className="text-body font-medium h-8 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] disabled:opacity-40">Apply</button>
               </div>
             )}
@@ -883,6 +883,7 @@ export default function MetadataStagingModal({
                     {!canonical.docNumber && (
                       <td className="px-3 py-1.5">
                         <Cell
+                          label="Document number"
                           value={it.documentNumber}
                           onChange={(v) => updateRow(it.id, { documentNumber: v })}
                           error={errFor("documentNumber")}
@@ -893,6 +894,7 @@ export default function MetadataStagingModal({
                     {!canonical.title && (
                       <td className="px-3 py-1.5">
                         <Cell
+                          label="Title"
                           value={it.title}
                           onChange={(v) => updateRow(it.id, { title: v })}
                           error={errFor("title")}
@@ -903,6 +905,7 @@ export default function MetadataStagingModal({
                     {!canonical.rev && (
                       <td className="px-3 py-1.5">
                         <Cell
+                          label="Revision"
                           value={it.rev}
                           onChange={(v) => updateRow(it.id, { rev: v })}
                           widthClass="w-12"
@@ -912,7 +915,7 @@ export default function MetadataStagingModal({
                     )}
                     {!canonical.status && (
                       <td className="px-3 py-1.5">
-                        <select
+                        <select aria-label="Status"
                           value={it.status}
                           onChange={(e) => updateRow(it.id, { status: e.target.value })}
                           className="w-full text-body border border-[var(--color-border)] rounded-md px-1.5 py-1 bg-[var(--color-surface)]"
@@ -947,7 +950,7 @@ export default function MetadataStagingModal({
                       return (
                         <td key={c.key} className="px-3 py-1.5">
                           {renderAsStatusSelect ? (
-                            <select
+                            <select aria-label="Status"
                               value={value}
                               onChange={(e) => onChange(e.target.value)}
                               className="w-full text-body border border-[var(--color-border)] rounded-md px-1.5 py-1 bg-[var(--color-surface)]"
@@ -955,7 +958,7 @@ export default function MetadataStagingModal({
                               {statusOptions.map((s) => <option key={s} value={s}>{s}</option>)}
                             </select>
                           ) : c.type === "select" && c.options ? (
-                            <select
+                            <select aria-label={c.label}
                               value={value}
                               onChange={(e) => onChange(e.target.value)}
                               className={`w-full text-body border rounded-md px-1.5 py-1 bg-[var(--color-surface)] ${errFor(c.key) ? "border-[var(--state-overdue)]" : "border-[var(--color-border)]"}`}
@@ -965,6 +968,7 @@ export default function MetadataStagingModal({
                             </select>
                           ) : (
                             <Cell
+                              label={c.label}
                               value={value}
                               onChange={onChange}
                               error={errFor(c.key)}
@@ -977,10 +981,10 @@ export default function MetadataStagingModal({
                     })}
                     <td className="px-2 py-1.5">
                       <div className="flex items-center gap-1">
-                        <button onClick={() => duplicateRow(it.id)} title="Duplicate row" className="p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded">
+                        <button onClick={() => duplicateRow(it.id)} title="Duplicate row" aria-label="Duplicate row" className="inline-flex items-center justify-center pointer-coarse:size-11 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded">
                           <Copy className="w-3 h-3" />
                         </button>
-                        <button onClick={() => removeRow(it.id)} title="Remove from batch" className="p-1 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] rounded">
+                        <button onClick={() => removeRow(it.id)} title="Remove from batch" aria-label="Remove from batch" className="inline-flex items-center justify-center pointer-coarse:size-11 p-1 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] rounded">
                           <Trash2 className="w-3 h-3" />
                         </button>
                       </div>
@@ -1104,14 +1108,15 @@ export default function MetadataStagingModal({
 
 // Editable cell with optional error highlight
 function Cell({
-  value, onChange, error, widthClass, center,
+  value, onChange, error, widthClass, center, label,
 }: {
   value: string; onChange: (v: string) => void;
-  error?: string; widthClass?: string; center?: boolean;
+  error?: string; widthClass?: string; center?: boolean; label?: string;
 }) {
   return (
     <div className="relative">
       <input
+        aria-label={label}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className={`${widthClass || "w-full"} text-body border rounded-md px-1.5 py-1 bg-[var(--color-surface)] ${error ? "border-[var(--state-overdue)] ring-1 ring-[var(--state-overdue)]" : "border-[var(--color-border)]"} ${center ? "text-center" : ""}`}

@@ -14,7 +14,7 @@
 
 import React, { useMemo, useRef, useState } from "react";
 import {
-  FileUp, Loader2, Sparkles, X, Check, CheckCircle2, Plus, Trash2, Building2,
+  FileUp, Loader2, Sparkles, X, Check, CheckCircle2, Plus, Trash2, Building2, CircleAlert
 } from "lucide-react";
 import { fmtMoney, type Actor, type CostAccount, type CostParty } from "@/lib/costs";
 import {
@@ -71,7 +71,7 @@ export function BudgetDocDrop({ orgId, projectId, onRead, compact, label }: {
           </span>
         )}
         <span className="min-w-0">
-          <span className="block text-xs font-medium text-[var(--color-text)] truncate">
+          <span className="block text-caption font-medium text-[var(--color-text)] truncate">
             {drag.over ? drag.say : reading ? <><Loader2 className="w-3 h-3 animate-spin inline mr-1" />Reading {reading.name} · {fileSize(reading.size)}</> : label ?? "Drop your AFE, estimate, or budget sheet"}
           </span>
           <span className="block text-caption text-[var(--color-text-muted)]">
@@ -88,7 +88,7 @@ export function BudgetDocDrop({ orgId, projectId, onRead, compact, label }: {
           {failed && <FileThumb file={failed} size={24} />}
           <span className="min-w-0 flex-1">{failed ? `${failed.name} · ${fileSize(failed.size)}: ` : ""}{error}</span>
           {failed && (
-            <button type="button" onClick={() => void read(failed)} className="shrink-0 h-7 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+            <button type="button" onClick={() => void read(failed)} className="shrink-0 h-7 pointer-coarse:h-11 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
               Try again
             </button>
           )}
@@ -149,7 +149,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
       <div className="px-4 pt-3 pb-2 flex items-start gap-3">
         <span className="p-1.5 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)]"><Sparkles className="w-4 h-4" /></span>
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-[var(--color-text)]">
+          <div className="text-body font-medium text-[var(--color-text)]">
             {[p.docType, p.docNumber].filter(Boolean).join(" ") || "Budget document"}{p.title ? ` - ${p.title}` : ""}
           </div>
           <div className="text-caption text-[var(--color-text-muted)] mt-0.5 flex flex-wrap gap-x-3">
@@ -162,7 +162,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
             )}
           </div>
         </div>
-        <button onClick={onClose} disabled={applying} aria-label="Close" className="p-1 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
+        <button onClick={onClose} disabled={applying} aria-label="Close" className="ui-hit p-1 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
       </div>
 
       {/* Reconciliation — the three numbers that have to agree */}
@@ -189,7 +189,7 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
 
       {/* Lines */}
       <div className="px-4 pb-2 overflow-x-auto">
-        <table className="w-full text-xs min-w-[640px]">
+        <table className="w-full text-caption min-w-[640px]">
           <thead>
             <tr className="text-left text-body font-medium text-[var(--color-text-muted)]">
               <th className="py-1.5 w-6" />
@@ -212,8 +212,8 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
                       className="accent-[var(--color-text)]" title="Include this line" />
                   </td>
                   <td className="py-1.5 pr-2">
-                    <input value={l.name} onChange={(e) => patch(l.key, { name: e.target.value })}
-                      className="w-full h-7 pointer-coarse:h-11 rounded-md border border-transparent hover:border-[var(--color-border)] bg-transparent px-1.5 text-xs font-medium text-[var(--color-text)]" />
+                    <input value={l.name} onChange={(e) => patch(l.key, { name: e.target.value })} aria-label="Line name"
+                      className="w-full h-7 pointer-coarse:h-11 rounded-md border border-transparent hover:border-[var(--color-border)] bg-transparent px-1.5 text-caption font-medium text-[var(--color-text)]" />
                     {(exists || upd || l.note) && (
                       <div className="px-1.5 text-caption text-[var(--color-text-muted)]">
                         {exists && <span className="font-medium text-[var(--color-text-muted)]">Already a budget line, same budget. </span>}
@@ -229,14 +229,14 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
                     )}
                   </td>
                   <td className="py-1.5 pr-2">
-                    <select value={l.costType} onChange={(e) => patch(l.key, { costType: e.target.value as CostType })}
+                    <select value={l.costType} onChange={(e) => patch(l.key, { costType: e.target.value as CostType })} aria-label={`Cost type for ${l.name || "this line"}`}
                       className="h-7 pointer-coarse:h-11 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1 text-caption">
                       {COST_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                     </select>
                   </td>
                   <td className="py-1.5 pr-2">
                     <div className="flex items-center gap-1">
-                      <input value={l.supplier ?? ""} onChange={(e) => patch(l.key, { supplier: e.target.value.trim() ? e.target.value : null })}
+                      <input value={l.supplier ?? ""} aria-label={`Supplier for ${l.name || "this line"}`} onChange={(e) => patch(l.key, { supplier: e.target.value.trim() ? e.target.value : null })}
                         placeholder="-" className="w-36 h-7 pointer-coarse:h-11 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 text-caption" />
                       {l.supplier && !exists && (
                         <span title={known ? `Matches ${known.name} on this project` : "New company: it will be added"}
@@ -247,13 +247,13 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
                     </div>
                   </td>
                   <td className="py-1.5 text-right">
-                    <input value={l.amount ?? ""} inputMode="decimal"
+                    <input value={l.amount ?? ""} inputMode="decimal" aria-label={`Budget for ${l.name || "this line"}`}
                       onChange={(e) => { const n = Number(e.target.value.replace(/[^0-9.]/g, "")); patch(l.key, { amount: e.target.value.trim() && Number.isFinite(n) ? n : null }); }}
                       className="w-28 h-7 pointer-coarse:h-11 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 text-caption text-right font-display tabular-nums" />
                   </td>
                   <td className="py-1.5 pl-1">
                     <button onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))}
-                      className="p-1 text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]" title="Remove line"><Trash2 className="w-3 h-3" /></button>
+                      aria-label={`Remove ${l.name || "this line"}`} className="ui-hit p-1 text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]" title="Remove line"><Trash2 className="w-3 h-3" /></button>
                   </td>
                 </tr>
               );
@@ -271,11 +271,11 @@ export function BudgetImportSheet({ orgId, projectId, actor, result, accounts, p
           {plan.partiesToCreate.length > 0 ? ` and ${plan.partiesToCreate.length} compan${plan.partiesToCreate.length === 1 ? "y" : "ies"} (${plan.partiesToCreate.join(", ")})` : ""}.
           {" "}No money is posted: quotes and invoices do that.
         </span>
-        {error && <span className="text-caption font-medium text-[var(--state-overdue-text)]">{error}</span>}
+        {error && <span role="alert" className="text-caption font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{error}</span></span>}
         <span className="ml-auto flex items-center gap-2">
-          <button onClick={onClose} disabled={applying} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+          <button onClick={onClose} disabled={applying} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
           <button onClick={() => void apply()} disabled={applying || (plan.accountsToCreate.length === 0 && updating === 0 && recon.authorized == null)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {applying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />} {accounts.length ? "Apply" : "Build cost model"}
           </button>
         </span>
@@ -289,7 +289,7 @@ function Fact({ label, value, sub, tone }: { label: string; value: string; sub?:
   return (
     <div className={`rounded-xl border px-3 py-2 ${ring}`}>
       <div className="text-body font-medium text-[var(--color-text-muted)]">{label}</div>
-      <div className="text-sm font-medium tabular-nums text-[var(--color-text)]">{value}</div>
+      <div className="text-body font-medium tabular-nums text-[var(--color-text)]">{value}</div>
       {sub && <div className={`text-caption font-medium ${tone === "warn" ? "text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>{sub}</div>}
     </div>
   );

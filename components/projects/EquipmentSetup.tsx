@@ -14,7 +14,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, Check, Loader2, Pencil, Plus, X } from "lucide-react";
+import { AlertTriangle, Check, Loader2, Pencil, Plus, X, CircleAlert } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import type { Milestone } from "@/types/schema";
 import { tagKey, registryTagKey } from "@/lib/findings";
@@ -60,7 +60,7 @@ export function useProjectEquipment(orgId: string | null | undefined, projectId:
 
 const btn = "inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-caption font-medium px-3.5 py-2 shadow-sm disabled:opacity-50";
 const quiet = "inline-flex items-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-caption font-medium text-[var(--color-text)] px-2.5 py-1.5 disabled:opacity-50";
-const field = "h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-body text-[var(--color-text)]";
+const field = "h-9 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-body text-[var(--color-text)]";
 
 export function EquipmentStep({ projectId, projectName, milestones, canManage, userId }: {
   projectId: string; projectName?: string; milestones: Milestone[]; canManage: boolean; userId: string;
@@ -203,7 +203,7 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
                   <span key={u.code} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] pl-2.5 pr-1 py-1 text-caption font-medium text-[var(--color-text)]">
                     <span className="min-w-0">{unitName(u)}<span className="font-normal text-[var(--color-text-muted)]">{i === 0 && pUnits.length > 1 ? " · main" : ""}{n ? ` · ${n} WO${n === 1 ? "" : "s"}` : ""}</span></span>
                     {busy === `unit:${u.code}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      : own ? <button type="button" disabled={!!busy} onClick={() => unitOn(u, false)} aria-label={`Take the project off ${u.label}`} className="p-0.5 rounded-full hover:bg-[var(--color-surface-2)]"><X className="w-3.5 h-3.5" /></button>
+                      : own ? <button type="button" disabled={!!busy} onClick={() => unitOn(u, false)} aria-label={`Take the project off ${u.label}`} className="ui-hit p-0.5 rounded-full hover:bg-[var(--color-surface-2)]"><X className="w-3.5 h-3.5" /></button>
                         : <span className="px-1 text-caption font-normal text-[var(--color-text-muted)]" title="Linked in Documents › Scope">Scope</span>}
                   </span>
                 );
@@ -330,7 +330,7 @@ export function EquipmentStep({ projectId, projectName, milestones, canManage, u
             ))}
           </ul>
         )}
-        {err && <div className="text-caption text-[var(--state-overdue-text)]">{err}</div>}
+        {err && <div role="alert" className="text-caption text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{err}</span></div>}
       </div>
     </div>
   );
@@ -368,7 +368,7 @@ function NameDiffers({ orgId, m, canRename, busy, onRename }: { orgId: string; m
       {/* A rename only on the drawings' word: some sheet prints this name beside this number. */}
       {drawn && !backed && <div>No drawing on file prints {m.tag} beside {code}. Check the work order&apos;s name and its equipment number before changing the list.</div>}
       {backed && (canRename
-        ? <button type="button" disabled={busy} onClick={onRename} className="inline-flex items-center gap-1.5 h-10 px-3 rounded-lg border border-[var(--state-held)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Rename it {m.tag} in the equipment list</button>
+        ? <button type="button" disabled={busy} onClick={onRename} className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--state-held)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Rename it {m.tag} in the equipment list</button>
         : <div className="text-caption">Only an admin can rename equipment.</div>)}
     </div>
   );

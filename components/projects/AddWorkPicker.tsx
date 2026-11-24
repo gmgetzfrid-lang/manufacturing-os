@@ -92,7 +92,7 @@ export default function AddWorkPicker({ day: when, tz, milestones, onPick, onNew
               <div className="text-body font-medium text-[var(--color-text-muted)]">Add discovery or added scope · {label}</div>
               <div className="mt-0.5 text-reading font-medium text-[var(--color-text)]">{onNew ? "A new work order, or under one on the schedule?" : "Which work order is it under?"}</div>
             </div>
-            <button type="button" onClick={onClose} aria-label="Close" className="-mr-1.5 w-8 h-8 shrink-0 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><XIcon className="w-4 h-4" /></button>
+            <button type="button" onClick={onClose} aria-label="Close" className="ui-hit -mr-1.5 w-8 h-8 shrink-0 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><XIcon className="w-4 h-4" /></button>
           </div>
           <div className="mt-2.5 relative">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />

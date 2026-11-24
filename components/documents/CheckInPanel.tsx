@@ -54,6 +54,7 @@ import { postHandoff } from "@/lib/activityThread";
 import type { CheckoutSession, DocumentRecord, DocumentVersion } from "@/types/schema";
 
 import { friendlyError } from "@/lib/friendlyError";
+import { Field } from "@/components/ui/Field";
 interface CheckInPanelProps {
   document: DocumentRecord;
   currentUser: { uid: string; email: string | null; role: string | null };
@@ -535,7 +536,7 @@ export default function CheckInPanel({
 
   return (
     <div className="space-y-4">
-      <h3 className="text-sm font-medium text-[var(--color-text)] flex items-center">
+      <h3 className="text-body font-medium text-[var(--color-text)] flex items-center">
         <CheckCircle2 className="w-4 h-4 mr-2 text-[var(--state-released)]" /> You are checked out
         {mySession.purpose && (
           <span className="ml-2 text-body font-medium px-2 py-0.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)]">
@@ -564,7 +565,7 @@ export default function CheckInPanel({
                 aria-pressed={isSel}
                 className={`w-full p-3 rounded-xl border-2 text-left transition-all ${isSel ? CARD_SELECTED : "border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}
               >
-                <div className="font-medium text-sm text-[var(--color-text)]">{card.label}</div>
+                <div className="font-medium text-body text-[var(--color-text)]">{card.label}</div>
                 {isSel && <p className="text-body text-[var(--color-text-muted)] leading-snug mt-1">{card.hint}</p>}
               </button>
             );
@@ -575,13 +576,15 @@ export default function CheckInPanel({
 
       {selected?.requiresNote && (
         <div>
-          <textarea
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder={selected.notePrompt}
-            rows={3}
-            className="w-full p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
-          />
+          <Field label="Note">
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder={selected.notePrompt}
+              rows={3}
+              className="w-full p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-body focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+            />
+          </Field>
           <div className="text-body text-[var(--color-text-muted)] mt-1">
             Saved on the record word for word. The next person reads it.
           </div>
@@ -608,12 +611,14 @@ export default function CheckInPanel({
             ))}
           </div>
           {mocStatus && mocStatus !== "none" && (
-            <input
-              value={mocNumber}
-              onChange={(e) => setMocNumber(e.target.value)}
-              placeholder="MOC number: e.g. MOC-2026-014"
-              className="w-full px-2.5 py-1.5 border border-[var(--color-border)] rounded-md text-body focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
-            />
+            <Field label="MOC number">
+              <input
+                value={mocNumber}
+                onChange={(e) => setMocNumber(e.target.value)}
+                placeholder="MOC-2026-014"
+                className="w-full px-2.5 py-1.5 border border-[var(--color-border)] rounded-md text-body focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+              />
+            </Field>
           )}
           {mocStatus === "none" && (
             <p className="flex items-start gap-1.5 border-l-2 border-[var(--state-held)] pl-2 text-body text-[var(--state-held)]">
@@ -675,7 +680,7 @@ export default function CheckInPanel({
                       type="button"
                       onClick={() => { setFiles((prev) => prev.filter((_, j) => j !== i)); uploadedRef.current.delete(f); }}
                       disabled={st?.s === "up"}
-                      className="p-1 rounded hover:bg-[var(--color-surface-2)] disabled:opacity-40"
+                      className="ui-hit p-1 rounded hover:bg-[var(--color-surface-2)] disabled:opacity-40"
                       title="Remove"
                       aria-label={`Remove ${f.name}`}
                     >
@@ -707,7 +712,7 @@ export default function CheckInPanel({
       <button
         onClick={confirm}
         disabled={busy || !!problem}
-        className="w-full py-3 bg-[var(--color-accent)] text-[var(--color-accent-fg)] rounded-xl font-medium text-sm hover:bg-[var(--color-accent-hover)] disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center"
+        className="w-full py-3 bg-[var(--color-accent)] text-[var(--color-accent-fg)] rounded-xl font-medium text-body hover:bg-[var(--color-accent-hover)] disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center"
       >
         {busy ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <ArrowRight className="w-4 h-4 mr-2" />}
         {buttonLabel}

@@ -32,7 +32,7 @@ import {
   FolderPlus, CalendarRange, X as XIcon, CheckSquare, Square,
   ZoomIn, ZoomOut, ListTree, Crosshair, Info, Zap, Check, Eye, ListOrdered, Link2, Replace,
   Trash2,
-  HelpCircle, PanelLeftClose, PanelLeftOpen,
+  HelpCircle, PanelLeftClose, PanelLeftOpen, CircleAlert
 } from "lucide-react";
 import type { Milestone, MilestoneStatus } from "@/types/schema";
 import type { CancelledJob } from "@/lib/cancelledJobs";
@@ -652,7 +652,7 @@ export default function ExecutionView({
     return appConfirm({
       title: `Record it ${what} ${days} day${days === 1 ? "" : "s"} early?`,
       message: `“${prev.name}” is planned for ${fmtInTz(ps, tz, { weekday: "short", month: "short", day: "numeric" })}. The plan keeps that day; the calendar shows it on the day it was done, marked ahead. If you clicked the wrong row, cancel.`,
-      confirmLabel: `Yes, it is ${what}`,
+      confirmLabel: `Record it ${what}`,
     });
   }, [tz, scheduleStartMs]);
 
@@ -968,7 +968,7 @@ export default function ExecutionView({
       message: withKids
         ? "Some of these have steps under them: those are deleted too, with their comments. Undo right after brings everything back."
         : "Their comments go with them. Undo right after brings them back.",
-      tone: "danger", confirmLabel: "Delete",
+      tone: "danger", confirmLabel: `Delete ${n} task${n === 1 ? "" : "s"}`,
     });
     if (!ok) return;
     try {
@@ -1306,9 +1306,9 @@ export default function ExecutionView({
   if (!domain) {
     return (
       <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-12 text-center">
-        <CalendarDays className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-        <div className="text-sm font-medium text-[var(--color-text)]">No dated tasks yet</div>
-        <div className="text-xs text-[var(--color-text-muted)] mt-1">Import a schedule, or add a task with a date, on the Plan tab.</div>
+        <CalendarDays className="w-10 h-10 text-[var(--color-text-faint)] mx-auto mb-3" />
+        <div className="text-body font-medium text-[var(--color-text)]">No dated tasks yet</div>
+        <div className="text-caption text-[var(--color-text-muted)] mt-1">Import a schedule, or add a task with a date, on the Plan tab.</div>
       </div>
     );
   }
@@ -1805,14 +1805,14 @@ function Toolbar({
     <div className="px-3 sm:px-4 py-2 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap bg-[var(--color-surface)]">
       {selectedCount > 0 ? (
         <div className="flex items-center gap-2 flex-1 flex-wrap">
-          <span className="text-xs font-medium text-[var(--color-text)]">{selectedCount} selected</span>
+          <span className="text-caption font-medium text-[var(--color-text)]">{selectedCount} selected</span>
           {canEdit && (
             <>
               {/* Bulk status */}
               <div className="inline-flex items-center gap-1">
                 <span className="text-caption font-medium text-[var(--color-text-faint)]">Mark</span>
-                {([["completed", "Done", "bg-[var(--state-released)]"], ["in_progress", "Doing", "bg-slate-500"], ["on_hold", "Hold", "bg-[var(--state-held)]"], ["blocked", "Block", "bg-[var(--state-overdue)]"]] as const).map(([s, label, dot]) => (
-                  <button key={s} onClick={() => onBulkStatus(s)} className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-caption font-medium hover:bg-[var(--color-surface-2)]">
+                {([["completed", "Done", "bg-[var(--state-released)]"], ["in_progress", "Doing", "bg-[var(--color-text-muted)]"], ["on_hold", "Hold", "bg-[var(--state-held)]"], ["blocked", "Block", "bg-[var(--state-overdue)]"]] as const).map(([s, label, dot]) => (
+                  <button key={s} onClick={() => onBulkStatus(s)} className="inline-flex items-center gap-1 px-2 py-1 pointer-coarse:min-h-11 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-caption font-medium hover:bg-[var(--color-surface-2)]">
                     <span aria-hidden className={`w-2 h-2 rounded-full ${dot}`} />{label}
                   </button>
                 ))}
@@ -1821,8 +1821,8 @@ function Toolbar({
               {/* Bulk move */}
               <div className="inline-flex items-center gap-1">
                 <span className="text-caption font-medium text-[var(--color-text-faint)]">Move</span>
-                <button onClick={() => onBulkMove(-1)} className="px-1.5 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] text-caption font-medium">−1d</button>
-                <button onClick={() => onBulkMove(1)} className="px-1.5 py-1 rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] text-caption font-medium">+1d</button>
+                <button onClick={() => onBulkMove(-1)} aria-label="Move selected 1 day earlier" className="px-1.5 py-1 pointer-coarse:min-h-11 pointer-coarse:min-w-11 rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] text-caption font-medium">−1d</button>
+                <button onClick={() => onBulkMove(1)} aria-label="Move selected 1 day later" className="px-1.5 py-1 pointer-coarse:min-h-11 pointer-coarse:min-w-11 rounded-md border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] text-caption font-medium">+1d</button>
               </div>
               {/* The rest, folded: set a field, group, delete. */}
               <MoreMenu iconOnly label="More for the selected tasks"
@@ -1834,13 +1834,13 @@ function Toolbar({
                 ]} />
             </>
           )}
-          <button onClick={onClearSelection} className="inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] text-caption font-medium ml-auto">
+          <button onClick={onClearSelection} className="inline-flex items-center gap-1 px-2 py-1 pointer-coarse:min-h-11 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] text-caption font-medium ml-auto">
             <XIcon className="w-3 h-3" /> Clear
           </button>
         </div>
       ) : (
         <>
-          <button onClick={onToday} className="inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md text-body font-medium text-[var(--color-text)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]">
+          <button onClick={onToday} className="inline-flex items-center gap-1.5 h-8 pointer-coarse:h-11 px-2.5 rounded-md text-body font-medium text-[var(--color-text)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]">
             <Crosshair className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Today
           </button>
           <div className="w-px h-5 bg-[var(--color-border)]" />
@@ -1850,7 +1850,7 @@ function Toolbar({
             <button
               onClick={onZoomOut}
               disabled={!canZoomOut}
-              className="w-8 h-8 inline-flex items-center justify-center rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-30"
+              className="w-8 h-8 pointer-coarse:size-11 inline-flex items-center justify-center rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-30"
               title="Zoom out" aria-label="Zoom out"
             >
               <ZoomOut className="w-4 h-4" />
@@ -1866,7 +1866,7 @@ function Toolbar({
             <button
               onClick={onZoomIn}
               disabled={!canZoomIn}
-              className="w-8 h-8 inline-flex items-center justify-center rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-30"
+              className="w-8 h-8 pointer-coarse:size-11 inline-flex items-center justify-center rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-30"
               title="Zoom in" aria-label="Zoom in"
             >
               <ZoomIn className="w-4 h-4" />
@@ -1927,7 +1927,7 @@ function OutlineRow({
         <span className={`absolute left-0 top-0 bottom-0 w-[3px] ${problem && problem !== "On hold" ? "bg-[var(--state-overdue)]" : problem ? "bg-[var(--state-held)]" : color.rail} ${problem || depth === 0 ? "" : "opacity-40"}`} aria-hidden />
         {lean === "list" && (hasChildren ? (
           <button onClick={onToggleCollapse} aria-label={collapsed ? `Expand ${ms.name}` : `Collapse ${ms.name}`} aria-expanded={!collapsed}
-            className="shrink-0 w-6 h-8 -mx-0.5 inline-flex items-center justify-center rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
+            className="ui-hit shrink-0 w-6 h-8 -mx-0.5 inline-flex items-center justify-center rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
             <ChevronDown className={`w-3.5 h-3.5 transition-transform ${collapsed ? "-rotate-90" : ""}`} strokeWidth={2.5} />
           </button>
         ) : <span className="shrink-0 w-5" aria-hidden />)}
@@ -1936,7 +1936,7 @@ function OutlineRow({
           <button onClick={onOpenDetail} className="flex-1 min-w-0 text-left" title={`${ms.name} - open details`}>
             <div className={`truncate text-body leading-tight text-[var(--color-text)] ${ms.isSummary || hasChildren ? "font-medium" : ""} ${checked && !hasChildren ? "text-[var(--color-text-muted)]" : ""}`}>{ms.name}</div>
             <div className="flex items-center gap-1.5 text-caption leading-tight text-[var(--color-text-muted)] min-w-0">
-              {problem && <span className={`shrink-0 font-medium ${problem === "On hold" ? "text-[var(--state-held)]" : "text-[var(--state-overdue)]"}`}>{problem}</span>}
+              {problem && <span className={`shrink-0 font-medium ${problem === "On hold" ? "text-[var(--state-held-text)]" : "text-[var(--state-overdue-text)]"}`}>{problem}</span>}
               <span className="truncate font-display tabular-nums">{spanLabel(span.start, span.finish, tz)}</span>
               <span className="ml-auto shrink-0 font-display tabular-nums font-semibold text-[var(--color-text)]">{pct}%</span>
             </div>
@@ -1964,23 +1964,23 @@ function OutlineRow({
         <span key={i} className="absolute top-0 bottom-0 w-px bg-[var(--color-border)]" style={{ left: 12 + i * 16 }} aria-hidden />
       ))}
       {canEdit && (
-        <button onClick={onToggleSelected} className="shrink-0 text-slate-300 hover:text-[var(--color-accent-text)] transition-colors" title={selected ? "Deselect" : "Select"}>
+        <button onClick={onToggleSelected} aria-label={`${selected ? "Deselect" : "Select"} ${ms.name}`} aria-pressed={selected} className="shrink-0 text-[var(--color-text-faint)] hover:text-[var(--color-accent-text)] transition-colors" title={selected ? "Deselect" : "Select"}>
           {selected ? <CheckSquare className="w-4 h-4 text-[var(--color-text-muted)]" /> : <Square className="w-4 h-4" />}
         </button>
       )}
       {criticalMark && (
-        <button onClick={criticalMark.onToggle} aria-pressed={criticalMark.on}
+        <button onClick={criticalMark.onToggle} aria-pressed={criticalMark.on} aria-label={`Critical path: ${ms.name}`}
           title={`${criticalMark.on ? "On the critical path: tap to take it off" : "Not critical: tap to mark it critical"}${hasChildren ? " (with everything under it)" : ""}${criticalMark.own ? " · marked by hand" : ""}`}
-          className={`shrink-0 w-5 h-5 inline-flex items-center justify-center rounded ${criticalMark.on ? "bg-[var(--state-overdue)] text-white" : "text-slate-300 hover:text-[var(--state-overdue-text)] hover:bg-transparent"} ${criticalMark.own ? "ring-1 ring-offset-1 ring-[var(--state-overdue)] dark:ring-offset-slate-900" : ""}`}>
+          className={`shrink-0 w-5 h-5 inline-flex items-center justify-center rounded ${criticalMark.on ? "bg-[var(--state-overdue)] text-white" : "text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)] hover:bg-transparent"} ${criticalMark.own ? "ring-1 ring-offset-1 ring-[var(--state-overdue)] ring-offset-[var(--color-surface)]" : ""}`}>
           <Zap className="w-3 h-3" />
         </button>
       )}
       {hasChildren ? (
-        <button onClick={onToggleCollapse} className="shrink-0 w-5 h-5 inline-flex items-center justify-center rounded text-[var(--color-text-muted)] hover:bg-slate-200" title={collapsed ? "Expand" : "Collapse"}>
+        <button onClick={onToggleCollapse} aria-label={`${collapsed ? "Expand" : "Collapse"} ${ms.name}`} aria-expanded={!collapsed} className="shrink-0 w-5 h-5 inline-flex items-center justify-center rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title={collapsed ? "Expand" : "Collapse"}>
           <ChevronDown className={`w-3.5 h-3.5 transition-transform ${collapsed ? "-rotate-90" : ""}`} strokeWidth={2.5} />
         </button>
       ) : (
-        <span className="shrink-0 w-5 inline-flex justify-center"><span className="w-1.5 h-1.5 rounded-full bg-slate-300" /></span>
+        <span className="shrink-0 w-5 inline-flex justify-center"><span className="w-1.5 h-1.5 rounded-full bg-[var(--color-border-strong)]" /></span>
       )}
 
       {hasChildren ? (
@@ -2030,12 +2030,12 @@ function OutlineRow({
         <ProgressControl percent={pct} onPick={onSetProgress} onSaveWithNote={onSetProgressNote} disabled={!canEdit} onDisabledClick={onViewOnly} busy={busy} size="sm" />
       )}
       {canEdit && !ms.isSummary && (
-        <button onClick={onSetDuration} title="Set duration" className="shrink-0 p-1 rounded text-slate-300 hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] opacity-60 sm:opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 transition-opacity">
+        <button onClick={onSetDuration} title="Set duration" aria-label={`Set duration of ${ms.name}`} className="shrink-0 p-1 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] opacity-60 sm:opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 transition-opacity">
           <CalendarRange className="w-3.5 h-3.5" />
         </button>
       )}
       {canEdit && hasChildren && onSequence && (
-        <button onClick={onSequence} title="Sequence sub-tasks end-to-end (each starts when the prior finishes)" className="shrink-0 p-1 rounded text-slate-300 hover:text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)] opacity-60 sm:opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 transition-opacity">
+        <button onClick={onSequence} title="Sequence sub-tasks end-to-end (each starts when the prior finishes)" aria-label={`Sequence the steps under ${ms.name} end to end`} className="shrink-0 p-1 rounded text-[var(--color-text-faint)] hover:text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)] opacity-60 sm:opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 transition-opacity">
           <ListOrdered className="w-3.5 h-3.5" />
         </button>
       )}
@@ -2150,7 +2150,7 @@ function Bar({
           </>
         )}
         {resize && (
-          <span className="absolute -top-5 left-1/2 -translate-x-1/2 text-caption font-medium bg-slate-900 text-white px-1.5 py-0.5 rounded whitespace-nowrap shadow">
+          <span className="absolute -top-5 left-1/2 -translate-x-1/2 text-caption font-medium bg-[var(--color-ink)] text-[var(--color-ink-fg)] px-1.5 py-0.5 rounded whitespace-nowrap shadow">
             {resize.days > 0 ? "+" : ""}{resize.days}d
           </span>
         )}
@@ -2162,8 +2162,8 @@ function Bar({
   if (isMilestonePoint) {
     return (
       <div className={`absolute group/bar flex items-center gap-1.5 transition-opacity ${dimmed ? "opacity-25" : ""} ${onPath ? "z-10" : ""}`} style={{ top, left: left - 6, height: ROW_H }} title={`${ms.name} - milestone · ${fmtDateUTC(finish, tz)}`}>
-        <button onClick={onOpenDetail} className="relative shrink-0" aria-label={`Milestone ${ms.name}`}>
-          <span className={`block w-3 h-3 rotate-45 border-2 border-white shadow ${ms.status === "completed" ? "bg-[var(--state-released)]" : onPath ? "bg-[var(--state-overdue)]" : "bg-slate-700"}`} />
+        <button onClick={onOpenDetail} className="ui-hit relative shrink-0" aria-label={`Milestone ${ms.name}`}>
+          <span className={`block w-3 h-3 rotate-45 border-2 border-[var(--color-surface)] shadow ${ms.status === "completed" ? "bg-[var(--state-released)]" : onPath ? "bg-[var(--state-overdue)]" : "bg-[var(--color-text)]"}`} />
         </button>
         <span className="whitespace-nowrap text-caption font-medium text-[var(--color-text)] max-w-[200px] truncate bg-[var(--color-surface)]/80 rounded px-1">{ms.name}</span>
       </div>
@@ -2286,25 +2286,25 @@ function Axis({ domain, pxPerDay, shiftTimes }: { domain: { start: Date; totalDa
       <div className="absolute inset-x-0 top-0" style={{ height: showShifts ? DAY_ROW : AXIS_H }}>
         {ticks.map((t) => (
           <div key={t.d} className="absolute top-0 bottom-0 flex items-center" style={{ left: t.x, width: step === 1 ? pxPerDay : undefined }}>
-            <div className="absolute top-0 bottom-0 left-0 w-px bg-slate-300 dark:bg-slate-600" />
+            <div className="absolute top-0 bottom-0 left-0 w-px bg-[var(--color-border-strong)]" />
             <span className={`pl-1.5 text-caption whitespace-nowrap ${t.anchor || step === 1 ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{t.label}</span>
           </div>
         ))}
       </div>
       {/* Shifts + hours */}
       {showShifts && (
-        <div className="absolute inset-x-0 bottom-0 border-t border-slate-200 dark:border-slate-700" style={{ height: AXIS_H - DAY_ROW }}>
+        <div className="absolute inset-x-0 bottom-0 border-t border-[var(--color-border)]" style={{ height: AXIS_H - DAY_ROW }}>
           {bands.map((b, i) => (
-            <div key={i} className={`absolute top-0 flex items-center gap-1 overflow-hidden border-b border-slate-200 dark:border-slate-700 ${b.night ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}
+            <div key={i} className={`absolute top-0 flex items-center gap-1 overflow-hidden border-b border-[var(--color-border)] ${b.night ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text-muted)]"}`}
               style={{ left: b.x, width: b.w, height: SHIFT_ROW }} title={`${b.night ? "Night" : "Day"} shift from ${clock12(b.label)}`}>
-              <div className="absolute top-0 bottom-0 left-0 w-px bg-slate-300 dark:bg-slate-600" />
+              <div className="absolute top-0 bottom-0 left-0 w-px bg-[var(--color-border-strong)]" />
               <span className="pl-1 text-caption font-medium whitespace-nowrap">{b.night ? "☾" : "☀"}{pxPerDay >= 110 ? ` ${b.night ? "Night" : "Day"} ${clock12(b.label)}` : ""}</span>
             </div>
           ))}
           {hours.map((h, i) => (
             <div key={`h${i}`} className="absolute bottom-0" style={{ left: h.x }}>
-              <div className="absolute bottom-0 w-px h-1.5 bg-slate-400 dark:bg-slate-500" />
-              <span className="absolute bottom-1.5 -translate-x-1/2 text-caption leading-none tabular-nums text-slate-600 dark:text-slate-300 whitespace-nowrap">{h.label}</span>
+              <div className="absolute bottom-0 w-px h-1.5 bg-[var(--color-border-control)]" />
+              <span className="absolute bottom-1.5 -translate-x-1/2 text-caption leading-none tabular-nums text-[var(--color-text-muted)] whitespace-nowrap">{h.label}</span>
             </div>
           ))}
         </div>
@@ -2325,12 +2325,12 @@ function Gridlines({ domain, pxPerDay, rowCount, shiftTimes }: { domain: { start
     const dayAt = ((dh || 0) * 60 + (dm || 0)) / 1440, nightAt = ((nh || 0) * 60 + (nm || 0)) / 1440;
     for (let d = -1; d < domain.totalDays; d++) {
       const nx = (d + nightAt) * pxPerDay;
-      lines.push(<div key={`n${d}`} className="absolute top-0 bottom-0 bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]" style={{ left: nx, width: (d + 1 + dayAt) * pxPerDay - nx }} />);
+      lines.push(<div key={`n${d}`} className="absolute top-0 bottom-0 bg-[var(--color-surface-2)]" style={{ left: nx, width: (d + 1 + dayAt) * pxPerDay - nx }} />);
     }
     const hStep = hourStep(pxPerDay);
     if (hStep && hStep <= 3) {
       for (let d = 0; d < domain.totalDays; d++) for (let h = hStep; h < 24; h += hStep) {
-        lines.push(<div key={`h${d}-${h}`} className="absolute top-0 bottom-0 w-px bg-slate-100 dark:bg-slate-800" style={{ left: (d + h / 24) * pxPerDay }} />);
+        lines.push(<div key={`h${d}-${h}`} className="absolute top-0 bottom-0 w-px bg-[var(--color-surface-2)]" style={{ left: (d + h / 24) * pxPerDay }} />);
       }
     }
   }
@@ -2339,7 +2339,7 @@ function Gridlines({ domain, pxPerDay, rowCount, shiftTimes }: { domain: { start
     const weekend = !showShifts && pxPerDay >= 12 && [0, 6].includes(dayOfWeek(date.getTime(), tz));
     lines.push(
       <div key={d} className={`absolute top-0 bottom-0 ${weekend ? "bg-[var(--color-surface-2)]" : ""}`} style={{ left: d * pxPerDay, width: step * pxPerDay }}>
-        <div className={`absolute top-0 bottom-0 left-0 w-px ${showShifts ? "bg-slate-300 dark:bg-slate-700" : "bg-[var(--color-surface-2)]"}`} />
+        <div className={`absolute top-0 bottom-0 left-0 w-px ${showShifts ? "bg-[var(--color-border-strong)]" : "bg-[var(--color-surface-2)]"}`} />
       </div>,
     );
   }
@@ -2457,7 +2457,7 @@ function Legend() {
           <span className="relative w-7 flex items-center"><span className="h-1 w-full rounded-full bg-slate-400" /><span className="absolute -left-px w-[3px] h-3 rounded-sm bg-slate-400" /><span className="absolute -right-px w-[3px] h-3 rounded-sm bg-slate-400" /></span> Phase / summary
         </span>
         <span className="inline-flex items-center gap-1.5 text-caption text-[var(--color-text-muted)]" title="A milestone: a zero-duration marker">
-          <span className="w-2.5 h-2.5 rotate-45 bg-slate-700 border border-white" /> Milestone
+          <span className="w-2.5 h-2.5 rotate-45 bg-[var(--color-text)] border border-[var(--color-surface)]" /> Milestone
         </span>
         <span className="inline-flex items-center gap-1.5 text-caption text-[var(--color-text-muted)]" title="On the critical path: drives the finish date">
           <span className="w-3 h-2.5 rounded-sm bg-slate-300 ring-2 ring-[var(--state-overdue)] ring-offset-1" /> Critical path
@@ -2520,46 +2520,46 @@ function GroupTasksModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl ring-1 ring-slate-900/5 overflow-hidden animate-in fade-in zoom-in-95">
+    <div className="fixed inset-0 z-[200] bg-[var(--color-ink)]/55 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+      <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl ring-1 ring-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-[var(--color-surface-2)] text-[var(--color-text)] flex items-center justify-center"><FolderPlus className="w-4 h-4" /></div>
           <div className="flex-1 min-w-0">
             <h2 className="text-reading font-medium text-[var(--color-text)]">Group under a parent</h2>
             <div className="text-caption text-[var(--color-text-muted)]">{childIds.length} task{childIds.length === 1 ? "" : "s"} selected</div>
           </div>
-          <button onClick={onClose} aria-label="Close" className="p-1.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><XIcon className="w-4 h-4" /></button>
+          <button onClick={onClose} aria-label="Close" className="ui-hit p-1.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><XIcon className="w-4 h-4" /></button>
         </div>
         <div className="p-5 space-y-4">
           <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-md p-0.5 gap-0.5">
             {(["new", "existing"] as const).map((m) => (
-              <button key={m} onClick={() => setMode(m)} className={`px-3 py-1 rounded text-caption font-medium transition-colors ${mode === m ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+              <button key={m} onClick={() => setMode(m)} className={`px-3 py-1 pointer-coarse:min-h-11 rounded text-caption font-medium transition-colors ${mode === m ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
                 {m === "new" ? "Create new" : "Use existing"}
               </button>
             ))}
           </div>
           {mode === "new" ? (
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder='e.g. "Phase 2: Tear Down"' autoFocus className="w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-md" />
+            <input value={name} onChange={(e) => setName(e.target.value)} aria-label="New parent name" placeholder='e.g. "Phase 2: Tear Down"' autoFocus className="w-full px-3 py-2 text-body border border-[var(--color-border-strong)] rounded-md" />
           ) : existingParents.length === 0 ? (
-            <div className="text-xs text-[var(--color-text-muted)] italic">No existing parents. Create a new one.</div>
+            <div className="text-caption text-[var(--color-text-muted)] italic">No existing parents. Create a new one.</div>
           ) : (
-            <Select value={existingId} onChange={(e) => setExistingId(e.target.value)}>
+            <Select value={existingId} onChange={(e) => setExistingId(e.target.value)} aria-label="Existing parent">
               <option value="">- pick a parent -</option>
               {existingParents.map((p) => <option key={p.id} value={p.id ?? ""}>{p.name}</option>)}
             </Select>
           )}
-          <div className="rounded-md border border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)] p-2.5 max-h-32 overflow-y-auto">
+          <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2.5 max-h-32 overflow-y-auto">
             <ul className="space-y-0.5">
               {childNames.slice(0, 12).map((n, i) => <li key={i} className="text-caption text-[var(--color-text)] truncate">{n}</li>)}
               {childNames.length > 12 && <li className="text-caption text-[var(--color-text-muted)] italic">+{childNames.length - 12} more</li>}
             </ul>
           </div>
-          {error && <div role="alert" className="text-xs text-[var(--state-overdue-text)]">{error}</div>}
+          {error && <div role="alert" className="text-caption text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{error}</span></div>}
         </div>
         <div className="px-5 py-3 border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-          <button onClick={onClose} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Cancel</button>
-          <button onClick={submit} disabled={!canSubmit || busy} className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-md disabled:opacity-40 transition-colors">
-            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <FolderPlus className="w-4 h-4" />} Group
+          <button onClick={onClose} disabled={busy} className="text-body text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Cancel</button>
+          <button onClick={submit} disabled={!canSubmit || busy} className="inline-flex items-center gap-1.5 text-body font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-md disabled:opacity-40 transition-colors">
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <FolderPlus className="w-4 h-4" />} {busy ? "Grouping" : "Group"}
           </button>
         </div>
       </div>
@@ -2600,15 +2600,15 @@ function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milest
   };
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
-      <div className="w-full max-w-sm bg-[var(--color-surface)] rounded-2xl shadow-2xl ring-1 ring-slate-900/5 overflow-hidden animate-in fade-in zoom-in-95">
+    <div className="fixed inset-0 z-[200] bg-[var(--color-ink)]/55 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+      <div className="w-full max-w-sm bg-[var(--color-surface)] rounded-2xl shadow-2xl ring-1 ring-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-[var(--color-surface-2)] text-[var(--color-text)] flex items-center justify-center"><CalendarRange className="w-4 h-4" /></div>
           <div className="flex-1 min-w-0">
             <h2 className="text-reading font-medium text-[var(--color-text)] truncate">Set duration</h2>
             <div className="text-caption text-[var(--color-text-muted)] truncate">{task.name}</div>
           </div>
-          <button onClick={onClose} aria-label="Close" className="p-1.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><XIcon className="w-4 h-4" /></button>
+          <button onClick={onClose} aria-label="Close" className="ui-hit p-1.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><XIcon className="w-4 h-4" /></button>
         </div>
         <div className="p-5 space-y-3">
           <div className="flex items-center justify-between">
@@ -2616,23 +2616,23 @@ function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milest
             <div className="inline-flex rounded-md bg-[var(--color-surface-2)] p-0.5 text-caption font-medium">
               {(["hours", "days"] as const).map((u) => (
                 <button key={u} onClick={() => { setUnit(u); setValue(u === "hours" ? Math.max(0.25, Math.round(((finishAt - startAt) / 3_600_000) * 4) / 4) : Math.max(1, dayDiff(new Date(startAt), finish, tz) + 1)); }}
-                  className={`px-2 py-0.5 rounded ${unit === u ? "bg-[var(--color-surface)] shadow-sm text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{u}</button>
+                  className={`px-2 py-0.5 pointer-coarse:min-h-11 rounded ${unit === u ? "bg-[var(--color-surface)] shadow-sm text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{u}</button>
               ))}
             </div>
           </div>
-          <input type="number" min={unit === "hours" ? 0.25 : 1} max={unit === "hours" ? 2000 : 365} step={unit === "hours" ? 0.25 : 1} value={value}
+          <input type="number" inputMode="decimal" aria-label={`Duration in ${unit}`} min={unit === "hours" ? 0.25 : 1} max={unit === "hours" ? 2000 : 365} step={unit === "hours" ? 0.25 : 1} value={value}
             onChange={(e) => { const v = Number(e.target.value); setValue(Number.isFinite(v) && v > 0 ? v : unit === "hours" ? 0.25 : 1); }}
-            className="w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-md" />
+            className="w-full px-3 py-2 text-body border border-[var(--color-border-strong)] rounded-md" />
           <div className="text-caption text-[var(--color-text-muted)]">
             Keeps its finish, <b>{fmtInTz(finishAt, tz, { weekday: "short", month: "short", day: "numeric", ...(timed ? { hour: "numeric", minute: "2-digit", hour12: true } : {}) })}</b>;
             {unit === "hours" ? ` starts ${value} h before it.` : days > 1 ? ` starts ${Math.round(days) - 1} day${Math.round(days) - 1 === 1 ? "" : "s"} earlier.` : " a single-day task."}
           </div>
-          {error && <div role="alert" className="text-xs text-[var(--state-overdue-text)]">{error}</div>}
+          {error && <div role="alert" className="text-caption text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{error}</span></div>}
         </div>
         <div className="px-5 py-3 border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-          <button onClick={onClose} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Cancel</button>
-          <button onClick={submit} disabled={busy} className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-md disabled:opacity-40 transition-colors">
-            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarRange className="w-4 h-4" />} Apply
+          <button onClick={onClose} disabled={busy} className="text-body text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Cancel</button>
+          <button onClick={submit} disabled={busy} className="inline-flex items-center gap-1.5 text-body font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-md disabled:opacity-40 transition-colors">
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarRange className="w-4 h-4" />} {busy ? "Applying" : "Apply"}
           </button>
         </div>
       </div>

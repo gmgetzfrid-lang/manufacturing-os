@@ -8,7 +8,7 @@
 // few things that happened sit underneath.
 
 import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Play, Check, Trash2, Pencil, Loader2, CalendarRange, Plus } from "lucide-react";
+import { ChevronLeft, ChevronRight, Play, Check, Trash2, Pencil, Loader2, CalendarRange, Plus, CircleAlert } from "lucide-react";
 import MoreMenu from "@/components/ui/MoreMenu";
 import type { Milestone, MilestoneNote, MilestoneStatus } from "@/types/schema";
 import { shiftAt, workHours, type ShiftTimes } from "@/lib/shiftReport";
@@ -99,11 +99,11 @@ function scrollParentOf(el: HTMLElement): HTMLElement {
 }
 // Buttons: one filled (the step's next move), the rest white with a ruled
 // edge; small icon buttons fill on hover.
-const SEC = "inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
-const PRI = "inline-flex items-center justify-center gap-1.5 h-8 px-3.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors";
+const SEC = "inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
+const PRI = "inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors";
 const ICON_BASE = "inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
-const ICON = `${ICON_BASE} w-7 h-7`;
-const ICON_SM = `${ICON_BASE} w-6 h-6`;
+const ICON = `${ICON_BASE} w-7 h-7 pointer-coarse:size-11`;
+const ICON_SM = `${ICON_BASE} w-6 h-6 pointer-coarse:size-11`;
 const SEG_ON = "bg-[var(--color-surface)] text-[var(--color-text)] shadow-[0_1px_2px_rgb(31_39_51/0.15)] ring-1 ring-[var(--color-border-strong)]";
 const SEG_OFF = "text-[var(--color-text-muted)] hover:text-[var(--color-text)]";
 const LINK = "text-body text-[var(--color-accent-text)] hover:underline";
@@ -162,7 +162,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     if (!(await appConfirm({
       title: `Delete this ${k.lower}?`,
       message: `“${found.what}” comes off the schedule: ${n === 1 ? "its step is" : `all ${n} of its steps are`} deleted, with any progress and comments on ${n === 1 ? "it" : "them"}. Steps that waited on it wait on what it waited on instead. Planned dates it pushed later stay where they are - move them back if they should.`,
-      confirmLabel: `Delete ${k.lower}`,
+      confirmLabel: `Delete ${k.lower}`, tone: "danger",
     }))) return;
     setFoundBusy(true); setFoundMsg(null);
     try {
@@ -176,8 +176,8 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   const started = done || m.status === "in_progress" || held || Number.isFinite(as);
   const allotted = Math.round((m.durationHours != null && m.durationHours > 0 ? m.durationHours : workHours(m, tz)) * 10) / 10;
   // One tag: how it stands against the plan (a soft pill in its status color).
-  const GOOD = "bg-[color-mix(in_srgb,var(--state-released)_14%,transparent)] text-[var(--state-released)]";
-  const BAD = "bg-[color-mix(in_srgb,var(--state-overdue)_14%,transparent)] text-[var(--state-overdue)]";
+  const GOOD = "bg-[color-mix(in_srgb,var(--state-released)_14%,transparent)] text-[var(--state-released-text)]";
+  const BAD = "bg-[color-mix(in_srgb,var(--state-overdue)_14%,transparent)] text-[var(--state-overdue-text)]";
   const tag = (() => {
     const d = done && Number.isFinite(af) ? af - pf : Number.isFinite(as) ? as - ps : Number.isFinite(ps) && now > ps ? now - ps : NaN;
     if (!Number.isFinite(d)) return null;
@@ -579,11 +579,11 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     } : kind === "entry" ? {
       title: `Remove “${x.text}”?`,
       message: `It comes off the history${x.noteIds.length ? " with its comment" : ""}. The step stays as it is now; the entry after it counts from ${Math.round(Number(from ?? 0))}%.`,
-      confirmLabel: "Remove",
+      confirmLabel: "Remove entry", tone: "danger",
     } : {
       title: "Remove this comment?",
       message: "It comes off the step's history and the reports.",
-      confirmLabel: "Remove",
+      confirmLabel: "Remove comment", tone: "danger",
     }))) return;
     setFixBusy(true); setFixMsg(null);
     try {
@@ -609,7 +609,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
     if (!(await appConfirm({
       title: `Start “${m.name}” over?`,
       message: "It goes back to not started: its start and finish times, %, holds, history and comments are all removed. The plan stays as it is. Then enter it again from Start.",
-      confirmLabel: "Start over",
+      confirmLabel: "Start over", tone: "danger",
     }))) return;
     setBusy(true); setResetMsg(null);
     try {
@@ -684,7 +684,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
                 </div>
               </div>
               <DateTimePicker label={`When was it ${ADDED[foundEdit.kind].found}?`} value={foundEdit.at} onChange={(v) => { setFoundEdit({ ...foundEdit, at: v }); setFoundMsg(null); }} tz={tz} times={times} />
-              {foundMsg && <div role="alert" className="font-medium text-[var(--state-overdue)]">{foundMsg}</div>}
+              {foundMsg && <div role="alert" className="font-medium text-[var(--state-overdue-text)]">{foundMsg}</div>}
               <div className="flex items-center gap-2">
                 <button type="button" onClick={() => void saveFound()} disabled={foundBusy} className={PRI}>{foundBusy ? "Saving…" : "Save"}</button>
                 <button type="button" onClick={() => setFoundEdit(null)} className={SEC}>Cancel</button>
@@ -694,11 +694,11 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
             <>
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span className="min-w-0 flex-1"><span className="font-medium">{ADDED[kindOf(found)].word}</span>{Number.isFinite(found.foundAt) ? `, ${ADDED[kindOf(found)].found} ${when(found.foundAt)}` : ""}: “{found.what}”
-                  {!m.workOrderRef?.trim() && <span className="ml-1.5 font-medium text-[var(--state-held)]">No WO # of its own yet.</span>}</span>
+                  {!m.workOrderRef?.trim() && <span className="ml-1.5 font-medium text-[var(--state-held-text)]">No WO # of its own yet.</span>}</span>
                 {canEdit && m.projectId && <button type="button" onClick={() => { setFoundEdit({ kind: kindOf(found), what: found.what, at: toDateTimeInput(found.foundAt, tz), wo: m.workOrderRef ?? "" }); setFoundMsg(null); }} aria-label={`Edit the ${ADDED[kindOf(found)].lower}`} title="Edit" className={ICON}><Pencil className="w-3.5 h-3.5" /></button>}
-                {canEdit && m.projectId && <button type="button" onClick={() => void removeFound()} disabled={foundBusy} aria-label={`Delete the ${ADDED[kindOf(found)].lower}`} title="Put in by mistake: every step it added, gone for good" className={`${ICON} hover:text-[var(--state-overdue)]`}>{foundBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}</button>}
+                {canEdit && m.projectId && <button type="button" onClick={() => void removeFound()} disabled={foundBusy} aria-label={`Delete the ${ADDED[kindOf(found)].lower}`} title="Put in by mistake: every step it added, gone for good" className={`${ICON} hover:text-[var(--state-overdue-text)]`}>{foundBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}</button>}
               </div>
-              {foundMsg && <div role="alert" className="font-medium text-[var(--state-overdue)]">{foundMsg}</div>}
+              {foundMsg && <div role="alert" className="font-medium text-[var(--state-overdue-text)]">{foundMsg}</div>}
             </>
           )}
         </div>
@@ -720,7 +720,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
       </table>
       {tag && <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-body font-medium ${tag.tone}`}>{tag.t}</span>}
       {held && m.statusReason && <div className="border-l-[3px] border-[var(--state-held)] pl-2.5 text-[var(--color-text)]">“{m.statusReason}”</div>}
-      {saved && <div role="status" className="inline-flex items-center gap-1.5 font-medium text-[var(--state-released)]"><Check className="w-4 h-4" /> {saved}</div>}
+      {saved && <div role="status" className="inline-flex items-center gap-1.5 font-medium text-[var(--state-released-text)]"><Check className="w-4 h-4" /> {saved}</div>}
 
       {(main || more.length > 0 || (canEdit && m.id)) && !action && (
         <div className="flex flex-wrap items-center gap-2">
@@ -806,7 +806,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
                 className="h-9 pointer-coarse:h-11 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-body" />
               : <button type="button" onClick={() => setShowWhy(true)} className={`self-start ${LINK}`}>Add why it&apos;s behind</button>
           )}
-          {msg && <div role="alert" className="font-medium text-[var(--state-overdue)]">{msg}</div>}
+          {msg && <div role="alert" className="font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-0.5" /><span>{msg}</span></div>}
           {ampmAsk && (
             <div role="alert" className="border-l-[3px] border-[var(--state-held)] pl-2.5 py-0.5 space-y-1.5">
               <div className="font-medium text-[var(--color-text)]">{ampmAsk.says} Did you mean {ampmAsk.use}?</div>
@@ -835,12 +835,12 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
       <div className="border-t border-[var(--color-border)] pt-2">
         <div className="flex items-baseline justify-between gap-2 mb-0.5">
           <span className="text-body font-medium text-[var(--color-text-muted)]">History</span>
-          {toSet > 0 && <span className="text-body font-medium text-[var(--state-held)]">{toSet === 1 ? "1 time" : `${toSet} times`} to set</span>}
+          {toSet > 0 && <span className="text-body font-medium text-[var(--state-held-text)]">{toSet === 1 ? "1 time" : `${toSet} times`} to set</span>}
           {canEdit && onUpdate && (started || history.length > 0) && (
-            <button type="button" onClick={() => void startOver()} disabled={busy} title="Back to not started: every time, %, hold and comment removed" className={`ml-auto ${SEC.replace("h-8", "h-7").replace("text-[var(--color-text)]", "text-[var(--state-overdue)]")}`}>Start over</button>
+            <button type="button" onClick={() => void startOver()} disabled={busy} title="Back to not started: every time, %, hold and comment removed" className={`ml-auto ${SEC.replace("h-8", "h-7").replace("text-[var(--color-text)]", "text-[var(--state-overdue-text)]")}`}>Start over</button>
           )}
         </div>
-        {resetMsg && <div role="alert" className="mb-1 font-medium text-[var(--state-overdue)]">{resetMsg}</div>}
+        {resetMsg && <div role="alert" className="mb-1 font-medium text-[var(--state-overdue-text)]">{resetMsg}</div>}
         {history.length === 0 ? <div className="text-body text-[var(--color-text-muted)]">Nothing yet.</div> : (
           <>
             {hidden > 0 && <button type="button" onClick={() => setAllHistory(true)} className={`mb-0.5 ${LINK}`}>Show {hidden} earlier</button>}
@@ -849,8 +849,8 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
                 const sh = shiftOf(x.sort), head = i === 0 || shiftOf(shown[i - 1].sort).key !== sh.key;
                 const editable = canEditEntry(x);
                 const time = x.unsure === "unset" ? "set time" : x.unsure === "order" ? `⚠ ${when(x.at)}` : clock(x.at);
-                const timeCls = x.unsure === "unset" ? "rounded-full px-2 py-px text-caption font-medium bg-[color-mix(in_srgb,var(--state-held)_14%,transparent)] text-[var(--state-held)]"
-                  : x.unsure === "order" ? "font-medium text-[var(--state-held)]" : "font-display tabular-nums text-[var(--color-text-muted)]";
+                const timeCls = x.unsure === "unset" ? "rounded-full px-2 py-px text-caption font-medium bg-[color-mix(in_srgb,var(--state-held)_14%,transparent)] text-[var(--state-held-text)]"
+                  : x.unsure === "order" ? "font-medium text-[var(--state-held-text)]" : "font-display tabular-nums text-[var(--color-text-muted)]";
                 const tip = x.unsure === "unset" ? "When it happened wasn't saved - tap to set it" : x.unsure === "order" ? "This time is after what came next - check it" : undefined;
                 return (
                   <li key={x.key} className="text-body break-words">
@@ -864,7 +864,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
                       {editable && fixing !== x.key && <button type="button" onClick={() => openFix(x)} aria-label={`Edit ${x.text || "this comment"}`} title="Edit" className={`ml-1 align-middle ${ICON_SM}`}><Pencil className="w-3.5 h-3.5" /></button>}
                       {editable && fixing !== x.key && removable(x) && (
                         <button type="button" onClick={() => void removeEntry(x)} disabled={fixBusy} aria-label={`Remove ${x.text || "this comment"}`} title={removable(x) === "change" ? "Take it back" : "Remove"}
-                          className={`align-middle ${ICON_SM} hover:text-[var(--state-overdue)]`}>
+                          className={`align-middle ${ICON_SM} hover:text-[var(--state-overdue-text)]`}>
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       )}
@@ -878,13 +878,13 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
                             placeholder={x.comment ? undefined : "Add a comment (optional)"} aria-label="Comment" disabled={fixBusy}
                             className="h-9 pointer-coarse:h-11 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-body" />
                         )}
-                        {fixMsg && <div role="alert" className="font-medium text-[var(--state-overdue)]">{fixMsg}</div>}
+                        {fixMsg && <div role="alert" className="font-medium text-[var(--state-overdue-text)]">{fixMsg}</div>}
                         <div className="flex items-center gap-2">
                           {/* One orange: while an update above is open, its Save has it. */}
                           <button type="button" onClick={() => void saveFix(x)} disabled={fixBusy} className={action ? SEC : PRI}>{fixBusy ? "Saving…" : "Save"}</button>
                           <button type="button" onClick={() => setFixing(null)} className={SEC}>Cancel</button>
                           {removable(x) ? (
-                            <button type="button" onClick={() => void removeEntry(x)} disabled={fixBusy} className={`ml-auto ${SEC.replace("text-[var(--color-text)]", "text-[var(--state-overdue)]")}`}>
+                            <button type="button" onClick={() => void removeEntry(x)} disabled={fixBusy} className={`ml-auto ${SEC.replace("text-[var(--color-text)]", "text-[var(--state-overdue-text)]")}`}>
                               {removable(x) === "change" ? "Take back" : "Remove"}
                             </button>
                           ) : x.logId != null && (

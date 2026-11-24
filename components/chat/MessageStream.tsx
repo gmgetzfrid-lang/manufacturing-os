@@ -110,7 +110,7 @@ export default function MessageStream({
             <div className="pt-[6vh] sm:pt-[8vh] max-w-2xl mx-auto animate-rise">
               {/* The one line on an empty chat: what you can do here. (How
                   answers are sourced is said once, under the box.) */}
-              <h2 className="font-display text-[26px] leading-tight font-semibold text-[var(--color-text)]">
+              <h2 className="font-display text-title leading-tight font-semibold text-[var(--color-text)]">
                 {scope === "library" ? "Ask the library." : scope === "tools" ? "Ask the system." : "Ask the internet."}
               </h2>
               {scope !== "internet" && (

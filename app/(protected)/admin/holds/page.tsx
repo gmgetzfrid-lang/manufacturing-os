@@ -223,7 +223,7 @@ export default function HoldsPage() {
                                 className={`${fieldBox} h-10 pointer-coarse:h-11 text-reading flex-1 min-w-[220px]`}
                                 autoFocus
                               />
-                              <Button onClick={() => void onRelease(h.id!)} loading={busy}>Release hold</Button>
+                              <Button onClick={() => void onRelease(h.id!)} loading={busy}>{busy ? "Releasing" : "Release hold"}</Button>
                               <button type="button" onClick={() => { setReleasingId(null); setReleaseDraft(""); }} disabled={busy} className={btnLink}>
                                 Cancel
                               </button>

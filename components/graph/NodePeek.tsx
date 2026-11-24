@@ -80,8 +80,8 @@ export default function NodePeek({
       {/* Header */}
       <div className="flex items-start gap-2 p-3 pb-2 shrink-0">
         {historyDepth > 0 && (
-          <button onClick={onBack} title="Back to the previous node"
-            className="mt-0.5 p-1 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+          <button onClick={onBack} title="Back to the previous node" aria-label="Back to the previous node"
+            className="ui-hit mt-0.5 p-1 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
             <ArrowLeft className="w-3.5 h-3.5" />
           </button>
         )}
@@ -94,7 +94,7 @@ export default function NodePeek({
           </div>
         </div>
         <button onClick={onClose} aria-label="Close"
-          className="p-1 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
+          className="ui-hit p-1 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
       </div>
 
       <div className="flex-1 overflow-y-auto px-3 space-y-2 min-h-0">
@@ -174,16 +174,16 @@ export default function NodePeek({
             <Focus className="w-3.5 h-3.5" /> Go in
           </button>
           <button onClick={onGoOut} disabled={!focused} title="Back to the whole map"
-            className="flex-1 inline-flex items-center justify-center gap-1 text-body font-medium text-[var(--color-text)] border border-[var(--color-border)] rounded-lg px-2 py-1.5 hover:bg-[var(--color-surface-2)] disabled:opacity-40">
+            className="pointer-coarse:min-h-11 flex-1 inline-flex items-center justify-center gap-1 text-body font-medium text-[var(--color-text)] border border-[var(--color-border)] rounded-lg px-2 py-1.5 hover:bg-[var(--color-surface-2)] disabled:opacity-40">
             <Layers className="w-3.5 h-3.5" /> Go out
           </button>
-          <button onClick={onPath} title="Trace how this connects to something else"
-            className="inline-flex items-center justify-center gap-1 text-body font-medium text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] rounded-lg px-2 py-1.5">
+          <button onClick={onPath} title="Trace how this connects to something else" aria-label="Trace a path"
+            className="pointer-coarse:min-h-11 inline-flex items-center justify-center gap-1 text-body font-medium text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] rounded-lg px-2 py-1.5">
             <Crosshair className="w-3.5 h-3.5" />
           </button>
           {onConnect && (
-            <button onClick={onConnect} title="Draw a connection: click this node, then the other one"
-              className="inline-flex items-center justify-center gap-1 text-body font-medium text-[var(--state-released)] border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] rounded-lg px-2 py-1.5 hover:bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)]">
+            <button onClick={onConnect} title="Draw a connection: click this node, then the other one" aria-label="Draw a connection"
+              className="pointer-coarse:min-h-11 inline-flex items-center justify-center gap-1 text-body font-medium text-[var(--state-released)] border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] rounded-lg px-2 py-1.5 hover:bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)]">
               <Link2 className="w-3.5 h-3.5" />
             </button>
           )}

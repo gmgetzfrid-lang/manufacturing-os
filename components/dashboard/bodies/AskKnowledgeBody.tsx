@@ -75,7 +75,7 @@ function Inline({ text, onCite }: { text: string; onCite: (n: number) => void })
         const cite = p.match(/^\[(\d{1,3}(?:\s*,\s*\d{1,3})*)\]$/);
         if (cite) {
           return cite[1].split(/\s*,\s*/).map((n) => (
-            <button key={`${i}-${n}`} type="button" onClick={() => onCite(Number(n))}
+            <button key={`${i}-${n}`} type="button" onClick={() => onCite(Number(n))} aria-label={`Source ${n}`}
               className="align-super mx-px px-1 rounded bg-[var(--color-surface-2)] text-[var(--color-accent-text)] text-body font-medium hover:bg-[var(--color-accent)] hover:text-[var(--color-accent-fg)] transition-colors">
               {n}
             </button>
@@ -414,7 +414,7 @@ export default function AskKnowledgeBody() {
                 {(recent ?? []).map((t) => (
                   <li key={t.id}>
                     <Link href={`/assistant?thread=${t.id}&library=${t.libraryId ?? lib?.id ?? ""}`}
-                      className="group flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)]">
+                      className="group flex items-center gap-2 px-2 py-1.5 pointer-coarse:min-h-11 rounded-lg hover:bg-[var(--color-surface-2)]">
                       <MessageSquare className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
                       <span className="flex-1 min-w-0 truncate text-body font-medium text-[var(--color-text)] group-hover:text-[var(--color-text)]">{t.title || "Untitled"}</span>
                       <span className="shrink-0 text-body text-[var(--color-text-faint)] tabular-nums">{timeAgo(t.lastMessageAt)}</span>

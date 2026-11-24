@@ -154,8 +154,8 @@ export default function QualityTab({ orgId, projectId, canManage, canEditPunch, 
   );
 }
 
-const quietBtn = "inline-flex items-center gap-1 px-2 py-1 rounded text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
-const fieldCls = "h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body ";
+const quietBtn = "inline-flex items-center gap-1 px-2 py-1 pointer-coarse:min-h-11 rounded text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
+const fieldCls = "h-9 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body ";
 
 // ── Checklists ───────────────────────────────────────────────────────────
 
@@ -189,7 +189,7 @@ function ChecklistsSection({ orgId, projectId, canManage, actor, checklists, onC
         <div className="px-4 py-8 text-center">
           <ClipboardCheck className="w-7 h-7 mx-auto text-[var(--color-text-faint)] mb-2" />
           <div className="text-body font-medium text-[var(--color-text)]">No checklists yet</div>
-          <div className="text-xs text-[var(--color-text-muted)] mt-1 max-w-lg mx-auto">
+          <div className="text-caption text-[var(--color-text-muted)] mt-1 max-w-lg mx-auto">
             Upload your PSSR or QA/QC checklist (PDF) with New checklist. It&apos;s read into items you check off.
           </div>
         </div>
@@ -323,7 +323,7 @@ export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone,
                   <FileThumb file={(uploading ?? failed)!} size={32} />
                   <span className="min-w-0 truncate text-[var(--color-text)]">{(uploading ?? failed)!.name} <span className="text-[var(--color-text-muted)]">· {fileSize((uploading ?? failed)!.size)}{uploading ? " · uploading…" : " · didn't upload"}</span></span>
                   {failed && !uploading && (
-                    <button type="button" onClick={() => void upload(failed)} className="shrink-0 h-8 inline-flex items-center gap-1.5 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                    <button type="button" onClick={() => void upload(failed)} className="shrink-0 h-8 pointer-coarse:h-11 inline-flex items-center gap-1.5 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                       Try again
                     </button>
                   )}
@@ -337,20 +337,20 @@ export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone,
           )}
           <div className="flex items-center gap-2 flex-wrap">
             {doc ? (
-              <span className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-1.5 text-xs font-medium text-[var(--color-text)]">
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-1.5 text-caption font-medium text-[var(--color-text)]">
                 <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {doc.label}
-                <button onClick={() => setDoc(null)} className="text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]"><X className="w-3 h-3" /></button>
+                <button onClick={() => setDoc(null)} aria-label={`Remove ${doc.label}`} className="ui-hit text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]"><X className="w-3 h-3" /></button>
               </span>
             ) : (
               <span className="relative flex-1 min-w-64">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-faint)]" />
-                <input value={query} onChange={(e) => setQuery(e.target.value)} autoFocus
+                <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} autoFocus aria-label="Find a document in document control"
                   placeholder="Or find one already in document control (number or title)…"
-                  className="w-full h-8 pointer-coarse:h-11 pl-8 pr-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-xs" />
+                  className="w-full h-8 pointer-coarse:h-11 pl-8 pr-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption" />
               </span>
             )}
-            <select value={kind} onChange={(e) => setKind(e.target.value as ChecklistKind)}
-              className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
+            <select value={kind} onChange={(e) => setKind(e.target.value as ChecklistKind)} aria-label="Kind of list"
+              className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption">
               {(Object.keys(CHECKLIST_KIND_LABEL) as ChecklistKind[]).map((k) => (
                 <option key={k} value={k}>{CHECKLIST_KIND_LABEL[k]}</option>
               ))}
@@ -358,15 +358,15 @@ export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone,
             <button onClick={() => void read()} disabled={!doc || reading || !!uploading}
               className={`h-8 inline-flex items-center gap-1 px-3 rounded-lg text-caption font-medium disabled:opacity-50 transition-colors ${doc ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]" : "border border-[var(--color-border-strong)] text-[var(--color-text)]"}`}
               title="Reads the pages into items you check before anything saves.">
-              {reading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Read it
+              {reading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} {reading ? "Reading" : "Read it"}
             </button>
-            <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+            <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
           </div>
           {results.length > 0 && !doc && (
             <ul className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)] overflow-hidden">
               {results.map((d) => (
                 <li key={d.id}>
-                  <button onClick={() => setDoc(d)} className="w-full px-3 py-1.5 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2">
+                  <button onClick={() => setDoc(d)} className="w-full px-3 py-1.5 text-left text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2">
                     <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> {d.label}
                   </button>
                 </li>
@@ -377,22 +377,22 @@ export function NewChecklistFlow({ orgId, projectId, projectName, actor, onDone,
       ) : (
         <>
           <div className="flex items-center gap-2 flex-wrap">
-            <input value={title} onChange={(e) => setTitle(e.target.value)}
-              className="h-8 pointer-coarse:h-11 flex-1 min-w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-medium" />
+            <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="List name"
+              className="h-8 pointer-coarse:h-11 flex-1 min-w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption font-medium" />
             <span className="text-caption text-[var(--color-text-muted)]">Read {doc?.label ?? "it"}: found {proposed.length} item{proposed.length === 1 ? "" : "s"}. Remove any that aren&apos;t real items, then save.</span>
             <button onClick={() => void save()} disabled={saving || proposed.length === 0}
               className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
-              {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Save checklist
+              {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} {saving ? "Saving" : "Save checklist"}
             </button>
-            <button onClick={() => setProposed(null)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Back</button>
+            <button onClick={() => setProposed(null)} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Back</button>
           </div>
           <ul className="max-h-72 overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)]">
             {proposed.map((p, i) => (
-              <li key={i} className="px-3 py-1.5 flex items-start gap-2 text-xs">
+              <li key={i} className="px-3 py-1.5 flex items-start gap-2 text-caption">
                 {p.section && <span className="shrink-0 text-body font-medium text-[var(--color-text-faint)] mt-0.5">{p.section}</span>}
                 <span className="flex-1 text-[var(--color-text)]">{p.text}</span>
-                <button onClick={() => setProposed(proposed.filter((_, j) => j !== i))}
-                  className="shrink-0 text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]"><X className="w-3 h-3" /></button>
+                <button onClick={() => setProposed(proposed.filter((_, j) => j !== i))} aria-label={`Leave out: ${p.text}`}
+                  className="ui-hit shrink-0 text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]"><X className="w-3 h-3" /></button>
               </li>
             ))}
           </ul>
@@ -435,7 +435,9 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
       if (!res.ok || !body?.proposals) throw new Error(body?.error || `HTTP ${res.status}`);
       const na = body.proposals.filter((p) => p.applicability === "na").length;
       if (!(await appConfirm({
-        message: `The assessment proposes applicability for ${body.proposals.length} items (${na} look not-applicable to this job, with reasons attached). Apply it? Items you've decided by hand are never touched.`,
+        title: `Apply the assessment to ${body.proposals.length} items?`,
+        message: `${na} look not applicable to this job, with reasons attached. Items you've decided by hand are never touched.`,
+        confirmLabel: "Apply assessment",
       }))) return;
       const applied = await applyAssessment({ orgId, projectId, checklistId: checklist.id, proposals: body.proposals, actor });
       setErr(null);
@@ -485,7 +487,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
     if (!(await appConfirm({
       title: `Remove "${checklist.title}"?`,
       message: "It leaves the Quality tab and the close-out gates. It's kept on the record (void), and you can undo right after.",
-      confirmLabel: "Remove", tone: "danger",
+      confirmLabel: "Remove list", tone: "danger",
     }))) return;
     const was = checklist.status;
     setBusy("remove");
@@ -514,7 +516,7 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
     <div>
       <button onClick={() => setOpen((v) => !v)} className="w-full px-4 py-3 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
         <ChevronRight className={`w-4 h-4 text-[var(--color-text-faint)] ui-chevron${(open) ? " rotate-90" : ""}`} />
-        <span className="text-xs font-medium text-[var(--color-text)]">{checklist.title}</span>
+        <span className="text-caption font-medium text-[var(--color-text)]">{checklist.title}</span>
         <span className="text-body font-medium text-[var(--color-text-muted)]">{CHECKLIST_KIND_LABEL[checklist.kind]}</span>
         {checklist.status === "complete" && (
           <span className="inline-flex items-center gap-0.5 text-caption font-medium text-[var(--state-released-text)]"><ShieldCheck className="w-3 h-3" /> Complete</span>
@@ -531,22 +533,22 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
           {canManage && checklist.status === "open" && (
             <div className="flex items-center gap-2 flex-wrap">
               <button onClick={() => void assess()} disabled={busy != null}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
+                className="inline-flex items-center gap-1 px-2.5 py-1 pointer-coarse:min-h-11 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
                 title="AI judges which items apply to THIS job, grounded on the project's purpose, SOW, schedule, and documents. You review before it applies.">
                 {busy === "assess" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />} Which items apply to this job?
               </button>
               <button onClick={() => void sweep()} disabled={busy != null}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
+                className="inline-flex items-center gap-1 px-2.5 py-1 pointer-coarse:min-h-11 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
                 title="No AI: marks items satisfied that the record proves (accepted turnover, documents on file), with where it found it; the rest need evidence.">
-                {busy === "sweep" ? <Loader2 className="w-3 h-3 animate-spin" /> : <ListChecks className="w-3 h-3" />} Check evidence we already hold
+                {busy === "sweep" ? <Loader2 className="w-3 h-3 animate-spin" /> : <ListChecks className="w-3 h-3" />} {busy === "sweep" ? "Checking evidence" : "Check evidence we already hold"}
               </button>
               <button onClick={() => void remove()} disabled={busy != null} title="Added by mistake? Take it off the list. It stays on the record, with Undo right after."
-                className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)] disabled:opacity-50 transition-colors">
-                {busy === "remove" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />} Remove
+                className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 pointer-coarse:min-h-11 rounded-lg text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-50 transition-colors">
+                {busy === "remove" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />} {busy === "remove" ? "Removing" : "Remove"}
               </button>
               <button onClick={() => void complete()} disabled={busy != null}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
-                {busy === "complete" ? <Loader2 className="w-3 h-3 animate-spin" /> : <ShieldCheck className="w-3 h-3" />} Mark complete
+                className="inline-flex items-center gap-1 px-2.5 py-1 pointer-coarse:min-h-11 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
+                {busy === "complete" ? <Loader2 className="w-3 h-3 animate-spin" /> : <ShieldCheck className="w-3 h-3" />} {busy === "complete" ? "Marking complete" : "Mark complete"}
               </button>
             </div>
           )}
@@ -554,12 +556,12 @@ function ChecklistCard({ orgId, projectId, checklist, canManage, actor, onChange
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-caption text-[var(--color-text-muted)]">Complete: its items are locked. Reopen it to change one.</span>
               <button onClick={() => void remove()} disabled={busy != null}
-                className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)] disabled:opacity-50 transition-colors">
-                {busy === "remove" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />} Remove
+                className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 pointer-coarse:min-h-11 rounded-lg text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-50 transition-colors">
+                {busy === "remove" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />} {busy === "remove" ? "Removing" : "Remove"}
               </button>
               <button onClick={() => void reopen()} disabled={busy != null}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
-                {busy === "reopen" ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />} Reopen
+                className="inline-flex items-center gap-1 px-2.5 py-1 pointer-coarse:min-h-11 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
+                {busy === "reopen" ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />} {busy === "reopen" ? "Reopening" : "Reopen"}
               </button>
             </div>
           )}
@@ -614,7 +616,7 @@ function ChecklistItemRow({ orgId, projectId, item, canManage, actor, onChanged,
   };
 
   return (
-    <li className={`px-3 py-2 text-xs ${na ? "opacity-50" : ""}`}>
+    <li className={`px-3 py-2 text-caption ${na ? "opacity-50" : ""}`}>
       <div className="flex items-start gap-2">
         <StatusDot status={na ? "na" : item.status} />
         <div className="min-w-0 flex-1">
@@ -632,7 +634,7 @@ function ChecklistItemRow({ orgId, projectId, item, canManage, actor, onChanged,
           {item.evidence.length > 0 && (
             <div className="mt-1 flex flex-wrap gap-1">
               {item.evidence.map((e, i) => (
-                <span key={i} className={`text-caption font-medium px-1.5 py-0.5 rounded border ${e.source === "auto" ? "border-[var(--state-released)] bg-[var(--state-released)]/[0.07] text-[var(--state-released-text)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]"}`}
+                <span key={i} className={`text-caption font-medium px-1.5 py-0.5 rounded border ${e.source === "auto" ? "border-[var(--state-released)] bg-[var(--state-released)]/[0.07] text-[var(--state-released-text)]" : "border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text)]"}`}
                   title={e.source === "auto" ? "Found by the evidence sweep" : "Attached by a person"}>
                   {e.label}
                 </span>
@@ -644,23 +646,23 @@ function ChecklistItemRow({ orgId, projectId, item, canManage, actor, onChanged,
           <span className="shrink-0 flex items-center gap-1">
             {!na && item.status !== "satisfied" && (
               <button onClick={() => void override({ status: "satisfied" }, "Mark satisfied")}
-                className="px-1.5 py-0.5 rounded text-caption font-medium text-[var(--state-released-text)] hover:bg-[var(--state-released)]" title="Mark satisfied with your note on the record">✓ Satisfied</button>
+                className="px-1.5 py-0.5 pointer-coarse:min-h-11 rounded text-caption font-medium text-[var(--state-released-text)] hover:bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)]" title="Mark satisfied with your note on the record">✓ Satisfied</button>
             )}
             {!na && item.status === "satisfied" && (
               // One tap back to open. It stays human-decided, so the
               // evidence sweep won't green it again on its own.
               <button onClick={() => void override({ status: "open", manualNote: "Satisfied taken back: not done yet" }, null)}
-                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-caption font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title="Not satisfied after all - back to open">
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 pointer-coarse:min-h-11 rounded text-caption font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title="Not satisfied after all - back to open">
                 <RotateCcw className="w-3 h-3" /> Undo satisfied
               </button>
             )}
             {!na && (
               <button onClick={() => void override({ applicability: "na", status: "na" }, "Mark not applicable")}
-                className="px-1.5 py-0.5 rounded text-caption font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title="Not applicable to this job. Your reason goes on the record.">N/A</button>
+                className="px-1.5 py-0.5 pointer-coarse:min-h-11 rounded text-caption font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title="Not applicable to this job. Your reason goes on the record.">N/A</button>
             )}
             {na && (
               <button onClick={() => void override({ applicability: "applies", status: "open" }, "Reopen this item")}
-                className="px-1.5 py-0.5 rounded text-caption font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Reopen</button>
+                className="px-1.5 py-0.5 pointer-coarse:min-h-11 rounded text-caption font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Reopen</button>
             )}
           </span>
         )}
@@ -719,7 +721,7 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
     if (!(await appConfirm({
       title: `Reopen "${item.name}"?`,
       message: `It goes back to ${item.status === "waived" && !item.documentId ? "not received" : "awaiting review"}. The ${item.status} decision stays in its note and on the record.`,
-      confirmLabel: "Reopen",
+      confirmLabel: "Reopen item",
     }))) return;
     setBusy(item.id);
     const res = await reopenTurnoverItem({ item, actor });
@@ -784,7 +786,7 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
       <div className="bg-[var(--color-surface)] rounded-lg overflow-hidden border border-[var(--color-border)]">
 
       {items.length === 0 ? (
-        <div className="px-4 py-6 text-center text-xs text-[var(--color-text-muted)]">
+        <div className="px-4 py-6 text-center text-caption text-[var(--color-text-muted)]">
           Nothing required yet. Add the usual list for the job size, or add documents below.
         </div>
       ) : (
@@ -795,7 +797,7 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
                 onCancel={() => setEditing(null)} onSaved={() => { setEditing(null); onChanged(); }} />
             </li>
           ) : (
-            <li key={it.id} className="px-4 py-2.5 text-xs">
+            <li key={it.id} className="px-4 py-2.5 text-caption">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-medium text-[var(--color-text)]">{it.name}</span>
                 {!it.required && <span className="text-caption font-medium text-[var(--color-text-faint)]">optional</span>}
@@ -809,7 +811,7 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
                 {canManage && busy !== it.id && (
                   <span className="ml-auto flex items-center gap-1 flex-wrap">
                     {(it.status === "accepted" || it.status === "waived") && (
-                      <button onClick={() => void reopen(it)} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-caption font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title="Back into the review. The decision stays on the record.">
+                      <button onClick={() => void reopen(it)} className="inline-flex items-center gap-1 px-1.5 py-0.5 pointer-coarse:min-h-11 rounded text-caption font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]" title="Back into the review. The decision stays on the record.">
                         <RotateCcw className="w-3 h-3" /> Reopen
                       </button>
                     )}
@@ -820,16 +822,16 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
                       <Pencil className="w-3 h-3" /> Edit
                     </button>
                     {it.status === "open" && (
-                      <button onClick={() => void review(it, "received")} className="px-1.5 py-0.5 rounded text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Received</button>
+                      <button onClick={() => void review(it, "received")} className="px-1.5 py-0.5 pointer-coarse:min-h-11 rounded text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Received</button>
                     )}
                     {(it.status === "received" || it.status === "rejected") && (
-                      <button onClick={() => void review(it, "accepted")} className="px-1.5 py-0.5 rounded text-caption font-medium text-[var(--state-released-text)] hover:bg-[var(--state-released)]">Accept</button>
+                      <button onClick={() => void review(it, "accepted")} className="px-1.5 py-0.5 pointer-coarse:min-h-11 rounded text-caption font-medium text-[var(--state-released-text)] hover:bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)]">Accept</button>
                     )}
                     {it.status === "received" && (
-                      <button onClick={() => void review(it, "rejected")} className="px-1.5 py-0.5 rounded text-caption font-medium text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)]">Reject</button>
+                      <button onClick={() => void review(it, "rejected")} className="px-1.5 py-0.5 pointer-coarse:min-h-11 rounded text-caption font-medium text-[var(--state-overdue-text)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)]">Reject</button>
                     )}
                     {(it.status === "open" || it.status === "received") && (
-                      <button onClick={() => void review(it, "waived")} className="px-1.5 py-0.5 rounded text-caption font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Waive</button>
+                      <button onClick={() => void review(it, "waived")} className="px-1.5 py-0.5 pointer-coarse:min-h-11 rounded text-caption font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Waive</button>
                     )}
                   </span>
                 )}
@@ -855,10 +857,10 @@ function TurnoverSection({ orgId, projectId, canManage, actor, items, jobKind, p
 
       {canManage && (
         <div className="px-4 py-2.5 border-t border-[var(--color-border)] flex items-center gap-2">
-          <input value={addName} onChange={(e) => setAddName(e.target.value)}
+          <input value={addName} onChange={(e) => setAddName(e.target.value)} aria-label="New required item"
             onKeyDown={(e) => { if (e.key === "Enter" && addName.trim()) { void (async () => { const r = await addTurnoverItem({ orgId, projectId, name: addName, actor }); if (!r.ok) setErr(r.error ?? null); else { setAddName(""); onChanged(); } })(); } }}
             placeholder="Add a required item, e.g. Torque records"
-            className="h-8 pointer-coarse:h-11 flex-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+            className="h-8 pointer-coarse:h-11 flex-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption" />
           <button onClick={() => { if (addName.trim()) void (async () => { const r = await addTurnoverItem({ orgId, projectId, name: addName, actor }); if (!r.ok) setErr(r.error ?? null); else { setAddName(""); onChanged(); } })(); }}
             className="h-8 inline-flex items-center gap-1 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-caption font-medium hover:bg-[var(--color-surface-2)]">
             <Plus className="w-3 h-3" /> Add
@@ -894,7 +896,7 @@ function TurnoverEditor({ item, parties, actor, setErr, onCancel, onSaved }: {
     onSaved();
   };
   return (
-    <div className="space-y-2 text-xs">
+    <div className="space-y-2 text-caption">
       <div className="flex items-center gap-2 flex-wrap">
         <input value={name} onChange={(e) => setName(e.target.value)} aria-label="Name" autoFocus className={`${fieldCls} flex-1 min-w-48 font-medium`} />
         {pick.length > 0 && (
@@ -909,10 +911,10 @@ function TurnoverEditor({ item, parties, actor, setErr, onCancel, onSaved }: {
       </div>
       <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What it is, in plain words" aria-label="What it is" className={`${fieldCls} w-full`} />
       <div className="flex items-center justify-end gap-2">
-        <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+        <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
         <button onClick={() => void save()} disabled={saving}
           className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
-          {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Save
+          {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} {saving ? "Saving" : "Save"}
         </button>
       </div>
     </div>
@@ -950,8 +952,8 @@ function DocPicker({ orgId, busy, onPick, onClear, onCancel }: {
       <div className="flex items-center gap-2 flex-wrap">
         <span className="relative flex-1 min-w-56">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-faint)]" />
-          <input value={query} onChange={(e) => setQuery(e.target.value)} autoFocus placeholder="Find the submitted document (by number or title)…"
-            className="w-full h-8 pointer-coarse:h-11 pl-8 pr-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-xs" />
+          <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} autoFocus aria-label="Find the submitted document" placeholder="Find the submitted document (by number or title)…"
+            className="w-full h-8 pointer-coarse:h-11 pl-8 pr-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption" />
         </span>
         {onClear && <button onClick={onClear} disabled={busy} className={quietBtn}>Take it off</button>}
         <button onClick={onCancel} className={quietBtn}>Cancel</button>
@@ -960,7 +962,7 @@ function DocPicker({ orgId, busy, onPick, onClear, onCancel }: {
         <ul className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)] overflow-hidden">
           {shown.map((d) => (
             <li key={d.id}>
-              <button onClick={() => onPick(d)} disabled={busy} className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2 disabled:opacity-50">
+              <button onClick={() => onPick(d)} disabled={busy} className="w-full px-3 py-2 text-left text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2 disabled:opacity-50">
                 <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> {d.label}
               </button>
             </li>
@@ -1020,7 +1022,7 @@ function PunchSection({ orgId, projectId, canManage, actor, items, parties, peop
     if (!(await appConfirm({
       title: "Void this punch item?",
       message: `"${it.title}" comes off the open list as not a real snag. It stays on the record, and you can reopen it.`,
-      confirmLabel: "Void", tone: "danger",
+      confirmLabel: "Void item", tone: "danger",
     }))) return;
     if (await setStatus(it, "void")) {
       announce(`Voided "${it.title}".`, async () => {
@@ -1043,14 +1045,14 @@ function PunchSection({ orgId, projectId, canManage, actor, items, parties, peop
 
       {canManage && (
         <div className="px-4 py-2.5 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
-          <input value={title} onChange={(e) => setTitle(e.target.value)}
+          <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="New punch item"
             onKeyDown={(e) => { if (e.key === "Enter") void add(); }}
             placeholder="e.g. Reinstall insulation at E-301 north nozzle"
-            className="h-8 pointer-coarse:h-11 flex-1 min-w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+            className="h-8 pointer-coarse:h-11 flex-1 min-w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption" />
           <input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Where (optional)" aria-label="Where"
             className={`${fieldCls} w-36`} />
           <input type="date" value={due} onChange={(e) => setDue(e.target.value)} aria-label="Due"
-            className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]" />
+            className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption [color-scheme:light] dark:[color-scheme:dark]" />
           {pickParties.length > 0 && (
             <select value={partyId} onChange={(e) => setPartyId(e.target.value)} aria-label="Contractor" className={fieldCls}>
               <option value="">Contractor…</option>
@@ -1059,13 +1061,13 @@ function PunchSection({ orgId, projectId, canManage, actor, items, parties, peop
           )}
           <button onClick={() => void add()} disabled={busy === "add"}
             className="h-8 inline-flex items-center gap-1 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-caption font-medium hover:bg-[var(--color-surface-2)] disabled:opacity-50">
-            {busy === "add" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Add
+            {busy === "add" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} {busy === "add" ? "Adding" : "Add"}
           </button>
         </div>
       )}
 
       {items.length === 0 ? (
-        <div className="px-4 py-5 text-center text-xs text-[var(--color-text-muted)]">Nothing on the punch list.</div>
+        <div className="px-4 py-5 text-center text-caption text-[var(--color-text-muted)]">Nothing on the punch list.</div>
       ) : (
         <ul className="divide-y divide-[var(--color-border)]">
           {[...open, ...closed].map((it) => {
@@ -1082,7 +1084,7 @@ function PunchSection({ orgId, projectId, canManage, actor, items, parties, peop
             const overdue = it.status === "open" && it.dueDate && new Date(`${it.dueDate}T23:59:59`).getTime() < now;
             const where = [it.location, it.assignee ? `on it: ${it.assignee}` : null, it.partyId ? partyName.get(it.partyId) ?? null : null].filter(Boolean).join(" · ");
             return (
-              <li key={it.id} className={`px-4 py-2 flex items-center gap-2 flex-wrap text-xs ${it.status !== "open" ? "opacity-55" : ""}`}>
+              <li key={it.id} className={`px-4 py-2 flex items-center gap-2 flex-wrap text-caption ${it.status !== "open" ? "opacity-55" : ""}`}>
                 <span className={`ui-pill !h-5 !px-2 !text-caption ${it.status === "done" ? "is-good" : it.status === "void" ? "is-muted" : overdue ? "is-bad" : "is-warn"}`}>{it.status === "done" ? "Done" : it.status === "void" ? "Void" : overdue ? "Late" : "Open"}</span>
                 <span className={`text-[var(--color-text)] ${it.status !== "open" ? "line-through" : ""}`}>{it.title}</span>
                 {where && <span className="text-caption text-[var(--color-text-muted)]">{where}</span>}
@@ -1098,9 +1100,9 @@ function PunchSection({ orgId, projectId, canManage, actor, items, parties, peop
                       <Pencil className="w-3 h-3" /> Edit
                     </button>
                     <button onClick={() => void setStatus(it, "done")}
-                      className="px-2 py-1 rounded text-caption font-medium text-[var(--state-released-text)] hover:bg-[var(--state-released)]">Done</button>
+                      className="px-2 py-1 pointer-coarse:min-h-11 rounded text-caption font-medium text-[var(--state-released-text)] hover:bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)]">Done</button>
                     <button onClick={() => void voidItem(it)}
-                      className="p-1.5 rounded text-caption font-medium text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)]" title="Void: not a real snag" aria-label="Void: not a real snag"><Ban className="w-3.5 h-3.5" /></button>
+                      className="inline-flex items-center justify-center p-1.5 pointer-coarse:size-11 rounded text-caption font-medium text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)]" title="Void: not a real snag" aria-label="Void: not a real snag"><Ban className="w-3.5 h-3.5" /></button>
                   </span>
                 )}
                 {canManage && it.status !== "open" && busy !== it.id && (
@@ -1140,7 +1142,7 @@ function PunchEditor({ item, parties, people, actor, setErr, onCancel, onSaved }
     onSaved();
   };
   return (
-    <div className="space-y-2 text-xs">
+    <div className="space-y-2 text-caption">
       <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="What it is" autoFocus className={`${fieldCls} w-full`} />
       <div className="flex items-center gap-2 flex-wrap">
         <input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Where" aria-label="Where" className={`${fieldCls} flex-1 min-w-36`} />
@@ -1155,10 +1157,10 @@ function PunchEditor({ item, parties, people, actor, setErr, onCancel, onSaved }
         )}
       </div>
       <div className="flex items-center justify-end gap-2">
-        <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+        <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
         <button onClick={() => void save()} disabled={saving}
           className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
-          {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Save
+          {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} {saving ? "Saving" : "Save"}
         </button>
       </div>
     </div>

@@ -17,7 +17,7 @@ export default function StepPath({ steps, current, onPick, className = "", onDar
 }) {
   return (
     <div className={className}>
-      <p className={`sm:hidden text-[12.5px] font-medium ${onDark ? "text-white" : "text-[var(--color-text)]"}`}>
+      <p className={`sm:hidden text-body font-medium ${onDark ? "text-white" : "text-[var(--color-text)]"}`}>
         Step {Math.min(current + 1, steps.length)} of {steps.length}: {steps[current] ?? ""}
       </p>
       <ol className="flex items-start" aria-label="Steps">

@@ -22,6 +22,27 @@ export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttribute
   }
 );
 
+/** A password or secret field with a Show / Hide button at its right
+ *  edge (the button is the field's full height, so it is easy to hit). With
+ *  Show there is no need for a "type it again" field. `fieldClassName`
+ *  replaces the standard field look (the sign-in pages use their own). */
+export const PasswordInput = React.forwardRef<HTMLInputElement,
+  Omit<React.InputHTMLAttributes<HTMLInputElement>, "type"> & { fieldClassName?: string; what?: string }>(
+  function PasswordInput({ className = "", fieldClassName, what = "password", ...rest }, ref) {
+    const [show, setShow] = React.useState(false);
+    return (
+      <div className={`relative ${className}`}>
+        <input ref={ref} {...rest} type={show ? "text" : "password"} autoCapitalize="none" autoCorrect="off" spellCheck={false}
+          className={`${fieldClassName ?? controlClass} pr-16`} />
+        <button type="button" onClick={() => setShow((v) => !v)} aria-label={`${show ? "Hide" : "Show"} ${what}`}
+          className="absolute inset-y-0 right-0 min-w-14 px-3 rounded-r-lg text-body font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] focus-visible:text-[var(--color-text)]">
+          {show ? "Hide" : "Show"}
+        </button>
+      </div>
+    );
+  }
+);
+
 export const Textarea = React.forwardRef<HTMLTextAreaElement, React.TextareaHTMLAttributes<HTMLTextAreaElement>>(
   function Textarea({ className = "", ...rest }, ref) {
     return <textarea ref={ref} {...rest} className={`${controlClass} h-auto min-h-20 py-2 [field-sizing:content] ${className}`} />;

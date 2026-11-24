@@ -8,6 +8,7 @@
 // shows everything; email is the opt-in part.
 
 import React, { useCallback, useEffect, useState } from "react";
+import { CircleAlert } from "lucide-react";
 import { bandSeg, bandSegItem } from "@/components/admin/band";
 import { said } from "@/components/admin/said";
 import { useRole } from "@/components/providers/RoleContext";
@@ -145,7 +146,7 @@ export default function NotificationSettingsPage() {
         />
 
         <PageBody>
-        {error && <p role="alert" className="text-body font-medium text-[var(--state-overdue-text)]">{error}</p>}
+        {error && <p role="alert" className="text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" /><span>{error}</span></p>}
 
         <Card pad={false} className="divide-y divide-[var(--color-border)] overflow-hidden">
           <PrefRow title="Email notifications" hint="Off means no email at all, whatever is set below."
@@ -204,7 +205,7 @@ function Toggle({ on, onChange, label, disabled }: { on: boolean; onChange: (v: 
       aria-label={label}
       disabled={disabled}
       onClick={() => onChange(!on)}
-      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 mt-0.5 disabled:cursor-not-allowed ${on ? "bg-[var(--color-main)]" : "bg-[var(--color-border-control)]"}`}
+      className={`ui-hit relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 mt-0.5 disabled:cursor-not-allowed ${on ? "bg-[var(--color-main)]" : "bg-[var(--color-border-control)]"}`}
     >
       <span className={`inline-block h-5 w-5 rounded-full bg-[var(--color-surface)] transition-transform motion-reduce:transition-none ${on ? "translate-x-[22px]" : "translate-x-0.5"}`} />
     </button>

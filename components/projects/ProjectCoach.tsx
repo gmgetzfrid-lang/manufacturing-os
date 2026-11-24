@@ -109,7 +109,7 @@ export default function ProjectCoach({ orgId, projectId, refreshKey }: {
           {/* The coach: what to feed the system next, payoff stated. */}
           <div className="pt-2 min-w-0">
             {items.length === 0 ? (
-              <div className="text-xs text-[var(--color-text-muted)] italic">
+              <div className="text-caption text-[var(--color-text-muted)] italic">
                 Nothing missing. New gaps show up here as the job runs.
               </div>
             ) : (

@@ -218,8 +218,8 @@ export default function AckSection({ doc, orgId, canManage }: {
                     <span className="ml-auto shrink-0">{statusChip(r)}</span>
                     {canManage && r.status === "pending" && (
                       <>
-                        <button title="Nudge" onClick={() => void nudge(r.id)} disabled={busy} className="shrink-0 p-1 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><BellRing className="w-3 h-3" /></button>
-                        <button title="Waive" onClick={() => void waive(r.id)} disabled={busy} className="shrink-0 p-1 rounded hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)]"><X className="w-3 h-3" /></button>
+                        <button title="Nudge" aria-label={`Nudge ${r.assigneeName || r.assigneeUserId}`} onClick={() => void nudge(r.id)} disabled={busy} className="inline-flex items-center justify-center pointer-coarse:size-11 shrink-0 p-1 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><BellRing className="w-3 h-3" /></button>
+                        <button title="Waive" aria-label={`Waive for ${r.assigneeName || r.assigneeUserId}`} onClick={() => void waive(r.id)} disabled={busy} className="inline-flex items-center justify-center pointer-coarse:size-11 shrink-0 p-1 rounded hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)]"><X className="w-3 h-3" /></button>
                       </>
                     )}
                   </div>
@@ -257,14 +257,14 @@ export default function AckSection({ doc, orgId, canManage }: {
                     <div className="text-body font-medium text-[var(--color-text-muted)]">Named people</div>
                     <div className="flex flex-wrap gap-1">
                       {people.map((p) => (
-                        <span key={p.uid} className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-body text-[var(--color-text)]">{p.name || p.email}<button onClick={() => setPeople((prev) => prev.filter((x) => x.uid !== p.uid))}><X className="w-3 h-3" /></button></span>
+                        <span key={p.uid} className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-body text-[var(--color-text)]">{p.name || p.email}<button aria-label={`Remove ${p.name || p.email}`} className="ui-hit" onClick={() => setPeople((prev) => prev.filter((x) => x.uid !== p.uid))}><X className="w-3 h-3" /></button></span>
                       ))}
                     </div>
-                    <input value={userQuery} onChange={(e) => setUserQuery(e.target.value)} placeholder="Search people…" className={`${inp} w-full`} />
+                    <input type="search" aria-label="Search people" value={userQuery} onChange={(e) => setUserQuery(e.target.value)} placeholder="Search people…" className={`${inp} w-full`} />
                     {userHits.length > 0 && (
                       <div className="rounded-lg border border-[var(--color-border)] max-h-28 overflow-y-auto">
                         {userHits.filter((u) => !people.some((p) => p.uid === u.uid)).map((u) => (
-                          <button key={u.uid} onClick={() => { setPeople((prev) => [...prev, u]); setUserQuery(""); setUserHits([]); }} className="w-full text-left px-2 py-1 text-body hover:bg-[var(--color-surface-2)] flex items-center gap-1.5"><Plus className="w-3 h-3" /> {u.name || u.email}</button>
+                          <button key={u.uid} onClick={() => { setPeople((prev) => [...prev, u]); setUserQuery(""); setUserHits([]); }} className="pointer-coarse:min-h-11 w-full text-left px-2 py-1 text-body hover:bg-[var(--color-surface-2)] flex items-center gap-1.5"><Plus className="w-3 h-3" /> {u.name || u.email}</button>
                         ))}
                       </div>
                     )}
@@ -273,7 +273,7 @@ export default function AckSection({ doc, orgId, canManage }: {
                     <div className="text-body font-medium text-[var(--color-text-muted)]">Whole roles</div>
                     <div className="flex flex-wrap gap-1">
                       {ALL_ROLES.map((r) => (
-                        <button key={r} onClick={() => toggleRole(r)} className={`px-2 py-0.5 rounded-full text-body font-medium border transition-colors ${roles.includes(r) ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{r}</button>
+                        <button key={r} onClick={() => toggleRole(r)} className={`pointer-coarse:min-h-11 px-2 py-0.5 rounded-full text-body font-medium border transition-colors ${roles.includes(r) ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{r}</button>
                       ))}
                     </div>
                   </div>
@@ -282,7 +282,7 @@ export default function AckSection({ doc, orgId, canManage }: {
                       <div className="text-body font-medium text-[var(--color-text-muted)]">Departments</div>
                       <div className="flex flex-wrap gap-1">
                         {allTeams.map((t) => (
-                          <button key={t.id} onClick={() => toggleTeam(t.id)} className={`px-2 py-0.5 rounded-full text-body font-medium border transition-colors ${teamIds.includes(t.id) ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{t.name}</button>
+                          <button key={t.id} onClick={() => toggleTeam(t.id)} className={`pointer-coarse:min-h-11 px-2 py-0.5 rounded-full text-body font-medium border transition-colors ${teamIds.includes(t.id) ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{t.name}</button>
                         ))}
                       </div>
                     </div>

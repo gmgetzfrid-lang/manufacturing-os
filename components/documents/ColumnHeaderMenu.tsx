@@ -55,7 +55,7 @@ export default function ColumnHeaderMenu({ onAdd, isController }: ColumnHeaderMe
         aria-haspopup="menu"
         aria-expanded={isOpen}
         aria-label="Add a column"
-        className="w-8 h-8 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
+        className="ui-hit w-8 h-8 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
         title="Add a column"
       >
         <Plus className="w-4 h-4" />

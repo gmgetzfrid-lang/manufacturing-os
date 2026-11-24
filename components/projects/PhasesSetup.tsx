@@ -12,7 +12,7 @@
 //   the device for the project.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Layers, Plus, Trash2, Loader2 } from "lucide-react";
+import { Layers, Plus, Trash2, Loader2, CircleAlert } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "@/components/ui/Modal";
 import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
@@ -121,7 +121,7 @@ function SplitBar({ phases, total, onShares }: { phases: ProjectPhase[]; total: 
                 if (e.key === "ArrowLeft") { e.preventDefault(); onShares(moveDivider(shares, i, left - step)); }
                 if (e.key === "ArrowRight") { e.preventDefault(); onShares(moveDivider(shares, i, left + step)); }
               }}
-              className="pointer-events-auto absolute -top-1 w-5 h-14 -ml-2.5 rounded-lg bg-[var(--color-surface)] border-2 border-[var(--color-text)] shadow-md cursor-ew-resize"
+              className="ui-hit pointer-events-auto absolute -top-1 w-5 h-14 -ml-2.5 rounded-lg bg-[var(--color-surface)] border-2 border-[var(--color-text)] shadow-md cursor-ew-resize"
               style={{ left: `${left}%` }} />
           );
         })}
@@ -190,7 +190,7 @@ export function PhasesSetup({ orgId, projectId, projectName, phases: saved, uid,
   });
   const remove = async (i: number) => {
     const p = phases[i];
-    if (!(await appConfirm({ message: `Remove ${p.name}? Its schedule stays on the project and goes back into ${i === 0 ? phases[1]?.name ?? "the project" : phases[0].name}. Its share of the AFE goes to the other phases.`, confirmLabel: "Remove phase", tone: "danger" }))) return;
+    if (!(await appConfirm({ title: `Remove ${p.name}?`, message: `Its schedule stays on the project and goes back into ${i === 0 ? phases[1]?.name ?? "the project" : phases[0].name}. Its share of the AFE goes to the other phases.`, confirmLabel: "Remove phase", tone: "danger" }))) return;
     setPhases((ps) => { const rest = ps.filter((_, j) => j !== i); return rest.map((x, j) => ({ ...x, share: fitShares(rest.map((r) => r.share))[j] })); });
   };
 
@@ -229,7 +229,7 @@ export function PhasesSetup({ orgId, projectId, projectName, phases: saved, uid,
     finally { setBusy(false); }
   };
 
-  const input = "h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body text-[var(--color-text)]";
+  const input = "h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body text-[var(--color-text)]";
   return (
     <Modal onClose={onClose} size="xl" dismissable={!busy}>
       <ModalHeader icon={Layers} title="Phases" subtitle="One project, one AFE, split into phases: each with its own dates, schedule, reports and share of the budget." onClose={onClose} />
@@ -273,7 +273,7 @@ export function PhasesSetup({ orgId, projectId, projectName, phases: saved, uid,
                 <input key={`${p.id}:${p.share}:${total}`} defaultValue={money(phaseAmount(total, p.share))} inputMode="decimal" aria-label={`${p.name} budget`}
                   onBlur={(e) => { const v = parseMoney(e.target.value); if (v != null && total > 0) shares(setShare(phases.map((x) => x.share), i, shareOfAmount(total, v))); }}
                   className={`${input} w-full text-right font-medium`} />
-                <button type="button" onClick={() => void remove(i)} disabled={phases.length <= 1} aria-label={`Remove ${p.name}`} className="justify-self-end w-9 h-9 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-30 flex items-center justify-center"><Trash2 className="w-4 h-4" /></button>
+                <button type="button" onClick={() => void remove(i)} disabled={phases.length <= 1} aria-label={`Remove ${p.name}`} className="ui-hit justify-self-end w-9 h-9 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-30 flex items-center justify-center"><Trash2 className="w-4 h-4" /></button>
               </div>
             ))}
           </div>
@@ -283,7 +283,7 @@ export function PhasesSetup({ orgId, projectId, projectName, phases: saved, uid,
           <div>
             <div className="flex items-baseline justify-between gap-2 mb-2">
               <span className="text-body font-medium text-[var(--color-text-muted)]">Split the {afe?.authorized != null ? "AFE" : "budget"}: drag the line</span>
-              <button type="button" onClick={() => shares(evenShares(phases.length))} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Split evenly</button>
+              <button type="button" onClick={() => shares(evenShares(phases.length))} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Split evenly</button>
             </div>
             <SplitBar phases={phases} total={total} onShares={shares} />
             <p className="mt-2 text-caption text-[var(--color-text-muted)]">Or type a % or $ above. It always adds up to 100%{total ? ` of ${money(total)}` : ""}.</p>
@@ -298,12 +298,12 @@ export function PhasesSetup({ orgId, projectId, projectName, phases: saved, uid,
             The schedule already on the project is <b className="text-[var(--color-text)]">{phases[0].name}</b>. For {phases.slice(1).map((p) => p.name).join(", ")}: pick it at the top of the project, then Plan › Import its schedule. Each phase is tracked on its own; All phases is the whole project.
           </p>
         )}
-        {err && <div role="alert" className="text-caption font-medium text-[var(--state-overdue-text)]">{err}</div>}
+        {err && <div role="alert" className="text-caption font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{err}</span></div>}
       </ModalBody>
       <ModalFooter>
         {problems.length > 0 && <span className="mr-auto text-caption text-[var(--state-held-text)]">{problems[0]}</span>}
-        <button type="button" onClick={onClose} disabled={busy} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
-        <button type="button" onClick={() => void save()} disabled={busy || problems.length > 0} className="inline-flex items-center gap-1.5 h-10 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+        <button type="button" onClick={onClose} disabled={busy} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+        <button type="button" onClick={() => void save()} disabled={busy || problems.length > 0} className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
           {busy && <Loader2 className="w-4 h-4 animate-spin" />} Save phases
         </button>
       </ModalFooter>

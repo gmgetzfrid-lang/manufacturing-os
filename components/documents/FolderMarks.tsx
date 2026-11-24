@@ -14,6 +14,7 @@ import type { FolderMarkState, LevelMeaning, MarkKind, PlanRow } from "@/lib/est
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 import { friendlyError } from "@/lib/friendlyError";
+import { FieldError } from "@/components/ui/Field";
 type Info = { own: FolderMarkState; inherited: FolderMarkState; units: Array<{ code: string; label: string }>; types: string[]; suggestion: { kind: MarkKind; value: string; ref?: string } | null };
 
 const chip = "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-body font-medium";
@@ -53,16 +54,16 @@ export function FolderMarkBar({ orgId, folderId, onChanged }: { orgId: string; f
   return (
     <div className="flex flex-wrap items-center gap-1.5 text-body pointer-events-auto rounded-md bg-[var(--color-surface)]/95 border border-[var(--color-border)] px-2 py-1">
       <span className="font-medium">This folder is</span>
-      {own.area && <span className={`${chip} border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]`}><Factory className="w-3 h-3" /> {own.area.label}<button title="Unmark" onClick={() => void send({ kind: "clear", which: "area" })}><X className="w-3 h-3" /></button></span>}
-      {own.type && <span className={`${chip} border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]`}><Layers className="w-3 h-3" /> {own.type}<button title="Unmark" onClick={() => void send({ kind: "clear", which: "type" })}><X className="w-3 h-3" /></button></span>}
-      {own.equipment && <span className={`${chip} border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)]`}><Cpu className="w-3 h-3" /> {own.equipment.tag}<button title="Unmark" onClick={() => void send({ kind: "clear", which: "equipment" })}><X className="w-3 h-3" /></button></span>}
+      {own.area && <span className={`${chip} border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]`}><Factory className="w-3 h-3" /> {own.area.label}<button title="Unmark" aria-label={`Unmark ${own.area.label}`} className="ui-hit" onClick={() => void send({ kind: "clear", which: "area" })}><X className="w-3 h-3" /></button></span>}
+      {own.type && <span className={`${chip} border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]`}><Layers className="w-3 h-3" /> {own.type}<button title="Unmark" aria-label={`Unmark ${own.type}`} className="ui-hit" onClick={() => void send({ kind: "clear", which: "type" })}><X className="w-3 h-3" /></button></span>}
+      {own.equipment && <span className={`${chip} border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)]`}><Cpu className="w-3 h-3" /> {own.equipment.tag}<button title="Unmark" aria-label={`Unmark ${own.equipment.tag}`} className="ui-hit" onClick={() => void send({ kind: "clear", which: "equipment" })}><X className="w-3 h-3" /></button></span>}
       {!own.area && !own.type && !own.equipment && <span className="text-[var(--color-text-muted)]">not marked{inside ? ` · inside ${inside}` : ""}</span>}
       {!own.area && !own.type && !own.equipment && data.suggestion && !editing && (
         <button disabled={busy} onClick={() => void send(data.suggestion!.kind === "area" ? { kind: "area", unitCode: data.suggestion!.ref } : { kind: "equipment", tag: data.suggestion!.ref ?? data.suggestion!.value })}
           className={`${chip} border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]`}><Wand2 className="w-3 h-3" /> {data.suggestion.kind === "area" ? "Operating area" : "Equipment"}: {data.suggestion.value}?</button>
       )}
       {!editing && (
-        <select value="" onChange={(e) => { const k = e.target.value as MarkKind; setEditing(k); setUnit(data.units[0]?.code ?? ""); }} className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-body">
+        <select aria-label="Mark this folder as" value="" onChange={(e) => { const k = e.target.value as MarkKind; setEditing(k); setUnit(data.units[0]?.code ?? ""); }} className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-body">
           <option value="">Mark as…</option>
           <option value="area">Operating area</option>
           <option value="type">Equipment type</option>
@@ -71,23 +72,23 @@ export function FolderMarkBar({ orgId, folderId, onChanged }: { orgId: string; f
       )}
       {editing === "area" && (
         data.units.length
-          ? <><select value={unit} onChange={(e) => setUnit(e.target.value)} className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-body">{data.units.map((u) => <option key={u.code} value={u.code}>{u.label} ({u.code})</option>)}</select>
-            <button disabled={busy || !unit} onClick={() => void send({ kind: "area", unitCode: unit })} className="rounded bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-2 py-0.5 font-medium disabled:opacity-50">Mark</button></>
+          ? <><select aria-label="Operating area" value={unit} onChange={(e) => setUnit(e.target.value)} className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-body">{data.units.map((u) => <option key={u.code} value={u.code}>{u.label} ({u.code})</option>)}</select>
+            <button disabled={busy || !unit} onClick={() => void send({ kind: "area", unitCode: unit })} className="pointer-coarse:min-h-11 rounded bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-2 py-0.5 font-medium disabled:opacity-50">Mark</button></>
           : <span className="text-[var(--state-held)]">No operating areas in the Site Codebook yet (Intelligence › Setup).</span>
       )}
       {editing === "type" && (
-        <><input list="eqtypes" value={text} onChange={(e) => setText(e.target.value)} placeholder="e.g. Heaters" className="w-28 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-body" />
+        <><input aria-label="Equipment type" list="eqtypes" value={text} onChange={(e) => setText(e.target.value)} placeholder="e.g. Heaters" className="w-28 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-body" />
           <datalist id="eqtypes">{data.types.map((t) => <option key={t} value={t} />)}</datalist>
-          <button disabled={busy || !text.trim()} onClick={() => void send({ kind: "type", label: text })} className="rounded bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-2 py-0.5 font-medium disabled:opacity-50">Mark</button></>
+          <button disabled={busy || !text.trim()} onClick={() => void send({ kind: "type", label: text })} className="pointer-coarse:min-h-11 rounded bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-2 py-0.5 font-medium disabled:opacity-50">Mark</button></>
       )}
       {editing === "equipment" && (
-        <><input value={text} onChange={(e) => setText(e.target.value)} placeholder="Tag, e.g. H-2" className="w-20 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-body font-display tabular-nums" />
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (optional)" className="w-32 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-body" />
-          <button disabled={busy || !text.trim()} onClick={() => void send({ kind: "equipment", tag: text, name })} className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-0.5 font-medium disabled:opacity-50">Mark</button></>
+        <><input aria-label="Tag" value={text} onChange={(e) => setText(e.target.value)} placeholder="Tag, e.g. H-2" className="w-20 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-body font-display tabular-nums" />
+          <input aria-label="Name (optional)" value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (optional)" className="w-32 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-body" />
+          <button disabled={busy || !text.trim()} onClick={() => void send({ kind: "equipment", tag: text, name })} className="pointer-coarse:min-h-11 rounded border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-0.5 font-medium disabled:opacity-50">Mark</button></>
       )}
       {editing && <button onClick={() => setEditing(null)} className="text-[var(--color-text-muted)] hover:underline">cancel</button>}
       {busy && <Loader2 className="w-3 h-3 animate-spin" />}
-      {error && <span className="text-[var(--state-overdue)]">{error}</span>}
+      {error && <FieldError>{error}</FieldError>}
     </div>
   );
 }
@@ -128,10 +129,10 @@ export function LibrarySetup({ orgId, libraryId, libraryName, onDone, onClose }:
       <div className="w-full max-w-2xl max-h-[85vh] flex flex-col rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between">
           <div>
-            <div className="text-sm font-medium">Set up {libraryName} as an equipment library</div>
+            <div className="text-body font-medium">Set up {libraryName} as an equipment library</div>
             <div className="text-body text-[var(--color-text-muted)]">Say what each level of folders is. Everything filed underneath inherits it.</div>
           </div>
-          <button aria-label="Close" onClick={onClose} className="p-1 opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
+          <button aria-label="Close" onClick={onClose} className="ui-hit p-1 opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
         </div>
         <div className="px-4 py-3 space-y-2 text-body">
           {levels.map((l, i) => (
@@ -148,7 +149,7 @@ export function LibrarySetup({ orgId, libraryId, libraryName, onDone, onClose }:
             {rows && <button onClick={() => void apply()} disabled={!!busy || !counts || counts.area + counts.type + counts.eq === 0} className="rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1 font-medium disabled:opacity-50">Apply</button>}
             {busy && <span className="inline-flex items-center gap-1 text-[var(--color-text-muted)]"><Loader2 className="w-3 h-3 animate-spin" /> {busy}</span>}
           </div>
-          {error && <div className="text-[var(--state-overdue)]">{error}</div>}
+          {error && <FieldError>{error}</FieldError>}
           {result && <div className="text-[var(--state-released)]">{result}</div>}
           {counts && <div className="font-medium">{counts.area} operating areas · {counts.type} equipment types · {counts.eq} equipment ({counts.made} new to the registry){counts.no ? ` · ${counts.no} folders nothing matched` : ""}</div>}
         </div>

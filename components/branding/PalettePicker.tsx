@@ -142,7 +142,7 @@ export default function PalettePicker({ value, onChange, disabled = false, logoB
       <button key={role} type="button" disabled={disabled || off} onClick={() => tap(role)} aria-pressed={on}
         aria-label={off ? `${label}: not used with the light menu` : `${label}, ${hex}`}
         className="group flex flex-col min-w-0 text-left rounded-lg disabled:cursor-not-allowed">
-        <span className={`relative h-16 w-full rounded-lg grid place-items-center transition-shadow ${on ? "ring-[3px] ring-[var(--color-text)] ring-offset-2 ring-offset-[var(--color-surface)]" : off ? "ring-1 ring-black/10 opacity-30" : "ring-1 ring-black/10 group-hover:ring-2 group-hover:ring-[var(--color-text-faint)]"}`}
+        <span className={`relative h-16 w-full rounded-lg grid place-items-center transition-shadow ${on ? "ring-[3px] ring-[var(--color-text)] ring-offset-2 ring-offset-[var(--color-surface)]" : off ? "ring-1 ring-[var(--color-border-strong)] opacity-30" : "ring-1 ring-[var(--color-border-strong)] group-hover:ring-2 group-hover:ring-[var(--color-text-faint)]"}`}
           style={{ background: hex, color: role === "accent" ? acc.fg : "#ffffff" }}>
           {on && <span className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full grid place-items-center shadow-sm" style={{ background: "#ffffff", color: "#1f2733" }}><Check className="w-4 h-4" strokeWidth={3} /></span>}
           {target && <span className="inline-flex items-center gap-1 text-body font-medium"><ArrowLeftRight className="w-4 h-4" /> Swap</span>}
@@ -159,7 +159,7 @@ export default function PalettePicker({ value, onChange, disabled = false, logoB
     return (
       <button key={p.id} type="button" disabled={disabled} onClick={() => pick(p.primary, p.name, p.id, p.secondary)} aria-pressed={on} title={p.name}
         className={`flex items-center gap-2.5 px-2.5 min-h-11 rounded-md border text-left disabled:opacity-50 ${on ? "border-[var(--color-text)] bg-[var(--color-surface-2)]" : "border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"}`}>
-        <span className="flex h-7 w-16 rounded overflow-hidden ring-1 ring-black/10 shrink-0">
+        <span className="flex h-7 w-16 rounded overflow-hidden ring-1 ring-[var(--color-border-strong)] shrink-0">
           <span className="w-[30%]" style={{ background: deepFor(p.primary) }} />
           <span className="flex-1" style={{ background: signalScale(p.primary)[600] }} />
           <span className="w-[24%]" style={{ background: pa.fill }} />
@@ -193,9 +193,9 @@ export default function PalettePicker({ value, onChange, disabled = false, logoB
                   const on = same(hex, current[sel]);
                   return (
                     <button key={hex} type="button" disabled={disabled} onClick={() => setRole(sel, hex)} aria-pressed={on} aria-label={`Use ${hex}`} title={hex}
-                      className={`w-10 h-10 rounded-full grid place-items-center ring-offset-2 ring-offset-[var(--color-surface)] ${on ? "ring-2 ring-[var(--color-text)]" : "ring-1 ring-black/15 hover:ring-2 hover:ring-[var(--color-text-faint)]"}`}
+                      className={`w-10 h-10 pointer-coarse:size-11 rounded-full grid place-items-center ring-offset-2 ring-offset-[var(--color-surface)] ${on ? "ring-2 ring-[var(--color-text)]" : "ring-1 ring-[var(--color-border-strong)] hover:ring-2 hover:ring-[var(--color-text-faint)]"}`}
                       style={{ background: hex }}>
-                      {on && <Check className="w-4 h-4 text-white drop-shadow" strokeWidth={3} />}
+                      {on && <Check className="w-4 h-4 text-[var(--color-ink-fg)] drop-shadow" strokeWidth={3} />}
                     </button>
                   );
                 })}

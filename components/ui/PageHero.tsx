@@ -100,14 +100,14 @@ export function PageHero({
   className?: string;
 }) {
   const big = compactOnPhone
-    ? "text-section sm:text-[24px]"
-    : size === "lg" ? "text-[24px] sm:text-[26px]" : "text-[21px] sm:text-[24px]";
+    ? "text-section"
+    : size === "lg" ? "text-title" : "text-section sm:text-title";
   const phoneHide = compactOnPhone ? "max-sm:hidden" : "";
   const list = (facts ?? []).slice(0, 4);
   const hi = heroIndex(list, factsHero);
   const hero = hi >= 0 ? list[hi] : null;
   const rest = list.filter((_, i) => i !== hi);
-  const backCls = "-ml-2 w-9 h-9 rounded-lg grid place-items-center shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[color-mix(in_srgb,var(--color-text)_7%,transparent)] transition-colors";
+  const backCls = "-ml-2 w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 rounded-lg grid place-items-center shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[color-mix(in_srgb,var(--color-text)_7%,transparent)] transition-colors";
   return (
     <>
       {/* The header's own white surface: an empty layer behind it, spread
@@ -139,7 +139,7 @@ export function PageHero({
                 {hero && (
                   <div className="min-w-0 sm:mr-2">
                     <dt className="text-body text-[var(--color-text-muted)] truncate">{hero.label}</dt>
-                    <dd className={`mt-0.5 font-display text-[34px] sm:text-[42px] leading-[1.05] font-bold tabular-nums whitespace-nowrap ${factColor(hero)}`}><CountUp value={hero.value} /></dd>
+                    <dd className={`mt-0.5 font-display text-title sm:text-hero leading-[1.05] font-bold tabular-nums whitespace-nowrap ${factColor(hero)}`}><CountUp value={hero.value} /></dd>
                   </div>
                 )}
                 {rest.map((f, i) => (

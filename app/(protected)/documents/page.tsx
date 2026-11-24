@@ -488,11 +488,11 @@ export default function DocumentsHomePage() {
             title="Equipment tag (E-22), drawing number or words inside"
             aria-label="Search documents and equipment"
             data-find-input
-            className={`${bandInput} !pr-11 max-sm:text-base`}
+            className={`${bandInput} !pr-11 max-sm:text-reading`}
           />
           {search && (
             <button aria-label="Clear search" type="button" onClick={() => setSearch("")} title="Clear the search"
-              className="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+              className="ui-hit absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
               <X className="w-4 h-4" />
             </button>
           )}
@@ -506,7 +506,8 @@ export default function DocumentsHomePage() {
             {filtered.length > 0 && (
               <section>
                 <h2 className="flex items-baseline gap-2 font-display text-section leading-tight font-semibold text-[var(--color-heading)] mb-3">
-                  Libraries <span className="font-sans text-body font-normal tabular-nums text-[var(--color-text-muted)]">{filtered.length}</span>
+                  Libraries <span className="font-sans text-body font-normal tabular-nums text-[var(--color-text-muted)]">{filtered.length} of {libraries.length}</span>
+                  <button type="button" onClick={() => setSearch("")} className="ml-1 font-sans text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2 pointer-coarse:min-h-11">Clear</button>
                 </h2>
                 {libraryRows(filtered)}
               </section>
@@ -598,7 +599,7 @@ function LibraryAdminMenu({
         aria-label={`Library admin: ${libName}`}
         aria-haspopup="menu"
         aria-expanded={open}
-        className={`w-8 h-8 grid place-items-center rounded-md transition-colors ${open ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}
+        className={`ui-hit w-8 h-8 grid place-items-center rounded-md transition-colors ${open ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}
       >
         <MoreVertical className="w-4 h-4" />
       </button>

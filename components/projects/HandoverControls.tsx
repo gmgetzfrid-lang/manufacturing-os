@@ -84,11 +84,11 @@ export function ShipBar({ shippedAt, shippedBy, tries, canShip, busy, err, onShi
   if (shippedAt) {
     return (
       <div role="status" className="px-4 sm:px-5 py-2 border-b border-[var(--color-border)] flex flex-wrap items-center gap-x-3 gap-y-2 text-body text-[var(--color-text)] print:hidden">
-        <Lock aria-hidden className="w-4 h-4 shrink-0 text-[var(--state-released)]" />
+        <Lock aria-hidden className="w-4 h-4 shrink-0 text-[var(--state-released-text)]" />
         <span className="flex-1 min-w-[200px]"><b className="font-medium">Locked</b> {when(shippedAt)}{shippedBy ? ` by ${shippedBy}` : ""}{tries ? `, ${tries} step${tries === 1 ? "" : "s"} asked to try` : ""}. It can&apos;t be changed.</span>
         {canShip && (
           <Button size="sm" variant="secondary" loading={busy}
-            onClick={() => { void appConfirm({ message: `Unlock the ${label} report? It can be changed again until it's locked.`, confirmLabel: "Unlock" }).then((ok) => { if (ok) onUnship(); }); }}>
+            onClick={() => { void appConfirm({ title: `Unlock the ${label} report?`, message: "It can be changed again until it's locked.", confirmLabel: "Unlock report" }).then((ok) => { if (ok) onUnship(); }); }}>
             <Unlock className="w-4 h-4" /> Unlock to edit
           </Button>
         )}
@@ -103,7 +103,7 @@ export function ShipBar({ shippedAt, shippedBy, tries, canShip, busy, err, onShi
     return (
       <div className="relative px-4 sm:px-5 py-2 border-b border-[var(--color-border)] flex flex-wrap items-center gap-x-3 gap-y-2 text-body text-[var(--color-text)] print:hidden">
         <span aria-hidden className="absolute left-0 top-0 bottom-0 w-[3px] bg-[var(--state-held)]" />
-        <Unlock aria-hidden className="w-4 h-4 shrink-0 text-[var(--state-held)]" />
+        <Unlock aria-hidden className="w-4 h-4 shrink-0 text-[var(--state-held-text)]" />
         <span className="flex-1 min-w-[200px]">
           <b className="font-medium">Lock the {label} report.</b> The shift ended {when(endedAt)} and its report is still open for changes{tries ? ` (${tries} asked to try)` : ""}.
           {canShip ? " Locking it keeps anyone from changing the wrong day's report." : " Someone who can edit the schedule locks it."}

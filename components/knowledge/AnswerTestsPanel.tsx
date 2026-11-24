@@ -18,6 +18,7 @@ import {
   type AnswerTestsState, type AnswerTestRun, type AnswerTestCase,
 } from "@/lib/knowledge";
 import AnswerTestEditor, { type AnswerTestDraft } from "@/components/knowledge/AnswerTestEditor";
+import { FieldError } from "@/components/ui/Field";
 
 const CHECK_LABEL: Record<string, string> = {
   class_mixup: "Mixed up the pressure class",
@@ -133,7 +134,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
           <span><b>Regression:</b> {regressions.length} critical test{regressions.length === 1 ? "" : "s"} passed on the baseline run and fail{regressions.length === 1 ? "s" : ""} now. Don&apos;t promote this version until they pass.</span>
         </div>
       )}
-      {error && <p role="alert" className="mt-2 text-body font-medium text-[var(--state-overdue-text)]">{error}</p>}
+      {error && <div className="mt-2"><FieldError>{error}</FieldError></div>}
 
       {open && (
         <div className="mt-4 space-y-3">
@@ -150,7 +151,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
           {state.runs.length > 0 && (
             <div className="flex items-center gap-2 flex-wrap text-body text-[var(--color-text-muted)]">
               <span>Showing run</span>
-              <select value={state.runId ?? ""} onChange={(e) => void load(e.target.value)} className="rounded border border-[var(--color-border)] bg-transparent px-1.5 py-0.5">
+              <select aria-label="Showing run" value={state.runId ?? ""} onChange={(e) => void load(e.target.value)} className="rounded border border-[var(--color-border)] bg-transparent px-1.5 py-0.5">
                 {state.runs.map((r) => (
                   <option key={r.id} value={r.id}>{when(r.created_at)} - {r.passed}/{r.total}{r.is_baseline ? " (baseline)" : ""} · version {r.engine_version ?? "?"}</option>
                 ))}
@@ -187,9 +188,9 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
                         <div className="text-body text-[var(--state-overdue)]">{[...new Set(failing.map((k) => CHECK_LABEL[k.code] ?? k.code))].join(" · ")}</div>
                       )}
                     </button>
-                    <button aria-label="Run this test" title="Run this test" disabled={!!running} onClick={() => void run([c.id])} className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] disabled:opacity-40"><Play className="w-3.5 h-3.5" /></button>
-                    <button aria-label="Edit test" title="Edit" onClick={() => setEditing(toDraft(c))} className="p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><Pencil className="w-3.5 h-3.5" /></button>
-                    <button aria-label="Remove test" title="Remove" onClick={() => void archiveAnswerTest(orgId, c.id).then(() => load(state.runId ?? undefined), (e: unknown) => setError(`The test wasn't removed: ${friendlyError(e)}`))} className="p-1 text-[var(--color-text-muted)] hover:text-[var(--state-overdue)]"><Trash2 className="w-3.5 h-3.5" /></button>
+                    <button aria-label="Run this test" title="Run this test" disabled={!!running} onClick={() => void run([c.id])} className="inline-flex items-center justify-center pointer-coarse:size-11 p-1 text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] disabled:opacity-40"><Play className="w-3.5 h-3.5" /></button>
+                    <button aria-label="Edit test" title="Edit" onClick={() => setEditing(toDraft(c))} className="inline-flex items-center justify-center pointer-coarse:size-11 p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><Pencil className="w-3.5 h-3.5" /></button>
+                    <button aria-label="Remove test" title="Remove" onClick={() => void archiveAnswerTest(orgId, c.id).then(() => load(state.runId ?? undefined), (e: unknown) => setError(`The test wasn't removed: ${friendlyError(e)}`))} className="inline-flex items-center justify-center pointer-coarse:size-11 p-1 text-[var(--color-text-muted)] hover:text-[var(--state-overdue)]"><Trash2 className="w-3.5 h-3.5" /></button>
                   </div>
                   {isOpen && r && (
                     <div className="mt-2 ml-6 space-y-2">

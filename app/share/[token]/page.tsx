@@ -357,7 +357,7 @@ function CodeBoxes({ onDone, busy, error, onTyping }: { onDone: (code: string) =
       </div>
       {error && <Problem className="mt-3">{error}</Problem>}
       <Button type="submit" disabled={!/^\d{6}$/.test(code)} loading={busy} className="mt-4 w-full sm:w-auto sm:min-w-[160px]">
-        Open
+        {busy ? "Opening" : "Open"}
       </Button>
       {!/^\d{6}$/.test(code) && !busy && <p className="mt-2 text-body text-[var(--color-text-muted)]">Type all six digits to open it.</p>}
     </form>

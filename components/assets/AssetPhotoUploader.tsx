@@ -181,7 +181,7 @@ export default function AssetPhotoUploader({
           <div className="flex items-start gap-2.5 min-w-0">
             <div className="p-2 bg-[var(--color-surface-2)] rounded-lg shrink-0"><Camera className="w-4 h-4 text-[var(--color-text)]" /></div>
             <div className="min-w-0">
-              <div className="text-sm font-medium text-[var(--color-text)] truncate">
+              <div className="text-body font-medium text-[var(--color-text)] truncate">
                 Photos for <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text)] border border-[var(--color-border)] text-body font-medium align-middle ml-0.5">{equipmentLabel({ tag: asset.tag, code: asset.code })}</span>
               </div>
               <div className="text-body text-[var(--color-text-muted)] mt-0.5 leading-snug">
@@ -210,7 +210,7 @@ export default function AssetPhotoUploader({
             <div className="p-3 bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] w-fit mx-auto mb-3 shadow-sm">
               <Upload className="w-5 h-5 text-[var(--color-text-muted)]" />
             </div>
-            <p className="text-sm font-medium text-[var(--color-text)]">
+            <p className="text-body font-medium text-[var(--color-text)]">
               {drag.over ? drag.say : "Drag photos in or click to select"}
             </p>
             <p className="text-body text-[var(--color-text-muted)] mt-1">
@@ -222,7 +222,7 @@ export default function AssetPhotoUploader({
               distinct affordance so field users go straight to the camera
               instead of the file picker. Renders everywhere; on desktop with
               no camera the browser falls back to a file dialog. */}
-          <label className="mt-2 inline-flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-3 sm:py-2 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-sm font-medium cursor-pointer transition-colors">
+          <label className="mt-2 inline-flex items-center justify-center gap-2 w-full sm:w-auto px-4 py-3 sm:py-2 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-body font-medium cursor-pointer transition-colors">
             <Camera className="w-4 h-4" />
             Take photo
             <input

@@ -22,6 +22,7 @@ import { useDraft } from "@/hooks/useDraft";
 import { listOpenBranchesForOrg, resolveBranch, type RevisionBranch } from "@/lib/branches";
 
 import { friendlyError } from "@/lib/friendlyError";
+import { Field, FieldError } from "@/components/ui/Field";
 const STALE_DAYS = 14;
 
 interface UnverifiedRev {
@@ -296,13 +297,15 @@ export default function DocControlQueue({ orgId, currentUser }: DocControlQueueP
               </div>
               {resolveFor === b.id && (
                 <div className="mt-2 pl-6 space-y-1.5">
-                  <input
-                    value={resolveNote}
-                    onChange={(e) => setResolveNote(e.target.value)}
-                    placeholder='How was it reconciled? e.g. "both changes merged into Rev 5"'
-                    className="w-full px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-body"
-                  />
-                  {error && <div className="text-body text-[var(--state-overdue)] font-medium">{error}</div>}
+                  <Field label="How was it reconciled?">
+                    <input
+                      value={resolveNote}
+                      onChange={(e) => setResolveNote(e.target.value)}
+                      placeholder='How was it reconciled? e.g. "both changes merged into Rev 5"'
+                      className="w-full px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-body"
+                    />
+                  </Field>
+                  {error && <FieldError>{error}</FieldError>}
                   <div className="flex gap-1.5 justify-end">
                     <button onClick={() => setResolveFor(null)} className="px-2 py-1 rounded-lg text-body font-medium border border-[var(--color-border)]">Cancel</button>
                     <button

@@ -20,7 +20,7 @@ import { appConfirm } from "@/components/providers/DialogProvider";
 import { Button } from "@/components/ui/Button";
 import { Modal, ModalHeader, ModalBody } from "@/components/ui/Modal";
 import HelpTooltip from "@/components/ui/HelpTooltip";
-import { Input, Select } from "@/components/ui/Field";
+import { Input, PasswordInput, Select } from "@/components/ui/Field";
 import {
   getAiConnections, saveAiConnection, testAiConnection, removeAiConnection,
   saveEmbeddingKey, removeEmbeddingKey, testEmbeddingKey,
@@ -150,13 +150,13 @@ export function KeyEditor({ orgId, current, onChanged }: {
     // acceptable-use agreement is signed at first question.)
     if (apiKey.trim()) {
       const proceed = await appConfirm({
-        title: "Know what this key carries",
+        title: `Save your ${providerMeta.label} key?`,
         message:
           "Every question you ask - and text pulled from indexed documents to answer it - is sent to " +
           `${providerMeta.label} under THIS key's account.\n\n` +
           "Use a key you pay for and control. Anthropic and OpenAI do not train on API traffic - " +
           "that's why they're the only providers allowed here.",
-        confirmLabel: "Understood - save key",
+        confirmLabel: "Save key",
       });
       if (!proceed) return;
     }
@@ -207,6 +207,7 @@ export function KeyEditor({ orgId, current, onChanged }: {
       title: "Remove your API key?",
       message: "You won't be able to ask AI questions until you add a key again. Nobody else is affected.",
       confirmLabel: "Remove key",
+      tone: "danger",
     });
     if (!ok) return;
     setBusy("remove");
@@ -256,7 +257,7 @@ export function KeyEditor({ orgId, current, onChanged }: {
         <span className={FIELD_LABEL}>
           API key {current ? "(leave blank to keep the saved key)" : ""}
         </span>
-        <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)}
+        <PasswordInput what="key" value={apiKey} onChange={(e) => setApiKey(e.target.value)}
           placeholder={current ? `Saved, ends in ${current.keyLast4 ?? "????"}` : "Paste your API key"} autoComplete="off" />
       </label>
       <div className="flex items-center gap-2 flex-wrap">
@@ -268,7 +269,7 @@ export function KeyEditor({ orgId, current, onChanged }: {
         </Button>
         {current && (
           <Button variant="secondary" onClick={() => void remove()} disabled={busy !== null}>
-            {busy === "remove" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />} Remove
+            {busy === "remove" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}{" "}{busy === "remove" ? "Removing" : "Remove"}
           </Button>
         )}
       </div>
@@ -462,6 +463,7 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
   const remove = async () => {
     const ok = await appConfirm({
       title: "Remove your embeddings key?",
+      tone: "danger",
       message:
         "Meaning-based search stops for you; keyword search is unaffected. Vectors already built "
         + "stay in place and start working again as soon as you add a key back.",
@@ -517,7 +519,7 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
         <span className={FIELD_LABEL}>
           Embeddings API key {saved ? "(leave blank to keep the saved key)" : ""}
         </span>
-        <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)}
+        <PasswordInput what="key" value={apiKey} onChange={(e) => setApiKey(e.target.value)}
           placeholder={saved ? `Saved, ends in ${current?.embeddingKeyLast4 ?? "????"}` : "Paste your embeddings key"}
           autoComplete="off" />
       </label>
@@ -531,7 +533,7 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
         </Button>
         {saved && (
           <Button variant="secondary" onClick={() => void remove()} disabled={busy !== null}>
-            {busy === "remove" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />} Remove
+            {busy === "remove" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}{" "}{busy === "remove" ? "Removing" : "Remove"}
           </Button>
         )}
       </div>
@@ -621,7 +623,7 @@ export function UsagePanel({ orgId }: { orgId: string }) {
   };
 
   const cell = "px-4 sm:px-5 py-3 min-w-0";
-  const figure = "font-display text-[24px] leading-none font-semibold tabular-nums text-[var(--color-text)]";
+  const figure = "font-display text-title leading-none font-semibold tabular-nums text-[var(--color-text)]";
   return (
     <Section title={`Your AI use, ${usage.monthLabel}`}
       help="These numbers are yours alone: every question you ask, and every indexing or drawing-reading run your key pays for, is metered under your user id with the token counts your provider reported. All of it counts toward the cap. Estimated from provider token counts times published rates. Questions stop at 100% and reset on the 1st (UTC).">

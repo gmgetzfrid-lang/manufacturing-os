@@ -57,7 +57,7 @@ export default function PlotPlansPage() {
     if (!(await appConfirm({
       title: `Delete ${p.name}?`,
       message: "Its markers go with it. The equipment itself is untouched.",
-      confirmLabel: "Delete",
+      confirmLabel: "Delete plot plan",
       tone: "danger",
     }))) return;
     try { await deletePlotPlan(p.id); await refresh(); }

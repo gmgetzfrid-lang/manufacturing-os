@@ -497,7 +497,7 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
   const requestClose = async () => {
     if (isSaving) return;
     if (hasMarks()) {
-      if (!(await appConfirm({ title: "Close without saving?", message: "Your marks on this file will be lost.", tone: "danger", confirmLabel: "Close" }))) return;
+      if (!(await appConfirm({ title: "Close without saving?", message: "Your marks on this file will be lost.", tone: "danger", confirmLabel: "Close without saving" }))) return;
       draft.clear();
     }
     onClose();
@@ -578,7 +578,7 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
               {toolBtn('line', Minus, 'Straight line')}
               {toolBtn('highlight', Highlighter, 'Highlighter')}
               <button type="button" onClick={addText} className={vTool(false, 'w-9 h-9')} title="Add text" aria-label="Add text"><Type className="w-[18px] h-[18px]" /></button>
-              <button type="button" onClick={deleteSelected} className="w-9 h-9 shrink-0 rounded-lg grid place-items-center text-[var(--color-text-muted)] hover:text-rose-400 hover:bg-[var(--color-ink-2)] transition-colors" title="Delete what's selected" aria-label="Delete what's selected"><Trash2 className="w-[18px] h-[18px]" /></button>
+              <button type="button" onClick={deleteSelected} className="pointer-coarse:w-11 pointer-coarse:h-11 w-9 h-9 shrink-0 rounded-lg grid place-items-center text-[var(--color-text-muted)] hover:text-rose-400 hover:bg-[var(--color-ink-2)] transition-colors" title="Delete what's selected" aria-label="Delete what's selected"><Trash2 className="w-[18px] h-[18px]" /></button>
             </div>
 
             {/* Pen color (the markup colors on the sheet) and line width */}
@@ -592,7 +592,7 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
                     role="radio"
                     aria-label={`${c} pen`}
                     aria-checked={color === c}
-                    className={`w-5 h-5 rounded-full border-2 ring-1 ring-[var(--color-ink-line)] transition-transform ${color === c ? 'border-[var(--color-ink-fg)] scale-110' : 'border-transparent hover:scale-105'}`}
+                    className={`pointer-coarse:size-11 w-5 h-5 rounded-full border-2 ring-1 ring-[var(--color-ink-line)] transition-transform ${color === c ? 'border-[var(--color-ink-fg)] scale-110' : 'border-transparent hover:scale-105'}`}
                     style={{ backgroundColor: getColorHex(c) }}
                   />
                 ))}
@@ -634,14 +634,14 @@ export default function AdvancedRedlineEditor({ fileUrl, onClose, onSave, isSavi
           <p role="alert" className={`${vNote} ${saveMsg.tone === 'bad' ? 'text-rose-300' : 'text-[var(--color-text)]'}`}>
             {saveMsg.tone === 'bad' && <AlertTriangle className="w-3.5 h-3.5 shrink-0" />}
             <span className="min-w-0">{saveMsg.text}</span>
-            <button type="button" onClick={() => setSaveMsg(null)} aria-label="Dismiss" className="ml-auto shrink-0 w-7 h-7 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]"><X className="w-3.5 h-3.5" /></button>
+            <button type="button" onClick={() => setSaveMsg(null)} aria-label="Dismiss" className="ui-hit ml-auto shrink-0 w-7 h-7 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]"><X className="w-3.5 h-3.5" /></button>
           </p>
         ) : draft.restored && !restoredSeen && markCount > 0 ? (
           <p className={`${vNote} text-[var(--color-text)]`}>
             <RotateCcw className="w-3.5 h-3.5 shrink-0 text-[var(--color-text-muted)]" />
             <span className="min-w-0">Your marks from last time are back. They were kept on this device.</span>
-            <button type="button" onClick={() => void startOver()} className="ml-auto shrink-0 h-7 px-2.5 rounded-lg bg-[var(--color-ink-2)] hover:bg-[var(--color-ink-line)] text-body font-medium">Start over</button>
-            <button type="button" onClick={() => setRestoredSeen(true)} aria-label="Dismiss" className="shrink-0 w-7 h-7 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]"><X className="w-3.5 h-3.5" /></button>
+            <button type="button" onClick={() => void startOver()} className="pointer-coarse:h-11 ml-auto shrink-0 h-7 px-2.5 rounded-lg bg-[var(--color-ink-2)] hover:bg-[var(--color-ink-line)] text-body font-medium">Start over</button>
+            <button type="button" onClick={() => setRestoredSeen(true)} aria-label="Dismiss" className="ui-hit shrink-0 w-7 h-7 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]"><X className="w-3.5 h-3.5" /></button>
           </p>
         ) : null}
 

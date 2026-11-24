@@ -26,6 +26,7 @@ import DocViewTabs from "@/components/documents/DocViewTabs";
 import plainError from "@/components/documents/plainError";
 import { PageHero } from "@/components/ui/PageHero";
 import HelpTooltip from "@/components/ui/HelpTooltip";
+import { Field, FieldError } from "@/components/ui/Field";
 import FileGraph, { type FileGraphNode, type FileGraphLight, type FileGraphHandle, type FileGraphSatellite } from "@/components/documents/FileGraph";
 import { globalGraphHref } from "@/lib/estate/lenses";
 import EstateReadiness from "@/components/documents/EstateReadiness";
@@ -69,6 +70,7 @@ import { useEscapeClose, escapeStackBusy } from "@/components/documents/useEscap
 import { badgeText } from "@/lib/badge";
 
 import { friendlyError } from "@/lib/friendlyError";
+import { appConfirm } from "@/components/providers/DialogProvider";
 const VERDICT_STYLE: Record<RankedHit["verdict"], string> = {
   strong: "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)] border-[color-mix(in_srgb,var(--state-released)_35%,transparent)]",
   possible: "bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] text-[var(--state-held)] border-[color-mix(in_srgb,var(--state-held)_40%,transparent)]",
@@ -649,7 +651,7 @@ function GraphPageInner() {
   const selectedEntry = selectedId ? entryById.get(selectedId) : undefined;
   const selectedHit = selectedId ? hits.find((h) => h.entry.id === selectedId) : undefined;
 
-  if (!activeOrgId) return <p className="p-6 text-sm text-[var(--color-text-muted)]">Pick a workspace in the sidebar to see its file map.</p>;
+  if (!activeOrgId) return <p className="p-6 text-body text-[var(--color-text-muted)]">Pick a workspace in the sidebar to see its file map.</p>;
 
   // The answer: how much is on the map.
   const nFiles = data?.entries.length ?? 0;
@@ -696,7 +698,7 @@ function GraphPageInner() {
           <div role="alert" className="mt-3 text-body flex items-center gap-2 text-[var(--color-text)]">
             <AlertTriangle className={`w-4 h-4 shrink-0 ${data ? "text-[var(--state-held)]" : "text-[var(--state-overdue)]"}`} /> <span className="flex-1">{plainError(error)}</span>
             <button onClick={() => { setError(null); void refresh(); }} className="text-[var(--color-accent-text)] hover:underline">Retry</button>
-            <button aria-label="Dismiss" onClick={() => setError(null)} className="w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]"><X className="w-4 h-4" /></button>
+            <button aria-label="Dismiss" onClick={() => setError(null)} className="ui-hit w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]"><X className="w-4 h-4" /></button>
           </div>
         )}
       </PageHero>
@@ -732,7 +734,7 @@ function GraphPageInner() {
                       {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} Find
                     </button>
                     {parsed && (
-                      <button type="button" aria-label="Clear the search" onClick={() => { setParsed(null); setServerFind(null); setQuery(""); }} className="w-10 h-10 grid place-items-center rounded-md border border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+                      <button type="button" aria-label="Clear the search" onClick={() => { setParsed(null); setServerFind(null); setQuery(""); }} className="ui-hit w-10 h-10 grid place-items-center rounded-md border border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
                     )}
                   </div>
                 </form>
@@ -749,7 +751,7 @@ function GraphPageInner() {
                           <span className="opacity-60">{c.kind === "identifier" ? "#" : c.kind === "unit" ? "unit" : c.kind === "year" ? "yr" : c.kind === "phrase" ? "“”" : c.kind === "doctype" ? "type" : ""}</span>
                           {c.label}
                           {c.via !== "typed" && <span className="opacity-60">· {c.via}</span>}
-                          <button aria-label="Remove" onClick={() => removeChip(c)} className="opacity-50 hover:opacity-100"><X className="w-3 h-3" /></button>
+                          <button aria-label={`Remove ${c.label}`} onClick={() => removeChip(c)} className="ui-hit opacity-50 hover:opacity-100"><X className="w-3 h-3" /></button>
                         </span>
                       ))}
                       {parsed.chips.length === 0 && <span className="text-body text-[var(--color-text-muted)]">Nothing to search on - add a tag, a word or a year.</span>}
@@ -795,7 +797,7 @@ function GraphPageInner() {
             </div>
           )}
           {loading && !data ? (
-            <div className="absolute inset-0 grid place-items-center text-sm text-[var(--color-text-muted)]">
+            <div className="absolute inset-0 grid place-items-center text-body text-[var(--color-text-muted)]">
               <span className="inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Reading the estate…</span>
             </div>
           ) : (
@@ -852,7 +854,7 @@ function GraphPageInner() {
                   <span className="inline-flex items-center gap-0.5 p-0.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-sm">
                     {scopes.map((o) => (
                       <button key={o.key} type="button" role="radio" aria-checked={scopeNow === o.key} onClick={() => pickScope(o.key)} title={o.title}
-                        className={`h-8 px-2.5 rounded text-body font-medium whitespace-nowrap transition-colors ${scopeNow === o.key ? "bg-[var(--color-main)] text-white" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
+                        className={`h-8 px-2.5 rounded text-body font-medium whitespace-nowrap transition-colors ${scopeNow === o.key ? "bg-[var(--color-main)] text-[var(--color-ink-fg)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`}>
                         {o.label}
                       </button>
                     ))}
@@ -894,8 +896,8 @@ function GraphPageInner() {
             <span className="inline-flex items-center gap-1 rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-1.5 py-0.5"><span className="w-4 border-t-2 border-dashed border-[var(--state-held)]" /> Also filed under</span>
           </div>
           {activeHit && (
-            <div className="absolute left-1/2 -translate-x-1/2 bottom-12 flex items-center gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/95 shadow-md px-2 py-1.5 text-xs">
-              <button onClick={() => jumpTo(activeIdx - 1)} className="rounded-md border border-[var(--color-border)] p-1 hover:bg-[var(--color-canvas)]" title="Previous result (←)"><ChevronLeft className="w-4 h-4" /></button>
+            <div className="absolute left-1/2 -translate-x-1/2 bottom-12 flex items-center gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/95 shadow-md px-2 py-1.5 text-caption">
+              <button onClick={() => jumpTo(activeIdx - 1)} className="inline-flex items-center justify-center pointer-coarse:size-11 rounded-md border border-[var(--color-border)] p-1 hover:bg-[var(--color-canvas)]" title="Previous result (←)" aria-label="Previous result"><ChevronLeft className="w-4 h-4" /></button>
               <button onClick={() => jumpTo(activeIdx)} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 hover:bg-[var(--color-canvas)]" title="Centre on this result">
                 <Crosshair className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                 <span className="font-medium tabular-nums">{activeIdx + 1}</span><span className="text-[var(--color-text-muted)]">/ {hits.length}</span>
@@ -903,7 +905,7 @@ function GraphPageInner() {
                 <FileTypeIcon type={fileTypeOf(activeHit.entry.name)} className="w-3.5 h-3.5" />
                 <span className="font-medium max-w-[260px] truncate">{activeHit.entry.name}</span>
               </button>
-              <button onClick={() => jumpTo(activeIdx + 1)} className="rounded-md border border-[var(--color-border)] p-1 hover:bg-[var(--color-canvas)]" title="Next result (→)"><ChevronRight className="w-4 h-4" /></button>
+              <button onClick={() => jumpTo(activeIdx + 1)} className="inline-flex items-center justify-center pointer-coarse:size-11 rounded-md border border-[var(--color-border)] p-1 hover:bg-[var(--color-canvas)]" title="Next result (→)" aria-label="Next result"><ChevronRight className="w-4 h-4" /></button>
               {activeHit.entry.href && (
                 <button onClick={() => openEntry(activeHit.entry.id)} disabled={viewerLoading === activeHit.entry.id} className="ml-1 inline-flex items-center gap-1 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-2 py-1 font-medium disabled:opacity-60" title="Open (Enter)">
                   {viewerLoading === activeHit.entry.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5" />} Open
@@ -922,9 +924,9 @@ function GraphPageInner() {
             </div>
           )}
           {resolveNote && !(showConnect && (connect.status || connect.running)) && (
-            <div className="absolute top-12 right-3 max-w-md rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]/95 px-3 py-2 text-xs shadow-md flex items-start gap-2">
+            <div className="absolute top-12 right-3 max-w-md rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]/95 px-3 py-2 text-caption shadow-md flex items-start gap-2">
               <Link2 className="w-3.5 h-3.5 mt-0.5 shrink-0" /> <span>{resolveNote}</span>
-              <button aria-label="Dismiss" onClick={() => setResolveNote(null)} className="opacity-60 hover:opacity-100"><X className="w-3.5 h-3.5" /></button>
+              <button aria-label="Dismiss" onClick={() => setResolveNote(null)} className="ui-hit opacity-60 hover:opacity-100"><X className="w-3.5 h-3.5" /></button>
             </div>
           )}
         </main>
@@ -971,7 +973,7 @@ function GraphPageInner() {
                   </div>
                 )}
                 {hits.length === 0 && hiddenHits === 0 && !finding && (
-                  <div className="text-sm text-[var(--color-text-muted)]">
+                  <div className="text-body text-[var(--color-text-muted)]">
                     Nothing in the system or on any pasted drive listing matched. Try fewer words, or teach an alias if people call this something else.
                   </div>
                 )}
@@ -1028,9 +1030,9 @@ function GraphPageInner() {
         </aside>
       </div>
       {viewerError && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 rounded-lg border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)] text-sm px-3 py-2 shadow-lg flex items-center gap-2">
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 rounded-lg border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)] text-body px-3 py-2 shadow-lg flex items-center gap-2">
           <AlertTriangle className="w-4 h-4" /> {viewerError}
-          <button aria-label="Dismiss" onClick={() => setViewerError(null)} className="ml-2 opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
+          <button aria-label="Dismiss" onClick={() => setViewerError(null)} className="ui-hit ml-2 opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
         </div>
       )}
       {connect.plan && activeOrgId && (
@@ -1038,16 +1040,16 @@ function GraphPageInner() {
           onClose={connect.closePreview} onReplan={(ids) => void connect.openPreview(ids)} onStart={(ids) => void connect.start(ids)} />
       )}
       {lightbox && (
-        <div className="fixed inset-0 z-[70] bg-black/85 flex items-center justify-center p-6" onClick={() => setLightbox(null)}>
+        <div className="fixed inset-0 z-[70] bg-[var(--color-ink)]/85 flex items-center justify-center p-6" onClick={() => setLightbox(null)}>
           <div className="max-w-5xl max-h-full flex flex-col items-center gap-2" onClick={(e) => e.stopPropagation()}>
-            <SignedImg path={lightbox.file_url} alt={lightbox.caption ?? ""} className="max-h-[80vh] max-w-full rounded-xl object-contain shadow-2xl" placeholder={<Loader2 className="w-6 h-6 animate-spin text-white" />} />
-            <div className="text-body text-white/80">{lightbox.caption || "Photo"}{lightbox.captured_at ? ` · ${new Date(lightbox.captured_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` : ""}</div>
+            <SignedImg path={lightbox.file_url} alt={lightbox.caption ?? ""} className="max-h-[80vh] max-w-full rounded-xl object-contain shadow-2xl" placeholder={<Loader2 className="w-6 h-6 animate-spin text-[var(--color-ink-fg)]" />} />
+            <div className="text-body text-[var(--color-ink-text)]">{lightbox.caption || "Photo"}{lightbox.captured_at ? ` · ${new Date(lightbox.captured_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` : ""}</div>
           </div>
-          <button aria-label="Close" onClick={() => setLightbox(null)} className="absolute top-4 right-4 text-white/80 hover:text-white"><X className="w-6 h-6" /></button>
+          <button aria-label="Close" onClick={() => setLightbox(null)} className="ui-hit absolute top-4 right-4 text-[var(--color-ink-text)] hover:text-[var(--color-ink-fg)]"><X className="w-6 h-6" /></button>
         </div>
       )}
       {pageView && activeOrgId && (
-        <Suspense fallback={<div className="fixed inset-0 z-50 grid place-items-center bg-black/60 text-white text-sm"><Loader2 className="w-5 h-5 animate-spin mr-2" /> Opening sheet {pageView.page}…</div>}>
+        <Suspense fallback={<div className="fixed inset-0 z-50 grid place-items-center bg-[var(--color-ink)]/60 text-[var(--color-ink-fg)] text-body"><Loader2 className="w-5 h-5 animate-spin mr-2" /> Opening sheet {pageView.page}…</div>}>
           <CitedPageViewer fileKey={pageView.fileKey} page={pageView.page} quote={null} title={pageView.title} orgId={activeOrgId} documentId={pageView.knowledgeDocId} tags={pageView.tags} onClose={() => setPageView(null)} />
         </Suspense>
       )}
@@ -1055,27 +1057,27 @@ function GraphPageInner() {
         <LibrarySetup orgId={activeOrgId} libraryId={setupLib} libraryName={data?.libraries.find((l) => l.id === setupLib)?.name ?? "this library"} onDone={() => void refresh()} onClose={() => setSetupLib(null)} />
       )}
       {readAsk && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/50" onClick={() => !readAsk.busy && setReadAsk(null)}>
+        <div className="fixed inset-0 z-50 grid place-items-center bg-[var(--color-ink)]/50" onClick={() => !readAsk.busy && setReadAsk(null)}>
           <div className="w-[28rem] max-w-[92vw] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
-            <div className="text-sm font-medium inline-flex items-center gap-2"><Eye className="w-4 h-4 text-[var(--state-released)]" /> Read the contents of {readAsk.folder.path || "this library"}</div>
+            <div className="text-body font-medium inline-flex items-center gap-2"><Eye className="w-4 h-4 text-[var(--state-released)]" /> Read the contents of {readAsk.folder.path || "this library"}</div>
             <div className="text-body text-[var(--color-text-muted)]">{readAsk.folder.count} file{readAsk.folder.count === 1 ? "" : "s"} here have never been read. Linking the folder as a source of a knowledge library reads them: text pages cost nothing, scanned or SHX pages use vision on the cheap tier within your monthly cap, and every tag read becomes a link. Nothing outside the folder is touched.</div>
             {readAsk.libs.length > 0 && (
-              <select value={readAsk.pick} onChange={(e) => setReadAsk({ ...readAsk, pick: e.target.value })} className="w-full text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5">
+              <select aria-label="Knowledge library" value={readAsk.pick} onChange={(e) => setReadAsk({ ...readAsk, pick: e.target.value })} className="w-full text-body rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5">
                 {readAsk.libs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
               </select>
             )}
             {readAsk.note && <div className="text-body text-[var(--color-text)]">{readAsk.note}{readAsk.pick && readAsk.note.startsWith("Linked") && <> <Link href={`/knowledge/${readAsk.pick}`} className="text-[var(--color-accent-text)] hover:underline">Open the library →</Link></>}</div>}
             <div className="flex justify-end gap-2">
-              <button onClick={() => setReadAsk(null)} disabled={readAsk.busy} className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-sm">Close</button>
+              <button onClick={() => setReadAsk(null)} disabled={readAsk.busy} className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-body">Close</button>
               {!readAsk.note?.startsWith("Linked") && readAsk.libs.length > 0 && (
-                <button onClick={linkAndRead} disabled={readAsk.busy || !readAsk.pick} className="inline-flex items-center gap-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-3 py-1.5 text-sm font-medium disabled:opacity-60">{readAsk.busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />} Link and read</button>
+                <button onClick={linkAndRead} disabled={readAsk.busy || !readAsk.pick} className="inline-flex items-center gap-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] px-3 py-1.5 text-body font-medium disabled:opacity-60">{readAsk.busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />} Link and read</button>
               )}
             </div>
           </div>
         </div>
       )}
       {viewer && (
-        <Suspense fallback={<div className="fixed inset-0 z-50 grid place-items-center bg-black/60 text-white text-sm"><Loader2 className="w-5 h-5 animate-spin mr-2" /> Opening…</div>}>
+        <Suspense fallback={<div className="fixed inset-0 z-50 grid place-items-center bg-[var(--color-ink)]/60 text-[var(--color-ink-fg)] text-body"><Loader2 className="w-5 h-5 animate-spin mr-2" /> Opening…</div>}>
           <FullScreenViewer
             isOpen
             onClose={() => setViewer(null)}
@@ -1134,10 +1136,10 @@ function HitCard({ hit, rank, active, relations, pages, onReveal, onOpen, onPage
       <div className="flex items-start gap-2">
         <button onClick={onReveal} className="flex-1 text-left min-w-0">
           <div className="flex items-center gap-1.5">
-            <span className={`shrink-0 w-5 h-5 rounded-full grid place-items-center text-body font-medium ${active ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-slate-800 text-white"}`}>{rank}</span>
+            <span className={`shrink-0 w-5 h-5 rounded-full grid place-items-center text-body font-medium ${active ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "bg-[var(--color-text-muted)] text-[var(--color-surface)]"}`}>{rank}</span>
             <span className={`shrink-0 rounded-full border px-1.5 py-px text-body font-medium ${VERDICT_STYLE[hit.verdict]}`}>{VERDICT_LABEL[hit.verdict]} · {hit.score}</span>
             <FileTypeIcon type={fileTypeOf(e.name)} className="w-4 h-4 shrink-0" />
-            <span className="text-sm font-medium truncate">{e.name}</span>
+            <span className="text-body font-medium truncate">{e.name}</span>
             {e.read?.status === "ready" && <span title={`Content read by AI (${e.read.pages} pages)`} className="shrink-0 inline-flex items-center gap-0.5 text-[var(--state-released)] px-1 text-body font-medium"><Eye className="w-3 h-3" /> read</span>}
           </div>
           {e.title && e.title !== e.name && <div className="text-body text-[var(--color-text-muted)] truncate">{e.title}</div>}
@@ -1146,7 +1148,7 @@ function HitCard({ hit, rank, active, relations, pages, onReveal, onOpen, onPage
           {pages && <PageHits pages={pages} onPage={(p) => onPageHit?.(p)} />}
         </button>
         {e.href && (
-          <button onClick={onOpen} className="shrink-0 rounded-md border border-[var(--color-border)] p-1 hover:bg-[var(--color-surface)]" title="Open the drawing here">
+          <button onClick={onOpen} className="ui-hit shrink-0 rounded-md border border-[var(--color-border)] p-1 hover:bg-[var(--color-surface)]" title="Open the drawing here" aria-label="Open the drawing here">
             <ExternalLink className="w-3.5 h-3.5" />
           </button>
         )}
@@ -1164,7 +1166,7 @@ function SelectedCard({ entry, hit, sameBytes, onClose, onReveal, onOpen, orgId,
     <div className="p-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium truncate flex items-center gap-1.5"><FileTypeIcon type={fileTypeOf(entry.name)} className="w-4 h-4 shrink-0" /> <span className="truncate">{entry.name}</span></div>
+          <div className="text-body font-medium truncate flex items-center gap-1.5"><FileTypeIcon type={fileTypeOf(entry.name)} className="w-4 h-4 shrink-0" /> <span className="truncate">{entry.name}</span></div>
           <div className="text-body text-[var(--color-text-muted)]">{fileTypeOf(entry.name).label}</div>
           {entry.title && entry.title !== entry.name && <div className="text-body text-[var(--color-text-muted)] truncate">{entry.title}</div>}
           <PathCrumbs entry={entry} />
@@ -1178,17 +1180,17 @@ function SelectedCard({ entry, hit, sameBytes, onClose, onReveal, onOpen, orgId,
             {entry.idents.map((t) => <span key={t} className="rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text)] px-1">{tagVariants(t)[1] ?? t}</span>)}
           </div>
         </div>
-        <button aria-label="Close" onClick={onClose} className="shrink-0 opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
+        <button aria-label="Close" onClick={onClose} className="ui-hit shrink-0 opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
       </div>
       {entry.href && (
         <div className="mt-2 flex items-center gap-3">
-          <button onClick={onOpen} className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-1 text-xs font-medium"><ExternalLink className="w-3.5 h-3.5" /> Open</button>
+          <button onClick={onOpen} className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-1 text-caption font-medium"><ExternalLink className="w-3.5 h-3.5" /> Open</button>
           <Link href={entry.href} className="text-body font-medium text-[var(--color-text-muted)] hover:underline">Go to it in the library</Link>
-          <Link href={globalGraphHref(entry.id)} className="text-xs font-medium text-[var(--color-text-muted)] hover:underline inline-flex items-center gap-1"><Globe className="w-3 h-3" /> Global view</Link>
+          <Link href={globalGraphHref(entry.id)} className="text-caption font-medium text-[var(--color-text-muted)] hover:underline inline-flex items-center gap-1"><Globe className="w-3 h-3" /> Global view</Link>
         </div>
       )}
       {entry.source === "listing" && (
-        <div className="mt-2 text-xs text-[var(--state-held)] inline-flex items-center gap-1"><HardDrive className="w-3.5 h-3.5" /> On {entry.listingName}, not in the system. Upload it to bring it under control.</div>
+        <div className="mt-2 text-caption text-[var(--state-held)] inline-flex items-center gap-1"><HardDrive className="w-3.5 h-3.5" /> On {entry.listingName}, not in the system. Upload it to bring it under control.</div>
       )}
       {canRead && orgId && entry.source === "system" && fileTypeOf(entry.name).key === "pdf" && (
         <ReadDrawingPanel orgId={orgId} documentId={entry.id.replace(/^doc:/, "")} onDone={onRead} />
@@ -1198,7 +1200,7 @@ function SelectedCard({ entry, hit, sameBytes, onClose, onReveal, onOpen, orgId,
           <div className="text-body font-medium text-[var(--state-overdue)]">Same bytes in {sameBytes.length + 1} places</div>
           <ul className="text-body space-y-0.5">
             {sameBytes.map((s) => (
-              <li key={s.id}><button onClick={() => onReveal(s.id)} className="text-left hover:underline">{[s.libraryName, ...s.path, s.name].filter(Boolean).join(" / ")}</button></li>
+              <li key={s.id}><button onClick={() => onReveal(s.id)} className="pointer-coarse:min-h-11 text-left hover:underline">{[s.libraryName, ...s.path, s.name].filter(Boolean).join(" / ")}</button></li>
             ))}
           </ul>
         </div>
@@ -1284,7 +1286,7 @@ function EntityPanel({ orgId, sat, data, entryById, nodeById, serverFind: liveFi
             {unit && kind !== "unit" ? <><button onClick={() => onNarrow(unit.code)} className="text-[var(--color-accent-text)] hover:underline">{unit.label}</button><ChevronRight className="w-3 h-3" /></> : null}
             <span className="font-medium" style={{ color: sat.color }}>{kind === "asset" ? "Equipment" : kind === "unit" ? "Unit" : kind === "project" ? "Project" : "Tag read off the drawings"}</span>
           </div>
-          <div className="text-base font-medium leading-tight">{sat.label}</div>
+          <div className="text-reading font-medium leading-tight">{sat.label}</div>
           {asset?.description && <div className="text-body text-[var(--color-text-muted)]">{asset.description}</div>}
           {about && (about.typeName || about.code || about.location) && (
             <div className="mt-0.5 flex flex-wrap gap-1 text-body">
@@ -1295,7 +1297,7 @@ function EntityPanel({ orgId, sat, data, entryById, nodeById, serverFind: liveFi
           )}
           {kind === "tag" && <div className="text-body text-[var(--color-text-muted)]">Not in the equipment registry yet. Connect everything puts it there.</div>}
         </div>
-        <button aria-label="Close" onClick={onClose} className="opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
+        <button aria-label="Close" onClick={onClose} className="ui-hit opacity-60 hover:opacity-100"><X className="w-4 h-4" /></button>
       </div>
       {about?.callout && (about.callout.name || about.callout.details) && (
         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-body">
@@ -1335,8 +1337,8 @@ function EntityPanel({ orgId, sat, data, entryById, nodeById, serverFind: liveFi
                   <div className="text-body text-[var(--color-text-muted)]">{r.how}</div>
                 </button>
                 {r.isDoc && entry && (r.page
-                  ? <button onClick={() => onOpenAtPage(r.id, r.page!, r.tag)} className="shrink-0 rounded-md border border-[var(--color-border)] px-1.5 py-0.5 text-body font-medium inline-flex items-center gap-1"><Eye className="w-3 h-3" /> Sheet {r.page}</button>
-                  : <button onClick={() => onOpen(r.id)} className="shrink-0 rounded-md border border-[var(--color-border)] px-1.5 py-0.5 text-body font-medium inline-flex items-center gap-1"><Eye className="w-3 h-3" /> Open</button>)}
+                  ? <button onClick={() => onOpenAtPage(r.id, r.page!, r.tag)} className="pointer-coarse:min-h-11 shrink-0 rounded-md border border-[var(--color-border)] px-1.5 py-0.5 text-body font-medium inline-flex items-center gap-1"><Eye className="w-3 h-3" /> Sheet {r.page}</button>
+                  : <button onClick={() => onOpen(r.id)} className="pointer-coarse:min-h-11 shrink-0 rounded-md border border-[var(--color-border)] px-1.5 py-0.5 text-body font-medium inline-flex items-center gap-1"><Eye className="w-3 h-3" /> Open</button>)}
               </li>
             );
           })}
@@ -1349,7 +1351,7 @@ function EntityPanel({ orgId, sat, data, entryById, nodeById, serverFind: liveFi
         </div>
       )}
       <div className="flex flex-wrap gap-1">
-        {kind === "unit" && <button onClick={() => onNarrow(sat.id.slice(7))} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-body font-medium inline-flex items-center gap-1"><Search className="w-3 h-3" /> Search within this unit</button>}
+        {kind === "unit" && <button onClick={() => onNarrow(sat.id.slice(7))} className="pointer-coarse:min-h-11 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-body font-medium inline-flex items-center gap-1"><Search className="w-3 h-3" /> Search within this unit</button>}
         {sat.href && <Link href={sat.href} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-body font-medium inline-flex items-center gap-1"><ExternalLink className="w-3 h-3" /> Full page</Link>}
         <Link href={globalGraphHref(sat.id)} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-body font-medium inline-flex items-center gap-1"><Globe className="w-3 h-3" /> Global graph</Link>
       </div>
@@ -1388,9 +1390,9 @@ function LinksPanel({ orgId, edges, units, estateMissing, onReveal, onConnect, c
       <EstateReadiness key={readinessKey} orgId={orgId} onConnect={onConnect} connecting={connecting} />
       <div className="text-body text-[var(--color-text-muted)]">What the estate knows about where things belong - every link with its reason. Provable ones came from the codebook, drawing numbers and ancestry; the rest were approved in Review.</div>
       <div className="flex flex-wrap gap-1">
-        <button onClick={() => setFilter("all")} className={`rounded-full border px-2 py-0.5 text-body font-medium ${filter === "all" ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm border-transparent" : "border-[var(--color-border)]"}`}>all {edges.length}</button>
+        <button onClick={() => setFilter("all")} className={`pointer-coarse:min-h-11 rounded-full border px-2 py-0.5 text-body font-medium ${filter === "all" ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm border-transparent" : "border-[var(--color-border)]"}`}>all {edges.length}</button>
         {[...counts.entries()].sort((a, b) => b[1] - a[1]).map(([t, n]) => (
-          <button key={t} onClick={() => setFilter(t)} className={`rounded-full border px-2 py-0.5 text-body font-medium ${filter === t ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm border-transparent" : "border-[var(--color-border)]"}`}>{EDGE_WORDS[t] ?? t} {n}</button>
+          <button key={t} onClick={() => setFilter(t)} className={`pointer-coarse:min-h-11 rounded-full border px-2 py-0.5 text-body font-medium ${filter === t ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm border-transparent" : "border-[var(--color-border)]"}`}>{EDGE_WORDS[t] ?? t} {n}</button>
         ))}
       </div>
       {edges.length === 0 && <div className="text-body text-[var(--color-text-muted)]">No links yet. Add your units to the Site Codebook, then press &ldquo;Resolve links&rdquo; above the map.</div>}
@@ -1436,7 +1438,7 @@ function DrivesPanel({ orgId, controller, listings, uid, userEmail, systemHashes
     finally { setBusy(false); }
   };
   const remove = async (l: FinderListing) => {
-    if (!window.confirm(`Remove the "${l.name}" listing?`)) return;
+    if (!(await appConfirm({ title: `Remove the "${l.name}" listing?`, confirmLabel: "Remove listing", tone: "danger" }))) return;
     await deleteFinderListing(orgId, l.id);
     onChange(listings.filter((x) => x.id !== l.id));
   };
@@ -1453,15 +1455,19 @@ function DrivesPanel({ orgId, controller, listings, uid, userEmail, systemHashes
             <div className="font-medium flex items-center gap-1"><HardDrive className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {l.name}</div>
             <div className="text-[var(--color-text-muted)]">{l.fileCount} files · {l.folders.length} folders{l.format ? ` · ${l.format}` : ""}</div>
           </button>
-          {controller && <button onClick={() => remove(l)} className="opacity-50 hover:opacity-100"><Trash2 className="w-3.5 h-3.5" /></button>}
+          {controller && <button onClick={() => remove(l)} aria-label={`Remove the ${l.name} listing`} className="ui-hit opacity-50 hover:opacity-100"><Trash2 className="w-3.5 h-3.5" /></button>}
         </div>
       ))}
       {controller ? (
         <div className="space-y-2 pt-2 border-t border-[var(--color-border)]">
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Drive name, e.g. Thor drive"
-            className="w-full text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5" />
-          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={8} placeholder={"T:\\Crude\\Heaters\\born-u1a.pdf\nT:\\Transmix\\U1A.pdf"}
-            className="w-full text-body font-mono rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5" />
+          <Field label="Drive name (optional)">
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Thor drive"
+              className="w-full text-body rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5" />
+          </Field>
+          <Field label="Drive listing">
+            <textarea value={text} onChange={(e) => setText(e.target.value)} rows={8} placeholder={"T:\\Crude\\Heaters\\born-u1a.pdf\nT:\\Transmix\\U1A.pdf"}
+              className="w-full text-body font-mono rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5" />
+          </Field>
           {preview && (
             <div className="text-body text-[var(--color-text-muted)] space-y-1">
               <div>Read as <b>{preview.format}</b>: {preview.files.length} files, {preview.folders.length} folders.</div>
@@ -1480,9 +1486,9 @@ function DrivesPanel({ orgId, controller, listings, uid, userEmail, systemHashes
               })()}
             </div>
           )}
-          {err && <div className="text-body text-[var(--state-overdue)]">{err}</div>}
-          <button onClick={save} disabled={busy || !preview?.files.length} className="w-full inline-flex items-center justify-center gap-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-medium px-3 py-1.5 disabled:opacity-50">
-            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Add listing
+          {err && <FieldError>{err}</FieldError>}
+          <button onClick={save} disabled={busy || !preview?.files.length} className="w-full inline-flex items-center justify-center gap-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium px-3 py-1.5 disabled:opacity-50">
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}{" "}{busy ? "Adding" : "Add listing"}
           </button>
         </div>
       ) : (
@@ -1527,30 +1533,38 @@ function AliasesPanel({ orgId, controller, aliases, uid, userEmail, units, onCha
             <div className="font-medium">&ldquo;{a.term}&rdquo; <span className="font-normal text-[var(--color-text-muted)]">means</span> {a.means}</div>
             <div className="text-[var(--color-text-muted)]">{a.kind} · {Math.round(aliasConfidence(a) * 100)}% trusted · {a.hits} opened{a.misses ? ` · ${a.misses} removed` : ""}{a.createdByName ? ` · ${a.createdByName}` : ""}</div>
           </div>
-          {controller && <button onClick={() => remove(a)} className="opacity-50 hover:opacity-100"><Trash2 className="w-3.5 h-3.5" /></button>}
+          {controller && <button onClick={() => remove(a)} aria-label={`Remove the alias ${a.term}`} className="ui-hit opacity-50 hover:opacity-100"><Trash2 className="w-3.5 h-3.5" /></button>}
         </div>
       ))}
       {aliases.length === 0 && <div className="text-body text-[var(--color-text-muted)]">No aliases taught yet.</div>}
       {controller ? (
         <div className="space-y-2 pt-2 border-t border-[var(--color-border)]">
-          <input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="What people say: born"
-            className="w-full text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5" />
-          <select value={kind} onChange={(e) => setKind(e.target.value as FinderAliasKind)} className="w-full text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5">
-            <option value="unit">…is a unit</option>
-            <option value="equipment">…is a piece of equipment (tag)</option>
-            <option value="term">…is another word for</option>
-          </select>
-          {kind === "unit" && units.length > 0 ? (
-            <select value={means} onChange={(e) => setMeans(e.target.value)} className="w-full text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5">
-              <option value="">Pick the codebook unit…</option>
-              {units.map((u) => <option key={u.code} value={u.label}>{u.label} ({u.code})</option>)}
+          <Field label="What people say">
+            <input value={term} onChange={(e) => setTerm(e.target.value)} placeholder="born"
+              className="w-full text-body rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5" />
+          </Field>
+          <Field label="What it is">
+            <select value={kind} onChange={(e) => setKind(e.target.value as FinderAliasKind)} className="w-full text-body rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5">
+              <option value="unit">…is a unit</option>
+              <option value="equipment">…is a piece of equipment (tag)</option>
+              <option value="term">…is another word for</option>
             </select>
+          </Field>
+          {kind === "unit" && units.length > 0 ? (
+            <Field label="Unit">
+              <select value={means} onChange={(e) => setMeans(e.target.value)} className="w-full text-body rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5">
+                <option value="">Pick the codebook unit…</option>
+                {units.map((u) => <option key={u.code} value={u.label}>{u.label} ({u.code})</option>)}
+              </select>
+            </Field>
           ) : (
-            <input value={means} onChange={(e) => setMeans(e.target.value)} placeholder={kind === "equipment" ? "The tag - F-101" : "What the files say: crude"}
-              className="w-full text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5" />
+            <Field label={kind === "equipment" ? "Tag" : "What the files say"}>
+              <input value={means} onChange={(e) => setMeans(e.target.value)} placeholder={kind === "equipment" ? "F-101" : "crude"}
+                className="w-full text-body rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1.5" />
+            </Field>
           )}
-          {err && <div className="text-body text-[var(--state-overdue)]">{err}</div>}
-          <button onClick={add} disabled={busy || !term.trim() || !means.trim()} className="w-full inline-flex items-center justify-center gap-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-sm font-medium px-3 py-1.5 disabled:opacity-50">
+          {err && <FieldError>{err}</FieldError>}
+          <button onClick={add} disabled={busy || !term.trim() || !means.trim()} className="w-full inline-flex items-center justify-center gap-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium px-3 py-1.5 disabled:opacity-50">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Teach alias
           </button>
         </div>
@@ -1563,7 +1577,7 @@ function AliasesPanel({ orgId, controller, aliases, uid, userEmail, units, onCha
 
 export default function DocumentsGraphPage() {
   return (
-    <Suspense fallback={<div className="p-6 text-sm text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline mr-2" />Loading…</div>}>
+    <Suspense fallback={<div className="p-6 text-body text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline mr-2" />Loading…</div>}>
       <GraphPageInner />
     </Suspense>
   );

@@ -150,7 +150,7 @@ export default function Composer({
           {attachments.map((a) => (
             <div key={a.localId} title={a.error ?? `${a.name} · ${fmtBytes(a.size)}`}
               className={`relative inline-flex items-center gap-1.5 pl-1 pr-1.5 py-1 rounded-md border text-body font-semibold max-w-[300px] overflow-hidden ${a.error
-                ? "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--state-overdue)]"
+                ? "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--state-overdue-text)]"
                 : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]"}`}>
               {a.error && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
               {a.file
@@ -171,11 +171,11 @@ export default function Composer({
                 ? <ProgressRing percent={a.percent} />
                 : a.att && <Check aria-label="Uploaded" className="w-3.5 h-3.5 text-[var(--state-released)] shrink-0" />}
               {a.error && a.retryable && a.file && onRetryAttachment && (
-                <button type="button" onClick={() => onRetryAttachment(a.localId)} className="shrink-0 h-7 pointer-coarse:h-9 px-2 rounded-md text-[var(--color-accent-text)] hover:underline underline-offset-2 font-medium">
+                <button type="button" onClick={() => onRetryAttachment(a.localId)} className="shrink-0 h-7 pointer-coarse:h-11 px-2 rounded-md text-[var(--color-accent-text)] hover:underline underline-offset-2 font-medium">
                   Try again
                 </button>
               )}
-              <button type="button" onClick={() => onRemoveAttachment(a.localId)} className="w-6 h-6 pointer-coarse:w-9 pointer-coarse:h-9 grid place-items-center rounded-md hover:bg-[var(--color-surface)] text-[var(--color-text-faint)] hover:text-[var(--color-text)] shrink-0" title="Remove" aria-label={`Remove ${a.name}`}>
+              <button type="button" onClick={() => onRemoveAttachment(a.localId)} className="w-6 h-6 pointer-coarse:size-11 grid place-items-center rounded-md hover:bg-[var(--color-surface)] text-[var(--color-text-faint)] hover:text-[var(--color-text)] shrink-0" title="Remove" aria-label={`Remove ${a.name}`}>
                 <X className="w-3.5 h-3.5" />
               </button>
             </div>

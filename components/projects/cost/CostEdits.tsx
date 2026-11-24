@@ -6,7 +6,7 @@
 // what it was and why (lib/costRevisions).
 
 import React, { useEffect, useState } from "react";
-import { Check, FileUp, History, Loader2, Pencil, X } from "lucide-react";
+import { Check, FileUp, History, Loader2, Pencil, X, CircleAlert } from "lucide-react";
 import { fmtMoney, saveParty, type CostAccount, type CostEntry, type CostParty, type Actor } from "@/lib/costs";
 import {
   saveAfe, loadAfeHistory, reviseAccount, reviseEntry, parseMoney, COST_CONTROLS_SQL,
@@ -18,7 +18,7 @@ import { tryUpload } from "@/lib/uploadRetry";
 import FileThumb from "@/components/ui/FileThumb";
 import { sayError } from "@/components/projects/sayError";
 
-const field = "h-9 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body text-[var(--color-text)]";
+const field = "h-9 pointer-coarse:h-11 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body text-[var(--color-text)]";
 const label = "block text-body font-medium text-[var(--color-text-muted)] mb-1";
 const primary = "inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50";
 const quiet = "inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
@@ -155,10 +155,10 @@ export function AfeEditor({ orgId, projectId, afe, actor, cur, onCancel, onSaved
         {file && <button type="button" onClick={() => setFile(null)} className="text-caption text-[var(--color-text-muted)] underline">Keep the current one</button>}
         <span className="text-caption text-[var(--color-text-faint)]">{file ? "The old document stays on file." : "Or drop it here. The old document stays on file."}</span>
       </div>
-      {err && <div role="alert" className="text-caption text-[var(--state-overdue-text)]">{err}</div>}
+      {err && <div role="alert" className="text-caption text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{err}</span></div>}
       <div className="flex gap-2">
         <button type="button" onClick={() => void save()} disabled={busy || !changed} className={quietSave ? quiet : primary}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save AFE</button>
-        <button type="button" onClick={onCancel} disabled={busy} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+        <button type="button" onClick={onCancel} disabled={busy} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
       </div>
     </div>
   );
@@ -232,10 +232,10 @@ export function LineEditor({ orgId, projectId, account, parties, actor, onCancel
           <input id={`lw-${account.id}`} value={note} onChange={(e) => setNote(e.target.value)} className={field} placeholder="e.g. Revised quote after the scope walk" />
         </div>
       </div>
-      {err && <div className="text-caption text-[var(--state-overdue-text)]">{err}</div>}
+      {err && <div role="alert" className="text-caption text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{err}</span></div>}
       <div className="flex gap-2">
-        <button type="button" onClick={() => void save()} disabled={busy} className={primary}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save line</button>
-        <button type="button" onClick={onCancel} disabled={busy} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+        <button type="button" onClick={() => void save()} disabled={busy} className={primary}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {busy ? "Saving" : "Save line"}</button>
+        <button type="button" onClick={onCancel} disabled={busy} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
       </div>
     </div>
   );
@@ -280,9 +280,9 @@ export function EntryRevise({ orgId, projectId, entry, cur, actor, onDone, onCan
     <div className="w-full mt-1.5 flex flex-wrap items-end gap-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] p-2">
       <div><label className={label} htmlFor={`ea-${entry.id}`}>New amount ({cur})</label><input id={`ea-${entry.id}`} value={amt} onChange={(e) => setAmt(e.target.value)} inputMode="decimal" className={`${field} w-36 font-display tabular-nums`} /></div>
       <div className="flex-1 min-w-[12rem]"><label className={label} htmlFor={`ew-${entry.id}`}>Why</label><input id={`ew-${entry.id}`} value={note} onChange={(e) => setNote(e.target.value)} className={field} placeholder="e.g. Revised quote 11/02" /></div>
-      <button type="button" onClick={() => void save()} disabled={busy} className={primary}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save</button>
-      <button type="button" onClick={onCancel} disabled={busy} aria-label="Cancel" className="p-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
-      {err && <div className="w-full text-caption text-[var(--state-overdue-text)]">{err}</div>}
+      <button type="button" onClick={() => void save()} disabled={busy} className={primary}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {busy ? "Saving" : "Save"}</button>
+      <button type="button" onClick={onCancel} disabled={busy} aria-label="Cancel" className="ui-hit p-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
+      {err && <div role="alert" className="w-full text-caption text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{err}</span></div>}
     </div>
   );
 }

@@ -13,7 +13,7 @@ import { extractLogoColors } from "@/lib/logoTheme";
 import { logoTriplets } from "@/lib/brandColors";
 import PalettePicker, { paletteFromTriplet } from "@/components/branding/PalettePicker";
 import { uploadToPath, getSignedUrlForPath } from "@/lib/storage";
-import { Upload, Loader2 } from "lucide-react";
+import { Upload, Loader2, CircleAlert } from "lucide-react";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import FileThumb from "@/components/ui/FileThumb";
@@ -185,7 +185,7 @@ export default function AdminBrandingPage() {
               )}
             </div>
           )}
-          {logoError && <p role="alert" className="mb-3 text-body font-medium text-[var(--state-overdue-text)]">{logoError}</p>}
+          {logoError && <p role="alert" className="mb-3 text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" /><span>{logoError}</span></p>}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             <input ref={fileRef} type="file" accept="image/*" className="hidden"
               onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleLogo(f); e.target.value = ""; }} />

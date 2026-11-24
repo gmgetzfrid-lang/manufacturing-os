@@ -14,7 +14,7 @@ import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ChevronDown, ShieldAlert, ArrowUpRight, AlertTriangle, Check, Loader2,
-  Globe, History, Image as ImageIcon, FileText, RotateCcw,
+  Globe, History, Image as ImageIcon, FileText, RotateCcw, CircleAlert,
 } from "lucide-react";
 import type { ChatMessage, ChatAttachment, AssistantPayload } from "@/lib/chatClient";
 import { attachmentUrl } from "@/lib/chatClient";
@@ -64,7 +64,7 @@ export function UserTurn({ m, mine, onOpenAttachment }: {
               {[...(focus ?? []), ...(inputs ? [inputs] : [])].map((f) => (
                 <span key={f} className={mine
                   ? "text-caption font-medium px-1.5 py-0.5 rounded border border-[var(--color-ink-line)] bg-[var(--color-ink-2)] text-[var(--color-ink-fg)]"
-                  : "ui-tag !h-6 !text-[12.5px]"}>{f}</span>
+                  : "ui-tag !h-6 !text-caption"}>{f}</span>
               ))}
             </div>
           ) : null}
@@ -88,7 +88,7 @@ export function UserTurn({ m, mine, onOpenAttachment }: {
           <button
             onClick={() => bubbleRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
             title="Back to the question"
-            className="max-w-[70%] inline-flex items-center gap-2 h-8 px-3 rounded-md bg-[var(--color-surface)] shadow-[var(--shadow-card)] ring-1 ring-[var(--color-border-strong)] text-body text-[var(--color-text)] hover:bg-[var(--color-surface-2)] animate-pop">
+            className="ui-hit max-w-[70%] inline-flex items-center gap-2 h-8 px-3 rounded-md bg-[var(--color-surface)] shadow-[var(--shadow-card)] ring-1 ring-[var(--color-border-strong)] text-body text-[var(--color-text)] hover:bg-[var(--color-surface-2)] animate-pop">
             <span className="shrink-0 text-body font-medium text-[var(--color-text-faint)]">{who}</span>
             <span className="truncate">{m.content}</span>
           </button>
@@ -159,7 +159,7 @@ export function AssistantTurn({
       <div role="alert" className="relative pl-4 py-1 flex items-center gap-x-3 gap-y-2 flex-wrap">
         <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] rounded-full bg-[var(--state-overdue)]" />
         <div className="min-w-0 flex-1 basis-60">
-          <div className="inline-flex items-center gap-1.5 text-reading font-medium text-[var(--state-overdue)]">
+          <div className="inline-flex items-center gap-1.5 text-reading font-medium text-[var(--state-overdue-text)]">
             <AlertTriangle className="h-4 w-4 shrink-0" /> No answer this time
           </div>
           <div className="text-body text-[var(--color-text-muted)]">{m.error ?? "The question didn't get an answer."}</div>
@@ -174,7 +174,7 @@ export function AssistantTurn({
   }
 
   if (!payload) {
-    return <p className="text-[14.5px] leading-relaxed text-[var(--color-text)] whitespace-pre-wrap">{m.content}</p>;
+    return <p className="text-reading leading-relaxed text-[var(--color-text)] whitespace-pre-wrap">{m.content}</p>;
   }
 
   if (payload.kind === "tools") return (
@@ -261,7 +261,7 @@ function RatedFeedback({ questionId, onRated, question, citations }: {
 // Send is the chat's one filled button: everything in the stream is a
 // white, ruled secondary button. The next step on the newest turn gets a
 // graphite edge so it still stands out.
-const QUIET_BTN = "shrink-0 inline-flex items-center gap-1.5 h-10 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-text-faint)] disabled:opacity-50 transition-colors";
+const QUIET_BTN = "shrink-0 inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-text-faint)] disabled:opacity-50 transition-colors";
 const NEXT_BTN = `${QUIET_BTN} !border-[var(--color-text)]`;
 
 function ToolsTurn({ m, payload, actions, onConfirm, latest }: {
@@ -345,21 +345,21 @@ function StepView({ step, n, last }: { step: RunStep; n: number; last: boolean }
   return (
     <li className="relative pl-9 pb-4 last:pb-0">
       {!last && <span aria-hidden className="absolute left-[11px] top-6 bottom-0 w-0.5 bg-[var(--color-border)]" />}
-      <span className={`absolute left-0 top-0 w-6 h-6 rounded-full grid place-items-center font-display tabular-nums text-body font-semibold text-white ${step.error
+      <span className={`absolute left-0 top-0 w-6 h-6 rounded-full grid place-items-center font-display tabular-nums text-body font-semibold text-[var(--color-ink-fg)] ${step.error
         ? "bg-[var(--state-overdue)]"
         : "bg-[var(--color-main)]"}`}>{n}</span>
       {step.error ? (
         <div className="text-body leading-snug">
           <span className="font-medium text-[var(--color-text)]">{describeTool(step.tool)}</span>
           {params && <span className="text-[var(--color-text-muted)]">: {params}</span>}
-          <p className="mt-0.5 text-body font-medium text-[var(--state-overdue)]">Didn&apos;t work: {step.error}</p>
+          <p className="mt-0.5 text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" /><span>Didn&apos;t work: {step.error}</span></p>
         </div>
       ) : (
         <>
           <div className="text-body leading-snug">
             <span className="font-medium text-[var(--color-text)]">{describeTool(step.tool)}</span>
             {params && <span className="text-[var(--color-text-muted)]">: {params}</span>}
-            <button onClick={() => setOpen((o) => !o)} aria-expanded={open} className="ml-2 text-body text-[var(--color-accent-text)] hover:underline">{open ? "Hide result" : "Show result"}</button>
+            <button onClick={() => setOpen((o) => !o)} aria-expanded={open} className="ui-hit ml-2 text-body text-[var(--color-accent-text)] hover:underline">{open ? "Hide result" : "Show result"}</button>
           </div>
           {open && (
             <pre className="mt-2 max-h-48 overflow-auto rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2.5 text-caption text-[var(--color-text-muted)]">
@@ -390,11 +390,11 @@ function PendingCard({ action, done, outcome, busy, onConfirm, primary }: {
       </span>
       <p className="text-reading font-medium leading-snug text-[var(--color-text)]">{action.summary}</p>
       {outcome && !outcome.ok && (
-        <p role="alert" className="text-body font-medium text-[var(--state-overdue)]">It didn&apos;t run: {outcome.note}</p>
+        <p role="alert" className="text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" /><span>It didn&apos;t run: {outcome.note}</span></p>
       )}
       <div className="flex items-center gap-2">
         {done ? (
-          <span className="inline-flex items-center gap-1.5 text-body font-medium text-[var(--state-released)]">
+          <span className="inline-flex items-center gap-1.5 text-body font-medium text-[var(--state-released-text)]">
             <Check className="h-4 w-4" /> Done{outcome?.note && outcome.note !== "done" ? `: ${outcome.note}` : ""}
           </span>
         ) : action.href ? (

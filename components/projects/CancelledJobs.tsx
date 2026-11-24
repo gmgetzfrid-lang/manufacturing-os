@@ -5,7 +5,7 @@
 //   CancelledJobsBar — above the schedule: what came off, and Put back
 
 import React, { useState } from "react";
-import { Ban, ChevronRight, Loader2, RotateCcw } from "lucide-react";
+import { Ban, ChevronRight, Loader2, RotateCcw, CircleAlert } from "lucide-react";
 import { cancelMilestone, restoreCancelledMilestone } from "@/lib/milestones";
 import { fmtInTz } from "@/lib/scheduleTz";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
@@ -48,12 +48,12 @@ export function CancelJobForm({ id, name, steps, userId, userName, userEmail, on
         <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} maxLength={2000}
           placeholder="Why, and anything to remember" className={`${input} resize-y`} />
       </label>
-      {err && <div className="text-caption text-[var(--state-overdue-text)]">{err}</div>}
+      {err && <div role="alert" className="text-caption text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{err}</span></div>}
       <div className="flex items-center justify-end gap-2">
-        <button onClick={onClose} disabled={busy} className="text-caption text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1">Back</button>
+        <button onClick={onClose} disabled={busy} className="text-caption text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 pointer-coarse:min-h-11">Back</button>
         <button onClick={() => void save()} disabled={busy}
           className="inline-flex items-center gap-1.5 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-caption font-medium px-3 py-1.5 disabled:opacity-50">
-          {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Ban className="w-3.5 h-3.5" />} Cancel job
+          {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Ban className="w-3.5 h-3.5" />} {busy ? "Cancelling" : "Cancel job"}
         </button>
       </div>
     </div>
@@ -80,7 +80,7 @@ export function CancelledJobsList({ jobs, canEdit, userId, userEmail, onChanged 
   const shown = all ? jobs : jobs.slice(0, SHOW_FIRST);
   return (
     <div className="divide-y divide-[var(--color-border)]">
-      {err && <div className="px-3 py-2 text-caption text-[var(--state-overdue-text)]">{err}</div>}
+      {err && <div role="alert" className="px-3 py-2 text-caption text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{err}</span></div>}
       {shown.map((j) => (
         <div key={j.m.id} className="px-3 py-2 flex items-start gap-3">
           <div className="flex-1 min-w-0 text-caption space-y-0.5">
@@ -101,7 +101,7 @@ export function CancelledJobsList({ jobs, canEdit, userId, userEmail, onChanged 
           </div>
           {canEdit && j.m.id && (
             <button onClick={() => void putBack(j.m.id!)} disabled={busy != null} title="Put this job back on the schedule"
-              className="shrink-0 inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-1 text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+              className="shrink-0 inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-1 pointer-coarse:min-h-11 text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
               {busy === j.m.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />} Put back
             </button>
           )}

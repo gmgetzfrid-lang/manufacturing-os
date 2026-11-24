@@ -53,37 +53,37 @@ export default function VerifyHoldPage() {
 
   return (
     <div className={`min-h-dvh flex flex-col items-center justify-center p-6 transition-colors duration-500 ${
-      loading || error ? "bg-[var(--color-ink)]" : result?.active ? "bg-[var(--state-overdue)]" : "bg-[var(--state-released)]"
+      loading || error ? "bg-[var(--color-ink)]" : result?.active ? "bg-[color-mix(in_srgb,var(--state-overdue)_78%,black)]" : "bg-[color-mix(in_srgb,var(--state-released)_78%,black)]"
     }`}>
       <div className="w-full max-w-sm text-center">
         {loading ? (
-          <div className="text-white/90">
+          <div className="text-[var(--color-ink-fg)]/90">
             <Loader2 className="w-14 h-14 mx-auto animate-spin mb-4" />
             <div className="text-body font-medium ">Checking hold…</div>
           </div>
         ) : error ? (
-          <div className="text-white/90">
+          <div className="text-[var(--color-ink-fg)]/90">
             <ShieldQuestion className="w-16 h-16 mx-auto mb-4 opacity-80" />
             <h1 className="text-[34px] leading-[1.05] tracking-[-0.02em] font-bold mb-3">Can&apos;t verify this tag</h1>
             <p className="text-reading opacity-90">{error}</p>
             <p className="text-body opacity-70 mt-4">
               Treat the hold as active until Document Control confirms otherwise.
             </p>
-            <button onClick={() => void check()} className="mt-6 inline-flex items-center gap-2 h-11 px-4 rounded-lg bg-white/15 hover:bg-white/25 text-reading font-medium">
+            <button onClick={() => void check()} className="mt-6 inline-flex items-center gap-2 h-11 px-4 rounded-lg bg-[var(--color-ink-fg)]/15 hover:bg-[var(--color-ink-fg)]/25 text-reading font-medium">
               <RefreshCw className="w-4 h-4" /> Try again
             </button>
           </div>
         ) : result && (
           <>
             {result.active ? (
-              <OctagonAlert className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
+              <OctagonAlert className="w-24 h-24 mx-auto text-[var(--color-ink-fg)] mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
             ) : (
-              <CheckCircle2 className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
+              <CheckCircle2 className="w-24 h-24 mx-auto text-[var(--color-ink-fg)] mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
             )}
-            <h1 className="text-[40px] font-bold text-white leading-[1.03] tracking-[-0.03em] mb-3">
+            <h1 className="text-[40px] font-bold text-[var(--color-ink-fg)] leading-[1.03] tracking-[-0.03em] mb-3">
               {result.active ? "Hold active" : "Released"}
             </h1>
-            <p className="text-white/90 text-reading font-medium mb-6">
+            <p className="text-[var(--color-ink-fg)]/90 text-reading font-medium mb-6">
               {result.active
                 ? "Do not advance this document or the work it covers."
                 : "This hold was released. The tag can come down."}
@@ -102,7 +102,7 @@ export default function VerifyHoldPage() {
                 <div className="text-body font-medium text-[var(--color-text-muted)]">Reason</div>
                 <div className={`text-body font-medium ${result.active ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>{result.reason ?? "-"}</div>
               </div>
-              <div className="grid grid-cols-2 gap-3 pt-2 border-t border-[var(--color-border)] text-xs">
+              <div className="grid grid-cols-2 gap-3 pt-2 border-t border-[var(--color-border)] text-caption">
                 <div>
                   <div className="text-body font-medium text-[var(--color-text-muted)]">Placed</div>
                   <div className="text-[var(--color-text)]">{fmt(result.openedAt)}</div>
@@ -116,10 +116,10 @@ export default function VerifyHoldPage() {
               </div>
             </div>
 
-            <div className="mt-5 text-caption text-white/70">
+            <div className="mt-5 text-caption text-[var(--color-ink-fg)]/90">
               Checked {new Date(result.checkedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} by document control.
             </div>
-            <button onClick={() => void check()} className="mt-3 inline-flex items-center gap-1.5 h-11 px-4 rounded-lg bg-white/15 hover:bg-white/25 text-white text-reading font-medium">
+            <button onClick={() => void check()} className="mt-3 inline-flex items-center gap-1.5 h-11 px-4 rounded-lg bg-[var(--color-ink-fg)]/15 hover:bg-[var(--color-ink-fg)]/25 text-[var(--color-ink-fg)] text-reading font-medium">
               <RefreshCw className="w-4 h-4" /> Check again
             </button>
           </>

@@ -19,6 +19,7 @@ import { appPrompt, appAlert } from "@/components/providers/DialogProvider";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 import { friendlyError } from "@/lib/friendlyError";
+import { FieldError } from "@/components/ui/Field";
 export default function DocumentLinkPicker({ orgId, userId, canManage = false, excludeIds = [], onPick, onClose }: {
   orgId: string;
   userId?: string;
@@ -78,7 +79,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
 
   const addLibrary = async () => {
     if (!userId) return;
-    const name = await appPrompt({ title: "New library", placeholder: "Library name" });
+    const name = await appPrompt({ title: "New library", placeholder: "Library name", confirmLabel: "Create library" });
     if (!name?.trim()) return;
     try {
       const lib = await createLibrary({ orgId, name: name.trim(), createdBy: userId });
@@ -88,7 +89,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
   };
   const addFolder = async () => {
     if (!userId || !upLibraryId) return;
-    const name = await appPrompt({ title: "New folder", message: folderId ? "Created inside the selected folder." : "Created at the library root.", placeholder: "Folder name" });
+    const name = await appPrompt({ title: "New folder", message: folderId ? "Created inside the selected folder." : "Created at the library root.", placeholder: "Folder name", confirmLabel: "Create folder" });
     if (!name?.trim()) return;
     try {
       const id = await createFolder({ orgId, libraryId: upLibraryId, parentId: folderId || null, name: name.trim(), createdBy: userId });
@@ -132,10 +133,10 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3">
           <FileText className="w-5 h-5 text-[var(--color-text-muted)]" />
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-[var(--color-text)]">Link a drawing</div>
+            <div className="text-body font-medium text-[var(--color-text)]">Link a drawing</div>
             <div className="text-body text-[var(--color-text-muted)]">Reference an existing document, or upload a new one</div>
           </div>
-          <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
+          <button aria-label="Close" onClick={onClose} className="ui-hit p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
         </div>
 
         {/* Tabs */}
@@ -147,20 +148,20 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
         {tab === "browse" ? (
           <>
             <div className="px-5 py-3 flex items-center gap-2">
-              <select value={libraryId} onChange={(e) => setLibraryId(e.target.value)} className={`${fieldCls} shrink-0 max-w-[40%]`}>
+              <select aria-label="Library" value={libraryId} onChange={(e) => setLibraryId(e.target.value)} className={`${fieldCls} shrink-0 max-w-[40%]`}>
                 <option value="">All libraries</option>
                 {libraries.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
               </select>
               <div className="flex-1 flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-2.5 py-1.5">
                 <Search className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
-                <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by number or title…" className="bg-transparent text-body text-[var(--color-text)] outline-none w-full min-w-0" />
+                <input aria-label="Search by number or title" type="search" autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by number or title…" className="bg-transparent text-body text-[var(--color-text)] outline-none w-full min-w-0" />
               </div>
             </div>
             <div className="flex-1 overflow-y-auto border-t border-[var(--color-border)]">
               {loading ? (
                 <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-muted)]" /></div>
               ) : visible.length === 0 ? (
-                <div className="text-center py-12 text-body text-[var(--color-text-muted)]">No documents found.</div>
+                <div className="text-center py-12 text-body text-[var(--color-text-muted)]">No documents match. Try a document number or a word from the title.</div>
               ) : (
                 visible.map((r) => (
                   <button key={r.id} disabled={!!linking} onClick={async () => { setLinking(r.id); try { await onPick(r.id); } finally { setLinking(null); } }} className="group w-full text-left px-5 py-2.5 border-b border-[var(--color-border)]/50 hover:bg-[var(--color-surface-2)] flex items-center gap-3 disabled:opacity-50">
@@ -180,7 +181,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
             <div className="space-y-1">
               <label className="text-body font-medium text-[var(--color-text-muted)]">Library</label>
               <div className="flex items-center gap-2">
-                <select value={upLibraryId} onChange={(e) => { setUpLibraryId(e.target.value); setFolderId(""); }} className={`${fieldCls} flex-1`}>
+                <select aria-label="Library" value={upLibraryId} onChange={(e) => { setUpLibraryId(e.target.value); setFolderId(""); }} className={`${fieldCls} flex-1`}>
                   <option value="">Choose a library…</option>
                   {libraries.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
                 </select>
@@ -191,7 +192,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
             <div className="space-y-1">
               <label className="text-body font-medium text-[var(--color-text-muted)]">Folder</label>
               <div className="flex items-center gap-2">
-                <select value={folderId} onChange={(e) => setFolderId(e.target.value)} disabled={!upLibraryId} className={`${fieldCls} flex-1 disabled:opacity-50`}>
+                <select aria-label="Folder" value={folderId} onChange={(e) => setFolderId(e.target.value)} disabled={!upLibraryId} className={`${fieldCls} flex-1 disabled:opacity-50`}>
                   <option value="">{upLibraryId ? "Library root" : "Pick a library first"}</option>
                   {folders.map((f) => <option key={f.id} value={f.id}>{f.pathNames.join(" / ") || f.name}</option>)}
                 </select>
@@ -214,7 +215,7 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
                     </span>
                   </>
                 ) : (
-                  <span className="text-xs text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Upload className="w-3.5 h-3.5" /> Drop the PDF here, or tap to pick it</span>
+                  <span className="text-caption text-[var(--color-text-muted)] inline-flex items-center gap-1.5"><Upload className="w-3.5 h-3.5" /> Drop the PDF here, or tap to pick it</span>
                 )}
               </label>
             </div>
@@ -222,19 +223,19 @@ export default function DocumentLinkPicker({ orgId, userId, canManage = false, e
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
                 <label className="text-body font-medium text-[var(--color-text-muted)]">Document number *</label>
-                <input value={docNum} onChange={(e) => setDocNum(e.target.value)} placeholder="e.g. ISO-C7-001" className={`${fieldCls} w-full`} />
+                <input aria-label="Document number" value={docNum} onChange={(e) => setDocNum(e.target.value)} placeholder="e.g. ISO-C7-001" className={`${fieldCls} w-full`} />
               </div>
               <div className="space-y-1">
-                <label className="text-body font-medium text-[var(--color-text-muted)]">Title</label>
-                <input value={docTitle} onChange={(e) => setDocTitle(e.target.value)} placeholder="optional" className={`${fieldCls} w-full`} />
+                <label className="text-body font-medium text-[var(--color-text-muted)]">Title (optional)</label>
+                <input aria-label="Title (optional)" value={docTitle} onChange={(e) => setDocTitle(e.target.value)} className={`${fieldCls} w-full`} />
               </div>
             </div>
 
-            {upError && <p role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 text-body text-[var(--state-overdue)]">{upError}</p>}
+            {upError && <FieldError>{upError}</FieldError>}
 
             <div className="flex justify-end pt-1">
               <button onClick={createAndLink} disabled={creating || !upLibraryId || !file || !docNum.trim()} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-body font-medium disabled:opacity-40 disabled:cursor-not-allowed">
-                {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Create &amp; link
+                {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}{" "}{creating ? "Creating" : "Create & link"}
               </button>
             </div>
           </div>

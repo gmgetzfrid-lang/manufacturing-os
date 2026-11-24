@@ -87,7 +87,7 @@ function TopicCard({ t, n, tone, print, onPresent, onUse, chosen }: { t: SafetyT
         <span className={`min-w-0 truncate ${tone.kick} ${print ? "font-medium text-[9pt]" : "text-body font-medium "}`}>{t.kicker}</span>
         {!print && (
           <button type="button" onClick={(e) => { e.stopPropagation(); onPresent(); }} title="Present this topic full screen" aria-label={`Present ${t.title}`}
-            className="ml-auto shrink-0 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+            className="ui-hit ml-auto shrink-0 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
             <Maximize2 className="w-3.5 h-3.5" />
           </button>
         )}
@@ -149,7 +149,7 @@ function Presenter({ topics, at, label, onMove, onClose }: { topics: SafetyTopic
         <ShieldAlert className="w-5 h-5 text-white/60" aria-hidden />
         <span className="text-body font-medium text-white/70">Safety{label ? `: ${label}` : ""}</span>
         <span className="ml-auto text-body font-medium text-white/60 tabular-nums">{at + 1} / {topics.length}</span>
-        <button type="button" onClick={onClose} aria-label="Close" className="p-1.5 rounded-md hover:bg-white/10"><X className="w-5 h-5" /></button>
+        <button type="button" onClick={onClose} aria-label="Close" className="ui-hit p-1.5 rounded-md hover:bg-white/10"><X className="w-5 h-5" /></button>
       </div>
       <div className="flex-1 overflow-y-auto px-6 sm:px-14 py-8 max-w-5xl w-full mx-auto">
         <div className="flex items-center gap-3">

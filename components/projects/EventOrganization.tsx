@@ -7,14 +7,14 @@
 
 import { Card } from "@/components/ui/PageHero";
 import React, { useEffect, useMemo, useState } from "react";
-import { Check, Loader2, Plus, X } from "lucide-react";
+import { Check, Loader2, Plus, X, CircleAlert } from "lucide-react";
 import { defaultRoles, loadOrg, orgStanding, saveOrg, type OrgRole } from "@/lib/eventOrganization";
 import { sayError } from "@/components/projects/sayError";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 
-const field = "w-full h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body text-[var(--color-text)] disabled:opacity-70";
+const field = "w-full h-9 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body text-[var(--color-text)] disabled:opacity-70";
 const label = "text-body font-medium text-[var(--color-text-muted)]";
-const btn = "inline-flex items-center gap-1.5 h-10 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
+const btn = "inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
 const pri = "inline-flex items-center justify-center gap-1.5 h-10 px-4 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] whitespace-nowrap disabled:opacity-50";
 
 export default function EventOrganization({ projectId, canManage, actor, people }: {
@@ -56,7 +56,7 @@ export default function EventOrganization({ projectId, canManage, actor, people 
         </span>
         {recorded && !editing && canManage && <button type="button" onClick={() => setEditing(true)} className={btn}>Edit roles</button>}
       </span>}>
-      {err && <div role="alert" className="mx-4 sm:mx-5 mt-3 text-body font-medium text-[var(--state-overdue)]">{err}</div>}
+      {err && <div role="alert" className="mx-4 sm:mx-5 mt-3 text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-0.5" /><span>{err}</span></div>}
       {recorded && !editing ? (
         // The roles this event requires and who fills each: a ruled table.
         <table className="w-full text-body">
@@ -95,7 +95,7 @@ export default function EventOrganization({ projectId, canManage, actor, people 
             <input aria-label="Responsible for" disabled={!canManage} value={r.does} onChange={(e) => change(r.id, { does: e.target.value })} placeholder="What this role is responsible for" className={field} />
             <input aria-label={`Who fills ${r.role || "this role"}`} list="eo-people" disabled={!canManage} value={r.person} onChange={(e) => change(r.id, { person: e.target.value })} placeholder={r.required ? "Name (required)" : "Name"} className={`${field} ${r.required && !r.person.trim() ? "!border-[var(--state-overdue)]" : ""}`} />
             <label className="inline-flex items-center gap-1.5 text-body text-[var(--color-text)]"><input type="checkbox" disabled={!canManage} checked={r.required} onChange={(e) => change(r.id, { required: e.target.checked })} className="w-4 h-4" /><span className="md:hidden">Required</span></label>
-            {canManage ? <button type="button" aria-label={`Remove ${r.role || "role"}`} onClick={() => remove(r.id)} className="justify-self-start md:justify-self-center w-8 h-8 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button> : <span />}
+            {canManage ? <button type="button" aria-label={`Remove ${r.role || "role"}`} onClick={() => remove(r.id)} className="ui-hit justify-self-start md:justify-self-center w-8 h-8 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button> : <span />}
           </li>
         ))}
       </ul>

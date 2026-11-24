@@ -74,6 +74,7 @@ import {
   Pencil,
   Trash2,
   RotateCcw,
+  CircleAlert,
 } from 'lucide-react';
 
 // =========================================================================================
@@ -261,7 +262,7 @@ const AssignmentModal = ({ onClose, onSubmit, isLoading, activeOrgId, isReassign
                 aria-describedby={reasonMissing ? 'reassign-why-err' : undefined}
                 onChange={(e) => { setReason(e.target.value); setReasonMissing(false); }}
               />
-              {reasonMissing && <p id="reassign-why-err" role="alert" className="mt-1.5 text-body font-medium text-[var(--state-overdue-text)]">Say why first, then pick the new drafter.</p>}
+              {reasonMissing && <p id="reassign-why-err" role="alert" className="mt-1.5 text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" /><span>Say why first, then pick the new drafter.</span></p>}
             </div>
           )}
 
@@ -271,7 +272,7 @@ const AssignmentModal = ({ onClose, onSubmit, isLoading, activeOrgId, isReassign
             ) : listError != null ? (
               <ErrorNote compact className="p-4" error={listError} title="The drafters didn't load." onRetry={() => setListTry((n) => n + 1)} />
             ) : drafters.length === 0 ? (
-              <p className="p-4 text-center text-reading text-[var(--color-text-muted)]">No drafters in this workspace yet.</p>
+              <p className="p-4 text-center text-reading text-[var(--color-text-muted)]">No drafters in this workspace yet. An admin gives people the Drafter role in <Link href="/admin/users" className="font-medium text-[var(--color-link)] underline underline-offset-2">Users</Link>.</p>
             ) : (
               <div className="grid grid-cols-1 divide-y divide-[var(--color-border)]">
                 {drafters.map(drafter => (
@@ -383,7 +384,7 @@ const WatermarkOverlay = () => (
       {Array.from({ length: 9 }).map((_, i) => (
         <div key={i} className="flex justify-around whitespace-nowrap opacity-[0.07]">
           {Array.from({ length: 3 }).map((__, j) => (
-            <span key={j} className="text-xl font-medium text-[var(--color-text)]">
+            <span key={j} className="text-section font-medium text-[var(--color-text)]">
               Preliminary&nbsp;·&nbsp;Not for Construction
             </span>
           ))}
@@ -432,8 +433,8 @@ function RedlineEditorMount({
   }
   if (!resolvedUrl) {
     return (
-      <div className="fixed inset-0 z-[200] bg-slate-900/80 flex items-center justify-center">
-        <div role="status" className="text-white text-reading inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Opening the file for markup</div>
+      <div className="fixed inset-0 z-[200] bg-[var(--color-ink)]/80 flex items-center justify-center">
+        <div role="status" className="text-[var(--color-ink-fg)] text-reading inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Opening the file for markup</div>
       </div>
     );
   }
@@ -664,19 +665,19 @@ const FileViewerModal = ({
         />
       )}
 
-      <div role="dialog" aria-modal="true" aria-label={file.name} className="fixed inset-0 z-[100] bg-slate-950/95 backdrop-blur-md flex flex-col animate-in fade-in duration-300">
-        <div className="flex items-center justify-between gap-3 px-4 sm:px-6 py-4 bg-slate-900 border-b border-slate-800 text-white shadow-md relative z-50">
+      <div role="dialog" aria-modal="true" aria-label={file.name} className="fixed inset-0 z-[100] bg-[var(--color-ink)]/95 backdrop-blur-md flex flex-col animate-in fade-in duration-300">
+        <div className="flex items-center justify-between gap-3 px-4 sm:px-6 py-4 bg-[var(--color-ink)] border-b border-[var(--color-ink-line)] text-[var(--color-ink-fg)] shadow-md relative z-50">
           <div className="flex items-center space-x-4 min-w-0">
-            <div className="p-2 rounded-lg border bg-slate-800 border-slate-700 text-slate-300 shrink-0">
-               {file.type === 'Draft' ? <AlertTriangle className="w-6 h-6 text-amber-400" /> : <FileCheck className="w-6 h-6" />}
+            <div className="p-2 rounded-lg border bg-[var(--color-ink-2)] border-[var(--color-ink-line)] text-[var(--color-ink-text)] shrink-0">
+               {file.type === 'Draft' ? <AlertTriangle className="w-6 h-6 text-[var(--state-held)]" /> : <FileCheck className="w-6 h-6" />}
             </div>
             <div className="min-w-0">
-              <h3 className="font-medium text-lg leading-none flex items-center min-w-0">
+              <h3 className="font-medium text-section leading-none flex items-center min-w-0">
                 <span className="truncate">{file.name}</span>
-                {file.type === 'Draft' && <span className="ml-3 shrink-0 px-2 py-0.5 border border-amber-400/60 text-amber-300 text-body font-medium rounded ">Draft, not for construction</span>}
+                {file.type === 'Draft' && <span className="ml-3 shrink-0 px-2 py-0.5 border border-[var(--state-held)] text-[var(--state-held)] text-body font-medium rounded ">Draft, not for construction</span>}
               </h3>
-              <div className="flex items-center text-xs text-slate-400 mt-1.5 space-x-2">
-                <span className="bg-slate-800 px-2 py-0.5 rounded border border-slate-700">{file.type}</span>
+              <div className="flex items-center text-caption text-[var(--color-ink-muted)] mt-1.5 space-x-2">
+                <span className="bg-[var(--color-ink-2)] px-2 py-0.5 rounded border border-[var(--color-ink-line)]">{file.type}</span>
                 <span>•</span>
                 <span>{file.size}</span>
                 <span>•</span>
@@ -686,34 +687,35 @@ const FileViewerModal = ({
           </div>
           <div className="flex items-center gap-2 shrink-0">
             {!archived && file.type !== 'Draft' && (
-               <button onClick={handlePrint} className="flex items-center px-3 sm:px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm font-medium transition-colors border border-slate-700">
-                 <Printer className="w-4 h-4 sm:mr-2" /><span className="hidden sm:inline">Print</span>
+               <button onClick={handlePrint} aria-label="Print" className="flex items-center justify-center pointer-coarse:min-h-11 pointer-coarse:min-w-11 px-3 sm:px-4 py-2 bg-[var(--color-ink-2)] hover:bg-[var(--color-ink-line)] rounded-lg text-body font-medium transition-colors border border-[var(--color-ink-line)]">
+                 <Printer aria-hidden className="w-4 h-4 sm:mr-2" /><span className="hidden sm:inline">Print</span>
                </button>
             )}
             {/* One main button: Approve when it's yours to approve, else Download. */}
             {!archived && (
               <button
                 onClick={handleDownloadClick}
-                className={`flex items-center px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition-colors ${onApprove && file.type === 'Draft' ? 'bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white' : 'bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]'}`}
+                aria-label="Download"
+                className={`flex items-center justify-center pointer-coarse:min-h-11 pointer-coarse:min-w-11 px-3 sm:px-4 py-2 rounded-lg text-body font-medium transition-colors ${onApprove && file.type === 'Draft' ? 'bg-[var(--color-ink-2)] hover:bg-[var(--color-ink-line)] border border-[var(--color-ink-line)] text-[var(--color-ink-fg)]' : 'bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]'}`}
               >
-                <Download className="w-4 h-4 sm:mr-2" /><span className="hidden sm:inline">Download</span>
+                <Download aria-hidden className="w-4 h-4 sm:mr-2" /><span className="hidden sm:inline">Download</span>
               </button>
             )}
             {onApprove && file.type === 'Draft' && (
               <button
                 onClick={onApprove}
-                className="flex items-center px-4 py-2 rounded-lg text-sm font-medium transition-colors bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"
+                className="flex items-center pointer-coarse:min-h-11 px-4 py-2 rounded-lg text-body font-medium transition-colors bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)]"
               >
                 <CheckCircle2 className="w-4 h-4 mr-2" /> Approve
               </button>
             )}
-            <button onClick={onClose} aria-label="Close" className="p-2 hover:bg-slate-800 rounded-full transition-colors text-slate-400 hover:text-white">
+            <button onClick={onClose} aria-label="Close" className="ui-hit p-2 hover:bg-[var(--color-ink-2)] rounded-full transition-colors text-[var(--color-ink-muted)] hover:text-[var(--color-ink-fg)]">
               <X className="w-6 h-6" />
             </button>
           </div>
         </div>
 
-        <div className="flex-1 overflow-hidden relative bg-slate-900/50 flex items-center justify-center p-8">
+        <div className="flex-1 overflow-hidden relative bg-[var(--color-ink)]/50 flex items-center justify-center p-8">
           {/* VISUAL PROTECTION LAYER */}
           {file.type === 'Draft' && <WatermarkOverlay />}
 
@@ -722,7 +724,7 @@ const FileViewerModal = ({
               <div className="w-24 h-24 bg-[var(--color-surface-2)] rounded-full flex items-center justify-center mx-auto mb-6 border border-[var(--color-border)]">
                 <Archive className="w-12 h-12 text-[var(--color-text-muted)]" />
               </div>
-              <h3 className="text-xl font-medium text-[var(--color-text)] mb-2">This file is in the archive</h3>
+              <h3 className="text-section font-medium text-[var(--color-text)] mb-2">This file is in the archive</h3>
               <p className="text-[var(--color-text-muted)] leading-relaxed">
                 The request closed a while ago, so its files moved to{' '}
                 {archiveId ? <span className="font-display font-semibold">{archiveId}</span> : 'the offline archive'}.
@@ -731,27 +733,27 @@ const FileViewerModal = ({
             </div>
           ) : isPdf ? (
             resolvedUrl ? (
-              <iframe src={`${resolvedUrl}#toolbar=0&navpanes=0`} className="w-full h-full rounded-lg shadow-2xl bg-[var(--color-surface)] border border-slate-700 relative z-0" title="PDF Viewer" />
+              <iframe src={`${resolvedUrl}#toolbar=0&navpanes=0`} className="w-full h-full rounded-lg shadow-2xl bg-[var(--color-surface)] border border-[var(--color-ink-line)] relative z-0" title="PDF Viewer" />
             ) : resolveError != null ? (
-              <div role="alert" className="max-w-md text-center text-slate-200 text-reading">{friendlyError(resolveError)}</div>
+              <div role="alert" className="max-w-md text-center text-[var(--color-ink-text)] text-reading">{friendlyError(resolveError)}</div>
             ) : (
-              <div role="status" className="text-slate-300 text-reading flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading the preview</div>
+              <div role="status" className="text-[var(--color-ink-text)] text-reading flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading the preview</div>
             )
           ) : isImage ? (
             resolvedUrl ? (
               // eslint-disable-next-line @next/next/no-img-element -- ephemeral signed-URL preview; optimizer can't cache short-lived URLs and intrinsic size is unknown
-              <img src={resolvedUrl} alt="Preview" className="max-w-full max-h-full object-contain shadow-2xl rounded-lg border border-slate-700 relative z-0" />
+              <img src={resolvedUrl} alt="Preview" className="max-w-full max-h-full object-contain shadow-2xl rounded-lg border border-[var(--color-ink-line)] relative z-0" />
             ) : resolveError != null ? (
-              <div role="alert" className="max-w-md text-center text-slate-200 text-reading">{friendlyError(resolveError)}</div>
+              <div role="alert" className="max-w-md text-center text-[var(--color-ink-text)] text-reading">{friendlyError(resolveError)}</div>
             ) : (
-              <div role="status" className="text-slate-300 text-reading flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading the preview</div>
+              <div role="status" className="text-[var(--color-ink-text)] text-reading flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading the preview</div>
             )
           ) : (
             <div className="text-center p-12 bg-[var(--color-surface)] rounded-xl shadow-2xl max-w-md border border-[var(--color-border)] relative z-10">
               <div className="w-24 h-24 bg-[var(--color-surface-2)] rounded-full flex items-center justify-center mx-auto mb-6 border border-[var(--color-border)]">
                 <FileIcon className="w-12 h-12 text-[var(--color-text-faint)]" />
               </div>
-              <h3 className="text-xl font-medium text-[var(--color-text)] mb-2">No preview for this type</h3>
+              <h3 className="text-section font-medium text-[var(--color-text)] mb-2">No preview for this type</h3>
               <p className="text-[var(--color-text-muted)] leading-relaxed">Download it to open it.</p>
             </div>
           )}
@@ -1638,7 +1640,7 @@ export default function TicketDetailView() {
                 setShowRedlineEditor(true);
                 setShowCommentModal(false);
               } else {
-                if (await appConfirm({ message: `Start redlining the latest draft: ${sortedDrafts[0].name}?` })) {
+                if (await appConfirm({ title: "Redline the latest draft?", message: `${sortedDrafts[0].name} opens in the markup editor.`, confirmLabel: "Redline draft" })) {
                    setFileToRedline(sortedDrafts[0]);
                    setShowRedlineEditor(true);
                    setShowCommentModal(false);
@@ -1913,7 +1915,7 @@ export default function TicketDetailView() {
                     <div className="min-w-0 flex-1">
                       <p className="text-reading font-medium text-[var(--color-text)] truncate">{u.file.name}</p>
                       {failed ? (
-                        <p className="text-body text-[var(--state-overdue-text)]">Not added. {uploadError}</p>
+                        <p className="text-body text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" /><span>Not added. {uploadError}</span></p>
                       ) : (
                         <div className="mt-1 flex items-center gap-2">
                           <span className="block h-1.5 flex-1 max-w-64 rounded-full bg-[var(--color-surface-2)] overflow-hidden" role="progressbar" aria-label={`Uploading ${u.file.name}`} aria-valuenow={Math.round(uploadProgress)} aria-valuemin={0} aria-valuemax={100}>
@@ -2029,7 +2031,7 @@ export default function TicketDetailView() {
                         {(mine || isAdmin) && editingTextId !== comment.id && (
                           <MoreMenu iconOnly label="Comment actions" triggerClass="-my-1 w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]" items={[
                             { icon: <Pencil className="w-4 h-4" />, label: 'Edit', onClick: () => { setEditingTextId(comment.id); setEditTextDraft(comment.text); } },
-                            { icon: <Trash2 className="w-4 h-4" />, label: 'Delete', tone: 'bad', line: true, onClick: async () => { if (await appConfirm({ title: 'Delete this comment?', message: 'It cannot be brought back.', tone: "danger", confirmLabel: "Delete" })) void handleDeleteComment(comment.id); } },
+                            { icon: <Trash2 className="w-4 h-4" />, label: 'Delete', tone: 'bad', line: true, onClick: async () => { if (await appConfirm({ title: 'Delete this comment?', message: 'It cannot be brought back.', tone: "danger", confirmLabel: "Delete comment" })) void handleDeleteComment(comment.id); } },
                           ]} />
                         )}
                       </div>
@@ -2130,6 +2132,7 @@ export default function TicketDetailView() {
                   orgId={activeOrgId}
                   rows={3}
                   placeholder="Write a comment"
+                  aria-label="Comment"
                 />
               )}
               <div className="mt-2 flex items-center justify-between gap-2">

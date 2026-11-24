@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { signalScale, signalFromLogo, contrast, toOklch, fromOklch, DEFAULT_SIGNAL, isColorful, accentFor, logoTriplets, paintTriplet, tripletGap, type Triplet } from "@/lib/brandColors";
+import { signalScale, signalFromLogo, contrast, toOklch, fromOklch, DEFAULT_SIGNAL, isColorful, accentFor, logoTriplets, paintTriplet, tripletGap, tintedNeutrals, type Triplet } from "@/lib/brandColors";
 
 const ANY = ["#0b1f6b", "#1f5bd6", "#0e7c3a", "#f5b700", "#db2777", "#7c3aed", "#ea580c", "#4fd1c5", "#e11d48", "#ffd400", "#9acd32"];
 
@@ -111,4 +111,17 @@ describe("three colors from a logo", () => {
     expect(logoTriplets(["#ffffff", "#000000", "#808080", "#f5f5f5"])).toEqual([]);
     expect(logoTriplets([])).toEqual([]);
   });
+});
+
+describe("tintedNeutrals: a field's edge can be found on any workspace color (design rule F4)", () => {
+  const hues = ["#1f5bd6", "#c8102e", "#00843d", "#f2a900", "#6b2c91", "#0b1f4d", "#ff6a13", "#008b8b", "#7a7a7a"];
+  for (const mode of ["light", "dark"] as const) {
+    it(`edge is 3:1 against page and sheet (${mode})`, () => {
+      for (const h of hues) {
+        const n = tintedNeutrals(h, mode);
+        expect(contrast(n.borderControl, n.canvas), `${h} on page`).toBeGreaterThanOrEqual(3);
+        expect(contrast(n.borderControl, n.surface), `${h} on sheet`).toBeGreaterThanOrEqual(3);
+      }
+    });
+  }
 });

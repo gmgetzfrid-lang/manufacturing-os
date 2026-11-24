@@ -241,7 +241,7 @@ const CheckoutInfoPopover = ({
   return (
     <div 
       ref={popoverRef}
-      className="absolute right-0 top-full mt-2 w-80 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg z-50 animate-in fade-in zoom-in-95 duration-150 origin-top-right overflow-hidden"
+      className="absolute right-0 top-full mt-2 w-80 bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-[var(--color-ink)]/5 rounded-xl shadow-lg z-50 animate-in fade-in zoom-in-95 duration-150 origin-top-right overflow-hidden"
       onClick={(e) => e.stopPropagation()} 
     >
       {/* Header */}
@@ -411,7 +411,7 @@ export default function CheckoutStatusCell({
     }
   };
 
-  const small = "inline-flex items-center gap-1 h-8 pointer-coarse:h-10 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-control)] disabled:opacity-50 transition-colors whitespace-nowrap";
+  const small = "inline-flex items-center gap-1 h-8 pointer-coarse:h-11 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-control)] disabled:opacity-50 transition-colors whitespace-nowrap";
   if (!isCheckedOut && quiet) {
     return (
       <div className="relative flex items-center gap-1 min-h-8 group/cell">
@@ -431,7 +431,7 @@ export default function CheckoutStatusCell({
               disabled={quickBusy}
               title="Quick hold: one click, no form. Marks you as working on this until end of day, then releases it. Upgrade to a full checkout any time."
               aria-label="Quick hold until end of day"
-              className={`${small} !w-8 !px-0 justify-center`}
+              className={`pointer-coarse:!w-11 ${small} !w-8 !px-0 justify-center`}
             >
               {quickBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
             </button>
@@ -493,7 +493,7 @@ export default function CheckoutStatusCell({
         aria-label="Checkout details"
         title="Checkout details"
         aria-expanded={showInfo}
-        className={`shrink-0 w-7 h-7 grid place-items-center rounded-md transition-colors ${
+        className={`ui-hit shrink-0 w-7 h-7 grid place-items-center rounded-md transition-colors ${
           showInfo
             ? "bg-[var(--color-surface-2)] text-[var(--color-text)]"
             : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"

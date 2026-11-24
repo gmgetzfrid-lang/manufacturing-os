@@ -150,7 +150,7 @@ export default function TransmittalsPage() {
   const openEdit = (t: Transmittal) => { setEditing(t); setPreloadDoc(null); setComposerOpen(true); };
 
   const doAcknowledge = async (t: Transmittal) => {
-    const name = await appPrompt({ message: "Who acknowledged receipt? (name)", defaultValue: t.recipientName || "" });
+    const name = await appPrompt({ message: "Who acknowledged receipt? (name)", defaultValue: t.recipientName || "", confirmLabel: "Record receipt" });
     if (name === null) return;
     setBusyId(t.id);
     try {
@@ -166,6 +166,7 @@ export default function TransmittalsPage() {
     if (!(await appConfirm({
       title: `Void ${t.number}?`,
       message: "It stays on the register as a voided record (it was issued, so it can't be deleted).",
+      confirmLabel: "Void transmittal",
       tone: "danger",
     }))) return;
     setBusyId(t.id);
@@ -182,6 +183,7 @@ export default function TransmittalsPage() {
     if (!(await appConfirm({
       title: `Delete draft ${t.number}?`,
       message: "This can't be undone.",
+      confirmLabel: "Delete draft",
       tone: "danger",
     }))) return;
     setBusyId(t.id);
@@ -296,7 +298,7 @@ export default function TransmittalsPage() {
                   });
                   if (t.status === "draft") more.push({ icon: <Trash2 className="w-4 h-4" />, label: "Delete draft", tone: "bad", line: true, onClick: () => doDelete(t) });
                   if (t.status === "issued") more.push({ icon: <Ban className="w-4 h-4" />, label: "Void (issued in error)", tone: "bad", line: true, onClick: () => doVoid(t) });
-                  const small = "inline-flex items-center gap-1.5 h-8 pointer-coarse:h-10 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
+                  const small = "inline-flex items-center gap-1.5 h-8 pointer-coarse:h-11 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
                   return (
                     <tr key={t.id} data-transmittal-id={t.id} className={`scroll-mt-24 align-top md:align-middle max-md:block max-md:relative ${highlightId === t.id ? "bg-[var(--color-accent-soft)]" : "hover:bg-[var(--color-surface-2)]"}`}>
                       <td className="px-4 pt-3 md:py-3 relative max-md:block">
@@ -334,7 +336,7 @@ export default function TransmittalsPage() {
                               {busyId === t.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5 text-[var(--state-released)]" />} Record receipt
                             </button>
                           )}
-                          <MoreMenu items={more} iconOnly label={`More for ${t.number}`} triggerClass="inline-grid place-items-center w-8 h-8 pointer-coarse:w-10 pointer-coarse:h-10 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]" />
+                          <MoreMenu items={more} iconOnly label={`More for ${t.number}`} triggerClass="inline-grid place-items-center w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]" />
                         </div>
                       </td>
                     </tr>
@@ -509,7 +511,7 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
           <h2 id="tr-composer-h" className="font-display text-section font-semibold text-[var(--color-heading)]">
             {editing ? `Edit ${editing.number}` : "New transmittal"}
           </h2>
-          <button aria-label="Close" onClick={onClose} className="w-10 h-10 rounded-lg hover:bg-[var(--color-surface-2)] flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"><X className="w-5 h-5" /></button>
+          <button aria-label="Close" onClick={onClose} className="ui-hit w-10 h-10 rounded-lg hover:bg-[var(--color-surface-2)] flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"><X className="w-5 h-5" /></button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
@@ -552,7 +554,7 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
             <div className="text-body font-medium text-[var(--color-text)] mb-1.5">Documents <span className="font-normal text-[var(--color-text-muted)] tabular-nums">{items.length}</span></div>
             <div className="relative">
               <Search className="w-4 h-4 text-[var(--color-text-faint)] absolute left-3 top-1/2 -translate-y-1/2" />
-              <Input value={pq} onChange={(e) => setPq(e.target.value)} placeholder="Search by number or title to add…" className="pl-9" />
+              <Input type="search" aria-label="Search documents to add" value={pq} onChange={(e) => setPq(e.target.value)} placeholder="Search by number or title to add…" className="pl-9" />
               {searching && <Spinner size="sm" className="absolute right-3 top-1/2 -translate-y-1/2" />}
             </div>
             {hits.length > 0 && (
@@ -582,7 +584,7 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, onClose, onSav
                     <span className="ui-id text-reading">{it.number}</span>
                     {it.rev && <span className="text-body text-[var(--color-text-muted)]">Rev <span className="ui-id text-[var(--color-text)]">{it.rev}</span></span>}
                     {it.title && it.title !== it.number && <span className="text-body text-[var(--color-text-muted)] truncate">{it.title}</span>}
-                    <button aria-label={`Remove ${it.number}`} onClick={() => removeItem(it.documentId)} className="ml-auto w-8 h-8 pointer-coarse:w-10 pointer-coarse:h-10 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)] transition-colors"><X className="w-4 h-4" /></button>
+                    <button aria-label={`Remove ${it.number}`} onClick={() => removeItem(it.documentId)} className="ml-auto w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)] transition-colors"><X className="w-4 h-4" /></button>
                   </li>
                 ))}
               </ul>

@@ -139,7 +139,7 @@ export default function HoldStrip({
       </div>
 
       {loading ? (
-        <div className="text-xs text-[var(--color-text-muted)] flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" /> Loading…</div>
+        <div className="text-caption text-[var(--color-text-muted)] flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" /> Loading…</div>
       ) : error ? (
         <div role="alert" className="text-body text-[var(--state-overdue)] border-l-2 border-[var(--state-overdue)] pl-2 flex items-start gap-1.5">
           <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" /> {error}
@@ -191,7 +191,7 @@ export default function HoldStrip({
 
           {otherDraft !== null && (
             <div className="flex items-center gap-1.5 mt-1">
-              <input
+              <input aria-label="Custom hold reason"
                 value={otherDraft}
                 onChange={(e) => setOtherDraft(e.target.value)}
                 placeholder="Custom hold reason"
@@ -208,7 +208,8 @@ export default function HoldStrip({
               <button
                 onClick={() => setOtherDraft(null)}
                 disabled={busy}
-                className="p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors"
+                aria-label="Cancel"
+                className="ui-hit p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors"
               ><X className="w-3 h-3" /></button>
             </div>
           )}
@@ -315,7 +316,7 @@ function ActiveHoldRow({
 
       {isReleasing && (
         <div className="mt-2 flex items-center gap-1.5 pt-2 border-t border-[color-mix(in_srgb,var(--state-held)_40%,transparent)]">
-          <input
+          <input aria-label="Resolution (optional)"
             value={releaseReasonDraft}
             onChange={(e) => setReleaseReasonDraft(e.target.value)}
             placeholder="Resolution (optional)"
@@ -332,7 +333,8 @@ function ActiveHoldRow({
           <button
             onClick={onCancelRelease}
             disabled={busy}
-            className="p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors"
+            aria-label="Cancel release"
+            className="ui-hit p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors"
           ><X className="w-3 h-3" /></button>
         </div>
       )}

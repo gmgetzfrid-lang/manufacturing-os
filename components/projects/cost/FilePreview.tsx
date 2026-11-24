@@ -53,7 +53,7 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
   }, [onClose]);
   const btn = "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]";
   return (
-    <div className="fixed inset-0 z-[400] bg-slate-900/70 backdrop-blur-sm flex items-stretch sm:items-center justify-center sm:p-4" role="dialog" aria-modal="true" aria-label={file.name ?? "File"} onClick={onClose}>
+    <div className="fixed inset-0 z-[400] bg-[var(--color-ink)]/55 backdrop-blur-sm flex items-stretch sm:items-center justify-center sm:p-4" role="dialog" aria-modal="true" aria-label={file.name ?? "File"} onClick={onClose}>
       <div className="w-full sm:max-w-5xl h-full sm:h-[92vh] flex flex-col bg-[var(--color-surface)] sm:rounded-2xl shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-3 sm:px-4 py-2.5 border-b border-[var(--color-border)]">
           <FileText className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />
@@ -63,7 +63,7 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
           </div>
           {url && <a href={url} target="_blank" rel="noopener noreferrer" className={`${btn} max-sm:hidden`}><ExternalLink className="w-3.5 h-3.5" /> Open</a>}
           {url && <a href={url} download={file.name ?? undefined} className={btn}><Download className="w-3.5 h-3.5" /><span className="max-sm:hidden">Download</span></a>}
-          <button type="button" onClick={onClose} aria-label="Close" className="p-2 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+          <button type="button" onClick={onClose} aria-label="Close" className="ui-hit p-2 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
         <div ref={box} className="flex-1 min-h-0 overflow-auto bg-[var(--color-surface-2)]">
           {err ? <div className="p-6 text-body text-[var(--state-overdue-text)]">{err}</div>
@@ -94,7 +94,7 @@ export function PreviewButton({ file, label = "Preview", className = "" }: { fil
   return (
     <>
       <button type="button" onClick={(e) => { e.stopPropagation(); setOpen(true); }} title={`See ${file.name ?? "the file"}`}
-        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-caption font-medium text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)] ${className}`}>
+        className={`inline-flex items-center gap-1 px-1.5 py-0.5 pointer-coarse:min-h-11 rounded text-caption font-medium text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)] ${className}`}>
         <Eye className="w-3 h-3" /> {label}
       </button>
       {open && <FilePreviewModal file={file} onClose={() => setOpen(false)} />}

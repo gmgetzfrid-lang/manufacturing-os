@@ -8,7 +8,7 @@
 // the records can't be typed over.
 
 import React, { useState } from "react";
-import { Camera, Check, ImagePlus, Loader2, RotateCcw, Trash2, Upload, X } from "lucide-react";
+import { Camera, Check, ImagePlus, Loader2, RotateCcw, Trash2, Upload, X, CircleAlert } from "lucide-react";
 import SignedImg from "@/components/assets/SignedImg";
 import { btnQuiet, btnRow } from "@/components/admin/kit";
 import { normalizeTag } from "@/lib/assets";
@@ -81,11 +81,11 @@ export default function SlideEditPanel({ edit, slideKey, slideNo, rowKey, rowKin
     <aside className="h-full flex flex-col bg-[var(--color-surface)] text-[var(--color-text)] on-sheet" aria-label="Edit this slide" data-slide-edit>
       <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)]">
         <h2 className="min-w-0 flex-1 text-reading font-medium">Edit slide {slideNo}</h2>
-        {busy ? <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)]" /> : saved ? <span className="inline-flex items-center gap-1 text-body text-[var(--state-released)]"><Check className="w-4 h-4" /> Saved</span> : null}
+        {busy ? <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)]" /> : saved ? <span className="inline-flex items-center gap-1 text-body text-[var(--state-released-text)]"><Check className="w-4 h-4" /> Saved</span> : null}
         <button type="button" onClick={onDone} className={btnQuiet}>Done</button>
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-6">
-        {err && <p role="alert" className="text-body font-medium text-[var(--state-overdue)]">{err}</p>}
+        {err && <p role="alert" className="text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-0.5" /><span>{err}</span></p>}
 
         <section>
           <h3 className="text-body font-medium text-[var(--color-heading)]">Pictures</h3>
@@ -117,7 +117,7 @@ export default function SlideEditPanel({ edit, slideKey, slideNo, rowKey, rowKin
                 <div className="mt-3 rounded-lg ring-1 ring-[var(--color-border-strong)] p-3 space-y-3" data-pic-picker>
                   <div className="flex items-center gap-2">
                     <span className="min-w-0 flex-1 text-body font-medium">Add a picture</span>
-                    <button type="button" onClick={() => setPicking(false)} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)]" aria-label="Close"><X className="w-4 h-4" /></button>
+                    <button type="button" onClick={() => setPicking(false)} className="ui-hit p-1.5 rounded-md hover:bg-[var(--color-surface-2)]" aria-label="Close"><X className="w-4 h-4" /></button>
                   </div>
                   {onSlide.length > 0 && <div><div className="mb-1.5 text-caption font-medium text-[var(--color-text-muted)]">Equipment on this slide</div>{grid(onSlide)}</div>}
                   {others.length > 0 && <div><div className="mb-1.5 text-caption font-medium text-[var(--color-text-muted)]">Other equipment in this review</div>{grid(others)}</div>}
@@ -125,13 +125,13 @@ export default function SlideEditPanel({ edit, slideKey, slideNo, rowKey, rowKin
                   <div className="pt-2 border-t border-[var(--color-border)] space-y-2">
                     <label className="block">
                       <span className="block text-caption font-medium text-[var(--color-text-muted)] mb-1">Whose photo is it?</span>
-                      <select value={upTag} onChange={(e) => setUpTag(e.target.value)} className="w-full h-10 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-reading">
+                      <select value={upTag} onChange={(e) => setUpTag(e.target.value)} className="w-full h-10 pointer-coarse:h-11 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-reading">
                         <option value="">Not one piece of equipment</option>
                         {tags.map((t) => <option key={t} value={t}>{t}</option>)}
                       </select>
                     </label>
                     <label className={`${btnQuiet} w-full cursor-pointer ${busy ? "pointer-events-none opacity-50" : ""}`}>
-                      {busy === "upload" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />} Upload a photo
+                      {busy === "upload" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />} {busy === "upload" ? "Uploading" : "Upload a photo"}
                       <input type="file" accept="image/jpeg,image/png,image/webp" className="sr-only" onChange={(e) => { void upload(e.target.files?.[0]); e.target.value = ""; }} />
                     </label>
                     <label className={`${btnQuiet} w-full cursor-pointer sm:hidden ${busy ? "pointer-events-none opacity-50" : ""}`}>
@@ -154,7 +154,7 @@ export default function SlideEditPanel({ edit, slideKey, slideNo, rowKey, rowKin
           ) : (
             <div className="mt-1.5 space-y-2">
               <p className="text-body text-[var(--color-text-muted)]">{rowKind === "score" ? "The score is counted from the records, so it can't be typed over here. Targets, the budget and what a person enters on a line are set on the score in the review." : rowKind === "record" ? "This line is counted from the records, so it can't be typed over. Change the record and the slide follows." : "This line is the same in every review."}</p>
-              <button type="button" onClick={onClearRow} className={btnRow}>OK</button>
+              <button type="button" onClick={onClearRow} className={btnRow}>Done</button>
             </div>
           )}
         </section>

@@ -16,7 +16,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { dayKey, fmtInTz, fromDateTimeInput, toDateTimeInput, tzAbbrev } from "@/lib/scheduleTz";
-import { CalendarClock, X, ArrowRight, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { CalendarClock, X, ArrowRight, Loader2, AlertTriangle, CheckCircle2, CircleAlert } from "lucide-react";
 import { rebaseSchedule, type RebaseResult } from "@/lib/milestones";
 import { sayError } from "@/components/projects/sayError";
 
@@ -102,7 +102,7 @@ export default function RebaseScheduleModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+    <div className="fixed inset-0 z-[200] bg-[var(--color-ink)]/55 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-xl bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -116,38 +116,38 @@ export default function RebaseScheduleModal({
               </div>
             </div>
           </div>
-          <button onClick={onClose} disabled={busy} aria-label="Close" className="p-1.5 rounded hover:bg-[var(--color-surface)] text-[var(--color-text-muted)] transition-colors">
+          <button onClick={onClose} disabled={busy} aria-label="Close" className="ui-hit p-1.5 rounded hover:bg-[var(--color-surface)] text-[var(--color-text-muted)] transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
 
         <div className="p-5 space-y-4">
-          <p className="text-xs text-[var(--color-text-muted)]">
+          <p className="text-caption text-[var(--color-text-muted)]">
             Every task moves by the same number of days. Spacing, hours and the outline stay; actual dates already recorded don&apos;t move.
           </p>
 
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-caption font-medium text-[var(--color-text-muted)]">New start date</label>
+            <label className="block">
+              <span className="text-caption font-medium text-[var(--color-text-muted)]">New start date</span>
               <input
                 type="date"
                 value={target}
                 onChange={(e) => setTarget(e.target.value)}
-                className="mt-1 w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-lg"
+                className="mt-1 w-full px-3 py-2 pointer-coarse:min-h-11 text-body border border-[var(--color-border-strong)] rounded-lg"
               />
-            </div>
-            <div>
-              <label className="text-caption font-medium text-[var(--color-text-muted)]">Start time ({tzAbbrev(tz)})</label>
+            </label>
+            <label className="block">
+              <span className="text-caption font-medium text-[var(--color-text-muted)]">Start time ({tzAbbrev(tz)})</span>
               <input
                 type="time"
                 value={targetTime}
                 onChange={(e) => setTargetTime(e.target.value)}
-                className="mt-1 w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-lg"
+                className="mt-1 w-full px-3 py-2 pointer-coarse:min-h-11 text-body border border-[var(--color-border-strong)] rounded-lg"
               />
-            </div>
+            </label>
           </div>
 
-          <label className="flex items-start gap-2 rounded-xl border border-[var(--color-border)] px-3 py-2 text-xs text-[var(--color-text)]">
+          <label className="flex items-start gap-2 rounded-xl border border-[var(--color-border)] px-3 py-2 text-caption text-[var(--color-text)]">
             <input type="checkbox" checked={resetBaseline} onChange={(e) => setResetBaseline(e.target.checked)} className="mt-0.5" />
             <span>
               <b>Treat the new dates as the plan of record:</b> reset the baseline so the shift report&apos;s &ldquo;plan said by now&rdquo; follows the moved schedule.
@@ -157,7 +157,7 @@ export default function RebaseScheduleModal({
 
           {/* Preview */}
           {currentAnchorIso ? (
-            <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 text-xs">
+            <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 text-caption">
               <div className="font-medium text-[var(--color-text)] mb-1 text-body">Preview</div>
               <div className="flex items-center gap-2 text-[var(--color-text)]">
                 <span className="font-display tabular-nums">{fmtInTz(currentAnchorIso, tz, { dateStyle: "medium", timeStyle: "short" })}</span>
@@ -175,19 +175,19 @@ export default function RebaseScheduleModal({
               )}
             </div>
           ) : (
-            <div className="border-l-2 border-[var(--state-held)] pl-3 text-xs text-[var(--state-held-text)]">
+            <div className="border-l-2 border-[var(--state-held)] pl-3 text-caption text-[var(--state-held-text)]">
               No task has a planned date yet, so there&apos;s nothing to move from. Give at least one task a date first.
             </div>
           )}
 
           {result && (
             <div className={`pl-3 py-1 border-l-2 ${result.errors.length > 0 ? "border-[var(--state-overdue)]" : "border-[var(--state-released)]"}`}>
-              <div className="flex items-center gap-2 font-medium text-sm">
+              <div className="flex items-center gap-2 font-medium text-body">
                 {result.errors.length > 0
                   ? <><AlertTriangle className="w-4 h-4 text-[var(--state-overdue-text)]" /> Rebased with errors</>
                   : <><CheckCircle2 className="w-4 h-4 text-[var(--state-released-text)]" /> Schedule rebased</>}
               </div>
-              <div className="mt-1 text-xs space-y-0.5">
+              <div className="mt-1 text-caption space-y-0.5">
                 <div>Shifted: <b>{result.shiftedCount}</b> tasks ({result.shiftDays >= 0 ? "+" : ""}{result.shiftDays} days)</div>
                 {result.errors.length > 0 && (
                   <div className="text-[var(--state-overdue-text)] mt-1">
@@ -200,15 +200,15 @@ export default function RebaseScheduleModal({
               </div>
             </div>
           )}
-          {err && <div role="alert" className="text-xs text-[var(--state-overdue-text)]">{err}</div>}
+          {err && <div role="alert" className="text-caption text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{err}</span></div>}
         </div>
 
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
-          <button onClick={onClose} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Close</button>
+          <button onClick={onClose} disabled={busy} className="text-body text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Close</button>
           <button
             onClick={submit}
             disabled={busy || !target || !currentAnchorIso || !!result}
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg shadow-sm disabled:opacity-40 transition-colors"
+            className="inline-flex items-center gap-1.5 text-body font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg shadow-sm disabled:opacity-40 transition-colors"
           >
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarClock className="w-4 h-4" />}
             Rebase schedule

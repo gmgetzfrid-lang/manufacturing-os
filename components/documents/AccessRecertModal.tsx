@@ -15,6 +15,7 @@ import {
 import type { RecertPolicy } from "@/types/schema";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 import { humanDate } from "@/components/documents/StatusTag";
+import { Field } from "@/components/ui/Field";
 
 export default function AccessRecertModal({ libraryId, orgId, name, uid, userName, onClose, onSaved }: {
   libraryId: string;
@@ -72,7 +73,7 @@ export default function AccessRecertModal({ libraryId, orgId, name, uid, userNam
 
   const status = recertStatusFor(nextDate);
   const days = daysUntilRecert(nextDate);
-  const inp = "text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
+  const inp = "text-body rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
 
   return (
     <div className="fixed inset-0 z-[520] flex items-center justify-center bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] p-4" onClick={onClose}>
@@ -80,10 +81,10 @@ export default function AccessRecertModal({ libraryId, orgId, name, uid, userNam
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3">
           <KeyRound className="w-5 h-5 text-[var(--color-text-muted)]" />
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-[var(--color-text)]">Access recertification</div>
+            <div className="text-body font-medium text-[var(--color-text)]">Access recertification</div>
             <div className="text-body text-[var(--color-text-muted)] truncate">Review &amp; attest who has access to {name || "this library"}</div>
           </div>
-          <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
+          <button aria-label="Close" onClick={onClose} className="ui-hit p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
         </div>
 
         {loading ? (
@@ -102,15 +103,15 @@ export default function AccessRecertModal({ libraryId, orgId, name, uid, userNam
 
             {/* Cadence */}
             <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-2">
-              <label className="flex items-center gap-2 text-sm text-[var(--color-text)]">
+              <label className="flex items-center gap-2 text-body text-[var(--color-text)]">
                 <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Require periodic recertification
               </label>
               {enabled && (
                 <div className="flex items-center gap-2">
                   <span className="text-body text-[var(--color-text-muted)]">Every</span>
-                  <input type="number" min={1} value={months} onChange={(e) => setMonths(Math.max(1, parseInt(e.target.value) || 1))} className={`${inp} w-20`} />
+                  <input inputMode="numeric" aria-label="Recertify every (months)" type="number" min={1} value={months} onChange={(e) => setMonths(Math.max(1, parseInt(e.target.value) || 1))} className={`${inp} w-20`} />
                   <span className="text-body text-[var(--color-text-muted)]">months</span>
-                  <button onClick={() => void savePolicy()} disabled={busy} className="ml-auto px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-white text-body font-medium disabled:opacity-50">Save cadence</button>
+                  <button onClick={() => void savePolicy()} disabled={busy} className="ml-auto px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-body font-medium disabled:opacity-50">Save cadence</button>
                 </div>
               )}
               {existing && <button onClick={() => void clearPolicy()} disabled={busy} className="text-body text-[var(--state-overdue)] hover:underline">Remove cadence</button>}
@@ -137,10 +138,12 @@ export default function AccessRecertModal({ libraryId, orgId, name, uid, userNam
 
             {/* Attest */}
             <div className="space-y-2 pt-1 border-t border-[var(--color-border)]">
-              <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional): e.g. removed 2 contractors" className={`${inp} w-full`} />
+              <Field label="Note (optional)">
+                <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Removed 2 contractors" className={`${inp} w-full`} />
+              </Field>
               <div className="flex justify-end gap-2">
                 <button onClick={onClose} className="px-3 py-2 rounded-lg text-body font-medium text-[var(--color-text-muted)]">Close</button>
-                <button onClick={() => void recertify()} disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-xs font-medium disabled:opacity-50">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Recertify - access reviewed</button>
+                <button onClick={() => void recertify()} disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-caption font-medium disabled:opacity-50">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Recertify - access reviewed</button>
               </div>
             </div>
           </div>

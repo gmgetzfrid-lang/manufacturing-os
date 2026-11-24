@@ -17,7 +17,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Bell, CheckCheck, Loader2 } from "lucide-react";
+import { Bell, CheckCheck, Loader2, CircleAlert } from "lucide-react";
 import { useTicketNotifications } from "@/hooks/useTicketNotifications";
 import { useNotificationCenter } from "@/components/notifications/NotificationCenter";
 import { useNotificationsSeen } from "@/components/notifications/seen";
@@ -145,7 +145,7 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
           className={`relative w-full flex items-center px-3 py-2.5 rounded-lg transition-colors group ${open ? "bg-[var(--color-surface-2)] text-[var(--color-text)]" : "hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]"}`}
         >
           <Bell className={`w-5 h-5 ${collapsed ? "" : "mr-3"} text-[var(--color-text-muted)] group-hover:text-[var(--color-text)]`} />
-          {!collapsed && <span className="text-sm font-medium">Notifications</span>}
+          {!collapsed && <span className="text-body font-medium">Notifications</span>}
           {badge}
         </button>
       )}
@@ -157,7 +157,7 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
                 <h2 className="min-w-0 flex-1 font-display text-section font-semibold">
                   {count === 0 ? "All caught up." : `${count.toLocaleString()} ${count === 1 ? "thing needs" : "things need"} you.`}
                 </h2>
-                <Link href="/settings/notifications" onClick={() => setOpen(false)} className={`text-body ${link}`}>Settings</Link>
+                <Link href="/settings/notifications" onClick={() => setOpen(false)} className={`ui-hit text-body ${link}`}>Settings</Link>
               </div>
               {count > 0 && (
                 <dl className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-body">
@@ -166,13 +166,13 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
                   <Fact label="Updates" value={facts.news} />
                 </dl>
               )}
-              {markError && <p role="alert" className="mt-1.5 text-body font-medium text-[var(--state-overdue-text)]">{markError}</p>}
+              {markError && <p role="alert" className="mt-1.5 text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" /><span>{markError}</span></p>}
             </div>
             <div className="flex-1 overflow-y-auto">
               {loading && items.length === 0 ? (
                 <SkeletonRows rows={4} cols={1} what="notifications" sheet={false} />
               ) : items.length === 0 ? (
-                <p className="px-4 py-5 text-reading text-[var(--color-text-muted)]">Nothing needs you.</p>
+                <p className="px-4 py-5 text-reading text-[var(--color-text-muted)]">Nothing needs you. Overdue items, things waiting on you and updates show here.</p>
               ) : (
                 <NeedsTable rows={rows} label="Notifications" seenAt={listSeen} onOpen={(r) => { void onItemOpen(r.notificationId); }} />
               )}
@@ -189,11 +189,11 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
                   }}
                   className={rowBtn}
                 >
-                  {markingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCheck className="w-3.5 h-3.5" />} Mark updates read
+                  {markingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCheck className="w-3.5 h-3.5" />} {markingAll ? "Marking read" : "Mark updates read"}
                 </button>
               )}
               <div className="flex-1" />
-              <button type="button" onClick={() => { setOpen(false); openCenter("all"); }} className={`text-body font-medium ${link}`}>See all</button>
+              <button type="button" onClick={() => { setOpen(false); openCenter("all"); }} className={`ui-hit text-body font-medium ${link}`}>See all</button>
             </div>
         </div>
       )}

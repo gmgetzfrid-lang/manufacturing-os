@@ -5,7 +5,7 @@
 // the report's place marked; nudge the margins; print a test page.
 
 import React, { useState } from "react";
-import { FileUp, Loader2, Printer, Trash2 } from "lucide-react";
+import { FileUp, Loader2, Printer, Trash2, CircleAlert } from "lucide-react";
 import { useOrgBranding } from "@/components/providers/OrgBrandingProvider";
 import SlideTemplateSetup from "@/components/branding/SlideTemplateSetup";
 import { saveSlidesChoice, useSlidesChoice } from "@/lib/slidesChoice";
@@ -98,7 +98,7 @@ export function LetterheadStep({ projectId, canManage }: { projectId: string; ca
     finally { setBusy(null); }
   };
   const remove = async () => {
-    if (!(await appConfirm({ message: "Remove the letterhead? Printed reports go back to plain paper.", tone: "danger", confirmLabel: "Remove" }))) return;
+    if (!(await appConfirm({ title: "Remove the letterhead?", message: "Printed reports go back to plain paper.", tone: "danger", confirmLabel: "Remove letterhead" }))) return;
     setBusy("remove"); setErr(null);
     try { await saveLetterhead(projectId, null); setDraft(null); setMsg("Removed. Reports print on plain paper."); }
     catch (e) { setErr(sayError(e)); }
@@ -163,7 +163,7 @@ export function LetterheadStep({ projectId, canManage }: { projectId: string; ca
               {(["top", "bottom", "left", "right"] as const).map((k) => (
                 <label key={k} className="flex items-center justify-between gap-2 text-caption text-[var(--color-text-muted)] capitalize">
                   {k}
-                  <input type="number" step={0.05} min={0} value={lh.margins[k]} onChange={(e) => margin(k, Number(e.target.value))}
+                  <input type="number" inputMode="decimal" step={0.05} min={0} value={lh.margins[k]} onChange={(e) => margin(k, Number(e.target.value))}
                     className="h-8 pointer-coarse:h-11 w-20 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-body text-[var(--color-text)] tabular-nums" />
                 </label>
               ))}
@@ -199,7 +199,7 @@ export function LetterheadStep({ projectId, canManage }: { projectId: string; ca
             {canManage && draft && saved && <button type="button" onClick={() => { setDraft(null); setErr(null); }} className={quiet}>Undo changes</button>}
             {canManage && saved && !draft && (
               <button type="button" onClick={() => void remove()} disabled={!!busy} className={`${quiet} text-[var(--state-overdue-text)]`}>
-                {busy === "remove" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />} Remove
+                {busy === "remove" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />} {busy === "remove" ? "Removing" : "Remove"}
               </button>
             )}
           </div>
@@ -244,7 +244,7 @@ export function SlidesStep({ projectId, canManage }: { projectId: string; canMan
         {!t ? "Upload the company's PowerPoint template. Every project can use it." : on ? "This project's slides go onto the company template." : "This project's slides use the workspace colors, without the template."}
         {t && !canManage ? " Only the project owner or an admin can change this." : ""}
       </p>
-      {err && <p role="alert" className="mt-1.5 text-body font-medium text-[var(--state-overdue)]">{err}</p>}
+      {err && <p role="alert" className="mt-1.5 text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-0.5" /><span>{err}</span></p>}
       <div className="mt-3"><SlideTemplateSetup bare /></div>
     </section>
   );

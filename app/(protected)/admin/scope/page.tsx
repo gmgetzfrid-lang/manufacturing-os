@@ -118,7 +118,7 @@ export default function ScopePage() {
 
   const onArchive = async (kind: "plant" | "unit" | "system", id: string) => {
     if (!uid) return;
-    if (!(await appConfirm({ message: `Archive this ${kind}? Documents and equipment that point at it keep their data; it stops showing up in pickers. Show archived brings it back into view.`, tone: "danger", confirmLabel: "Archive" }))) return;
+    if (!(await appConfirm({ title: `Archive this ${kind}?`, message: "Documents and equipment that point at it keep their data; it stops showing up in pickers. Show archived brings it back into view.", tone: "danger", confirmLabel: `Archive ${kind}` }))) return;
     const ok = await attempt("archive it", async () => {
       if (kind === "plant")  await archivePlant(id, uid);
       if (kind === "unit")   await archiveUnit(id, uid);
@@ -475,7 +475,7 @@ function EditScopeRowModal({
         <ModalFooter>
           {!name.trim() && <span className="mr-auto text-body text-[var(--color-text-muted)]">Give it a name.</span>}
           <Button type="button" variant="secondary" onClick={onCancel} disabled={submitting}>Cancel</Button>
-          <Button type="submit" loading={submitting} disabled={!name.trim()}>Save</Button>
+          <Button type="submit" loading={submitting} disabled={!name.trim()}>{submitting ? "Saving" : "Save"}</Button>
         </ModalFooter>
       </form>
     </Modal>

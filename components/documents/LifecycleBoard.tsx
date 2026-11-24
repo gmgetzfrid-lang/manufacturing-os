@@ -57,7 +57,7 @@ const COLUMN_TONE: Record<Column, string> = {
   "Superseded": "border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)]",
 };
 const COLUMN_DOT: Record<Column, string> = {
-  "Draft": "bg-slate-400",
+  "Draft": "bg-[var(--state-draft)]",
   "In Review": "bg-[var(--color-text-muted)]",
   "IFC": "bg-[var(--color-text-muted)]",
   "As-Built": "bg-[var(--state-released)]",
@@ -159,7 +159,7 @@ export default function LifecycleBoard() {
         </p>
         <div className="relative w-56 max-w-[60vw]">
           <Search className="w-3.5 h-3.5 text-[var(--color-text-faint)] absolute left-2.5 top-1/2 -translate-y-1/2" />
-          <Input
+          <Input type="search" aria-label="Filter by number or title"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Filter by number or title…"
@@ -200,7 +200,7 @@ export default function LifecycleBoard() {
                 <div className="px-3 py-2.5 border-b border-black/5">
                   <div className="flex items-center gap-2">
                     <span className={`w-2.5 h-2.5 rounded-full ${COLUMN_DOT[col]}`} />
-                    <span className="text-sm font-medium text-[var(--color-text)]">{col}</span>
+                    <span className="text-body font-medium text-[var(--color-text)]">{col}</span>
                     <span className="text-body font-medium text-[var(--color-text-muted)] bg-[var(--color-surface)]/70 rounded-full px-1.5">{badgeText(items.length)}</span>
                     {bottleneck && <span className="ml-auto inline-flex items-center gap-1 text-body font-medium text-[var(--state-overdue)]"><AlertTriangle className="w-3 h-3" /> bottleneck</span>}
                   </div>

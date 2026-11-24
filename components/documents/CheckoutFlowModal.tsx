@@ -40,6 +40,7 @@ import { useDraft } from "@/hooks/useDraft";
 import LoadingBlock from "@/components/ui/LoadingBlock";
 
 import { friendlyError } from "@/lib/friendlyError";
+import { Field, FieldError } from "@/components/ui/Field";
 // ISO-style document control: every checkout must say WHY. The category is the
 // machine-readable purpose (filterable, reportable); the reason is the
 // human-readable note everyone sees on the lock badge, the checkouts register,
@@ -637,7 +638,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                 md:hidden on desktop meant a user who just wanted to PEEK at
                 their own checkout had no way out without committing to a
                 check-in action. */}
-            <button aria-label="Close" onClick={onClose} title="Close" className="w-9 h-9 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-5 h-5" /></button>
+            <button aria-label="Close" onClick={onClose} title="Close" className="ui-hit w-9 h-9 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-5 h-5" /></button>
           </div>
 
           <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -648,7 +649,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
             <div>
               <h3 className="text-body font-medium text-[var(--color-text-muted)] mb-3">Active Collaborators</h3>
               {activeSessions.length === 0 ? (
-                <div className="p-4 rounded-xl border border-dashed border-[var(--color-border-strong)] text-center text-[var(--color-text-faint)] text-sm">
+                <div className="p-4 rounded-xl border border-dashed border-[var(--color-border-strong)] text-center text-[var(--color-text-faint)] text-body">
                   {isOrphaned
                     ? "This checkout got out of sync: fix it below."
                     : document.checkedOutBy
@@ -664,7 +665,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex justify-between items-start">
-                          <p className="text-sm font-medium text-[var(--color-text)]">{s.userName}</p>
+                          <p className="text-body font-medium text-[var(--color-text)]">{s.userName}</p>
                           <span className="text-body bg-[var(--color-surface)] border border-[var(--color-border)] px-2 py-0.5 rounded-full text-[var(--color-text-muted)]">{s.mode}</span>
                         </div>
                         {s.note && <p className="text-body text-[var(--color-text-muted)] mt-1 italic">&ldquo;{s.note}&rdquo;</p>}
@@ -683,7 +684,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
             <div className={isIdle ? "" : "bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)] p-5"}>
               {/* Until the sessions load we can't tell check-out from check-in. */}
               {loadErr ? (
-                <p role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 text-sm text-[var(--state-overdue)]">{loadErr}</p>
+                <FieldError>{loadErr}</FieldError>
               ) : loading ? (
                 <LoadingBlock what="who has it out" rows={3} className="border-0 p-0" />
               ) : mySession ? (
@@ -753,12 +754,12 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
 
                   <div>
                     <label className="text-body font-medium text-[var(--color-text-muted)] mb-1 block">In a few words, why? <span className="text-[var(--state-overdue)]">*</span></label>
-                    <input
+                    <input aria-label="In a few words, why?"
                       ref={noteInputRef}
                       value={note}
                       onChange={(e) => setNote(e.target.value)}
                       placeholder="e.g. Updating pump specs per MOC-2026-014..."
-                      className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+                      className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-body focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
                     />
                     <div className="text-body text-[var(--color-text-muted)] mt-1">
                       Shown to everyone who looks at this document while you have it out.
@@ -834,10 +835,10 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                       </div>
                     )}
                     {projectChoice === "existing" && (
-                      <select
+                      <select aria-label="Project"
                         value={selectedProjectId}
                         onChange={(e) => setSelectedProjectId(e.target.value)}
-                        className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm bg-[var(--color-surface)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+                        className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-body bg-[var(--color-surface)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
                       >
                         <option value="">Select a project…</option>
                         {projects.map((p) => (
@@ -849,34 +850,41 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                     )}
                     {projectChoice === "new" && (
                       <div className="space-y-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-3">
-                        <input
-                          value={newProjectName}
-                          onChange={(e) => setNewProjectName(e.target.value)}
-                          placeholder="Project name * (e.g. 2026 Q1 Turnaround)"
-                          className="w-full px-2.5 py-1.5 border border-[var(--color-border)] rounded-md text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
-                        />
-                        <textarea
-                          value={newProjectDescription}
-                          onChange={(e) => setNewProjectDescription(e.target.value)}
-                          placeholder="Description * (what will the team do?)"
-                          rows={2}
-                          className="w-full px-2.5 py-1.5 border border-[var(--color-border)] rounded-md text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none resize-y"
-                        />
-                        <div className="grid grid-cols-2 gap-2">
+                        <Field label="Project name">
                           <input
-                            value={newProjectMoc}
-                            onChange={(e) => setNewProjectMoc(e.target.value)}
-                            placeholder="MOC ref (optional)"
-                            className="px-2.5 py-1.5 border border-[var(--color-border)] rounded-md text-body"
+                            value={newProjectName}
+                            onChange={(e) => setNewProjectName(e.target.value)}
+                            placeholder="2026 Q1 Turnaround"
+                            className="w-full px-2.5 py-1.5 border border-[var(--color-border)] rounded-md text-body focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
                           />
-                          <select
-                            value={newProjectVisibility}
-                            onChange={(e) => setNewProjectVisibility(e.target.value as "public" | "private")}
-                            className="px-2.5 py-1.5 border border-[var(--color-border)] rounded-md text-body bg-[var(--color-surface)]"
-                          >
-                            <option value="public">Public (visible to all)</option>
-                            <option value="private">Private (members only)</option>
-                          </select>
+                        </Field>
+                        <Field label="Description">
+                          <textarea
+                            value={newProjectDescription}
+                            onChange={(e) => setNewProjectDescription(e.target.value)}
+                            placeholder="What will the team do?"
+                            rows={2}
+                            className="w-full px-2.5 py-1.5 border border-[var(--color-border)] rounded-md text-body focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none resize-y"
+                          />
+                        </Field>
+                        <div className="grid grid-cols-2 gap-2">
+                          <Field label="MOC reference (optional)">
+                            <input
+                              value={newProjectMoc}
+                              onChange={(e) => setNewProjectMoc(e.target.value)}
+                              className="w-full px-2.5 py-1.5 border border-[var(--color-border)] rounded-md text-body"
+                            />
+                          </Field>
+                          <Field label="Visibility">
+                            <select
+                              value={newProjectVisibility}
+                              onChange={(e) => setNewProjectVisibility(e.target.value as "public" | "private")}
+                              className="w-full px-2.5 py-1.5 border border-[var(--color-border)] rounded-md text-body bg-[var(--color-surface)]"
+                            >
+                              <option value="public">Public (visible to all)</option>
+                              <option value="private">Private (members only)</option>
+                            </select>
+                          </Field>
                         </div>
                       </div>
                     )}
@@ -885,11 +893,11 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                   {projectChoice !== "adhoc" && (
                     <div>
                       <label className="text-body font-medium text-[var(--color-text-muted)] mb-1 block">Expected release (optional)</label>
-                      <input
+                      <input aria-label="Expected release"
                         type="date"
                         value={expectedReleaseAt ? expectedReleaseAt.slice(0, 10) : ""}
                         onChange={(e) => setExpectedReleaseAt(e.target.value ? new Date(e.target.value).toISOString() : "")}
-                        className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+                        className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-body focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
                       />
                     </div>
                   )}
@@ -936,7 +944,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                           {isOrphaned && (
                             <button
                               onClick={handleForceUnlock}
-                              className="px-4 py-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] text-[var(--color-text)] rounded-xl font-medium text-sm hover:bg-[var(--color-surface-2)]"
+                              className="px-4 py-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] text-[var(--color-text)] rounded-xl font-medium text-body hover:bg-[var(--color-surface-2)]"
                               title="Release the lock without starting a session"
                             >
                               Release the lock
@@ -945,7 +953,7 @@ export default function CheckoutFlowModal({ isOpen, onClose, document, currentUs
                           <button
                             onClick={handleCheckout}
                             disabled={processing || quickBusy || !ready}
-                            className={`flex-1 py-3 rounded-xl font-semibold text-sm flex items-center justify-center shadow-lg ${document.checkedOutBy && !isOrphaned ? 'bg-[var(--color-surface)] border-2 border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]' : 'bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] '} disabled:opacity-60 disabled:cursor-not-allowed`}
+                            className={`flex-1 py-3 rounded-xl font-semibold text-body flex items-center justify-center shadow-lg ${document.checkedOutBy && !isOrphaned ? 'bg-[var(--color-surface)] border-2 border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]' : 'bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] '} disabled:opacity-60 disabled:cursor-not-allowed`}
                           >
                             {processing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Clock className="w-4 h-4 mr-2" />}
                             {buttonLabel}

@@ -60,7 +60,7 @@ export default function DocHoverPreview({
       {children}
       {pos && typeof document !== "undefined" && createPortal(
         <div
-          className="fixed z-[800] pointer-events-none rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-black/5 shadow-lg p-2 animate-in fade-in zoom-in-95 duration-150"
+          className="fixed z-[800] pointer-events-none rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-ink)]/5 shadow-lg p-2 animate-in fade-in zoom-in-95 duration-150"
           style={{ left: pos.left, top: pos.top }}
         >
           <DocThumb documentId={documentId} filePath={filePath} width={previewWidth} />

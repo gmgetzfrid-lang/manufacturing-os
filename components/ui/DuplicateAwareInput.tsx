@@ -85,9 +85,7 @@ export default function DuplicateAwareInput({
 
   // Visual state
   const borderClass =
-    state.kind === "duplicate" ? "border-amber-400 ring-1 ring-amber-300/40" :
-    state.kind === "available" ? "border-emerald-300" :
-                                 "border-[var(--color-border-strong)]";
+    state.kind === "duplicate" ? "border-[var(--state-held)]" : "border-[var(--color-border-control)]";
 
   return (
     <div className="space-y-1">
@@ -96,16 +94,16 @@ export default function DuplicateAwareInput({
           {...inputProps}
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          className={`w-full pr-8 px-2.5 py-1.5 text-sm border ${borderClass} rounded-lg ${className}`}
+          className={`w-full h-10 pointer-coarse:h-11 pl-3 pr-8 text-reading border ${borderClass} bg-[var(--color-surface)] text-[var(--color-text)] rounded-lg ${className}`}
         />
         <span className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none">
           {state.kind === "checking" && <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-faint)]" />}
-          {state.kind === "available" && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />}
-          {state.kind === "duplicate" && <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />}
+          {state.kind === "available" && <CheckCircle2 aria-label="No match found" className="w-3.5 h-3.5 text-[var(--state-released)]" />}
+          {state.kind === "duplicate" && <AlertTriangle aria-hidden className="w-3.5 h-3.5 text-[var(--state-held)]" />}
         </span>
       </div>
       {state.kind === "duplicate" && (
-        <div className="text-caption text-amber-700 flex items-center gap-2">
+        <div className="text-body text-[var(--state-held-text)] flex items-center gap-2">
           <span>{/^[aeiou]/i.test(fieldLabel) ? "An" : "A"} {fieldLabel} matching <b className="tabular-nums">{value.trim()}</b> already exists.</span>
           {onEditExisting && state.existingId && (
             <button

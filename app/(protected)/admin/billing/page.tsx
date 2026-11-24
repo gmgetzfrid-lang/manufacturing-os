@@ -117,7 +117,7 @@ export default function BillingPage() {
         primary={showPortal ? (
           <Button onClick={() => void openPortal()} loading={busyPortal}>
             {!busyPortal && <ExternalLink className="w-4 h-4" />}
-            Manage subscription
+            {busyPortal ? "Opening" : "Manage subscription"}
           </Button>
         ) : undefined}
       />
@@ -183,7 +183,7 @@ function Plan({
         {featured && <span className="text-body text-[var(--color-text-muted)]">Most picked</span>}
       </div>
       <div className="text-body text-[var(--color-text-muted)]">{tagline}</div>
-      <div className="mt-3 font-display text-[28px] leading-none font-semibold tabular-nums text-[var(--color-text)]">{price}{price !== "Contact" && <span className="font-sans text-body font-normal text-[var(--color-text-muted)]"> a month</span>}</div>
+      <div className="mt-3 font-display text-title leading-none font-semibold tabular-nums text-[var(--color-text)]">{price}{price !== "Contact" && <span className="font-sans text-body font-normal text-[var(--color-text-muted)]"> a month</span>}</div>
       <ul className="mt-4 space-y-1.5 text-reading flex-1 text-[var(--color-text)]">
         {features.map((f) => (
           <li key={f} className="flex items-start gap-2">

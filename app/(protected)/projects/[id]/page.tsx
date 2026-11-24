@@ -665,7 +665,7 @@ export default function ProjectDetailPage() {
                   ? [{ icon: <RotateCcw className="w-4 h-4" />, label: "Reopen", onClick: () => setPendingStatus("active"), tone: "good" as const }] : []),
                 ...(isOwnerOrAdmin ? [{ icon: <Trash2 className="w-4 h-4" />, label: "Delete project", tone: "bad" as const, line: true, onClick: async () => {
                   if (!project.id) return;
-                  if (!(await appConfirm({ message: `Delete "${project.name}"? This permanently removes the project and its schedule. Document checkouts are kept (just unlinked). This cannot be undone.`, tone: "danger", confirmLabel: "Delete" }))) return;
+                  if (!(await appConfirm({ title: `Delete "${project.name}"?`, message: "The project and its schedule are removed for good. Document checkouts are kept, just unlinked. You can't undo this.", tone: "danger", confirmLabel: "Delete project" }))) return;
                   try {
                     await deleteProject({ projectId: project.id, actorUserId: uid!, actorEmail: userEmail ?? undefined, actorRole: activeRole ?? undefined });
                     router.push("/projects");
@@ -975,14 +975,14 @@ export default function ProjectDetailPage() {
 
       {/* TRANSITION CONFIRM */}
       {pendingStatus && (
-        <div role="dialog" aria-modal="true" aria-label="Change project status" className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+        <div role="dialog" aria-modal="true" aria-label="Change project status" className="fixed inset-0 z-[200] bg-[var(--color-ink)]/55 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
           {/* The reason being typed is kept on this device until it's saved. */}
           <ReasonDraft key={pendingStatus} draftKey={`project-status:${project.id}:${pendingStatus}`} value={statusReason} set={setStatusReason}
             onEscape={() => { if (!transitionBusy && !reviewOpen) { setPendingStatus(null); setStatusReason(""); setActionError(null); } }} />
           <div className="ui-float ui-float-in w-full max-w-md bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] overflow-hidden">
             <div className="px-6 py-4 border-b border-[var(--color-border)] relative pr-12">
               <button onClick={() => { setPendingStatus(null); setStatusReason(""); setActionError(null); }} disabled={transitionBusy} aria-label="Close"
-                className="absolute top-3 right-3 p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                className="ui-hit absolute top-3 right-3 p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                 <X className="w-4 h-4" />
               </button>
               <h2 className="font-display text-section font-semibold text-[var(--color-text)]">
@@ -1461,7 +1461,7 @@ function MembersTab({
               const rowMenu = [
                 ...(canTransfer && !isOwner ? [{ icon: <ShieldCheck className="w-4 h-4" />, label: "Make owner", onClick: () => setTransferTo(m.userId) }] : []),
                 ...(canRemove ? [{ icon: <X className="w-4 h-4" />, label: "Remove from project", tone: "bad" as const, line: !!canTransfer && !isOwner, onClick: async () => {
-                  if (!(await appConfirm({ message: `Remove ${m.userEmail || m.userName || m.userId} from this project? They keep their account; they just stop seeing it if it's private.`, tone: "danger", confirmLabel: "Remove" }))) return;
+                  if (!(await appConfirm({ title: `Remove ${m.userEmail || m.userName || m.userId} from this project?`, message: "They keep their account. If the project is private, they stop seeing it.", tone: "danger", confirmLabel: "Remove member" }))) return;
                   try {
                     await removeMember({ projectId: project.id!, orgId: project.orgId, userId: m.userId, userName: m.userName ?? undefined, userEmail: m.userEmail ?? undefined, actorUserId, actorEmail });
                     onAdded();

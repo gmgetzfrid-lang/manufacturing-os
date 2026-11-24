@@ -8,7 +8,7 @@
 // beside the letterhead, so nobody has to leave the project to set it.
 
 import React, { useEffect, useState } from "react";
-import { FileUp, Loader2, Download, Trash2, RefreshCw, Check } from "lucide-react";
+import { FileUp, Loader2, Download, Trash2, RefreshCw, Check, CircleAlert } from "lucide-react";
 import { Card } from "@/components/ui/PageHero";
 import { btnQuiet, btnDanger, fieldBox } from "@/components/admin/kit";
 import { useOrgBranding } from "@/components/providers/OrgBrandingProvider";
@@ -74,7 +74,7 @@ export default function SlideTemplateSetup({ bare = false }: { bare?: boolean } 
 
   const remove = async () => {
     if (!ref) return;
-    if (!(await appConfirm({ message: "Remove the slide template? Slides go back to the workspace colors.", tone: "danger", confirmLabel: "Remove" }))) return;
+    if (!(await appConfirm({ title: "Remove the slide template?", message: "Slides go back to the workspace colors.", tone: "danger", confirmLabel: "Remove template" }))) return;
     setBusy("remove"); setErr(null); setMsg(null);
     try {
       await store(undefined);
@@ -125,7 +125,7 @@ export default function SlideTemplateSetup({ bare = false }: { bare?: boolean } 
   const heading = "Slide template";
   const notes = (
     <>
-      {err && <p role="alert" className="mt-3 text-body font-medium text-[var(--state-overdue-text)]">{err}</p>}
+      {err && <p role="alert" className="mt-3 text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" /><span>{err}</span></p>}
       {msg && <p role="status" className="mt-3 inline-flex items-center gap-1.5 text-body text-[var(--color-text)]"><Check className="w-4 h-4 text-[var(--state-released)]" /> {msg}</p>}
       {held && (
         <p role="status" className="mt-3 flex items-center gap-3 text-body font-medium text-[var(--color-text)]">
@@ -162,7 +162,7 @@ export default function SlideTemplateSetup({ bare = false }: { bare?: boolean } 
           <div className="mt-0.5 text-body text-[var(--color-text-muted)]">{ref.layouts.length} layouts · {mb(ref.size)} · Saved {day(ref.savedAt)}</div>
           <div className="mt-3 flex items-center gap-1.5" aria-label="Template colors">
             {ref.colors.swatches.map((c) => (
-              <span key={c} title={`#${c}`} className={`rounded-full ring-1 ring-black/10 ${c === ref.colors.main || c === ref.colors.accent ? "w-7 h-7" : "w-5 h-5"}`} style={{ background: `#${c}` }} />
+              <span key={c} title={`#${c}`} className={`rounded-full ring-1 ring-[var(--color-border-strong)] ${c === ref.colors.main || c === ref.colors.accent ? "w-7 h-7" : "w-5 h-5"}`} style={{ background: `#${c}` }} />
             ))}
           </div>
           <div className="mt-2 text-body text-[var(--color-text)]">Titles in <b className="font-medium">{ref.fonts.title}</b>, text in <b className="font-medium">{ref.fonts.body}</b></div>

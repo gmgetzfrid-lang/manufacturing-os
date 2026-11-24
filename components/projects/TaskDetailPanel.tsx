@@ -21,7 +21,7 @@ import {
   User, HardHat, AlertTriangle, Sun, Moon, Sunset,
   CalendarDays, Layers, MessageSquarePlus, History, ChevronRight, ChevronLeft,
   Link2, Target, Zap, Ban, ArrowRight,
-  Wrench,
+  Wrench, CircleAlert
 } from "lucide-react";
 import type { Milestone, MilestoneStatus, MilestoneNote, ProjectMember } from "@/types/schema";
 import { wouldCreateCycle, cascadeDependents, withAncestors, type ReflowNode } from "@/lib/scheduleReflow";
@@ -234,7 +234,7 @@ export default function TaskDetailPanel({
     catch (e) { failed(e); }
   }, [editNote, loadNotes]);
   const removeNote = useCallback(async (id: string) => {
-    if (!(await appConfirm({ message: "Delete this comment? It comes off the shift report too.", tone: "danger", confirmLabel: "Delete" }))) return;
+    if (!(await appConfirm({ title: "Delete this comment?", message: "It comes off the shift report too.", tone: "danger", confirmLabel: "Delete comment" }))) return;
     setErr(null);
     try { await deleteMilestoneNote(id); loadNotes(); } catch (e) { failed(e); }
   }, [loadNotes]);
@@ -256,10 +256,11 @@ export default function TaskDetailPanel({
     if (!m.id || !m.projectId) return;
     const n = subtasks.length;
     if (!(await appConfirm({
+      title: n > 0 ? `Delete "${m.name}" and ${n} step${n === 1 ? "" : "s"}?` : `Delete "${m.name}"?`,
       message: n > 0
-        ? `Delete "${m.name}" and the ${n} step${n === 1 ? "" : "s"} under it, with their comments? This is audited. Use Delete on the timeline's selection if you want Undo.`
-        : `Delete "${m.name}" and its comments? This is audited. Use Delete on the timeline's selection if you want Undo.`,
-      tone: "danger",
+        ? `The steps under it and their comments go too. This is audited. Use Delete on the timeline's selection if you want Undo.`
+        : `Its comments go too. This is audited. Use Delete on the timeline's selection if you want Undo.`,
+      tone: "danger", confirmLabel: n > 0 ? `Delete ${n + 1} tasks` : "Delete task",
     }))) return;
     setErr(null);
     try {
@@ -291,7 +292,7 @@ export default function TaskDetailPanel({
   return (
     <div ref={rootRef} className="fixed inset-0 z-[150] flex justify-end" role="dialog" aria-modal="true">
       {/* The page behind is dimmed: the task is the figure, the board the ground. */}
-      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-[2px] animate-in fade-in" onClick={onClose} />
+      <div className="absolute inset-0 bg-[var(--color-ink)]/55 backdrop-blur-[2px] animate-in fade-in" onClick={onClose} />
       <div className="relative w-full max-w-[460px] bg-[var(--color-surface)] shadow-2xl flex flex-col animate-[slidein_.15s_ease-out] sm:rounded-l-2xl">
         {/* Header: where it sits (its parents), the task's name big, and how it stands. */}
         <div className="px-5 pt-4 pb-4 border-b border-[var(--color-border)] flex items-start gap-2">
@@ -303,7 +304,7 @@ export default function TaskDetailPanel({
               <nav aria-label="Where it sits" className="flex items-center gap-0.5 flex-wrap mb-2 text-body font-medium text-[var(--color-text-muted)]">
                 {ancestors.slice().reverse().map((a, i) => (
                   <React.Fragment key={a.id ?? i}>
-                    {i > 0 && <ChevronRight className="w-2.5 h-2.5 text-slate-300" />}
+                    {i > 0 && <ChevronRight className="w-2.5 h-2.5 text-[var(--color-text-faint)]" />}
                     <button
                       onClick={() => onSelectMilestone?.(a)}
                       className="font-medium hover:text-[var(--color-accent-hover)] hover:underline truncate max-w-[120px]"
@@ -313,10 +314,10 @@ export default function TaskDetailPanel({
                     </button>
                   </React.Fragment>
                 ))}
-                <ChevronRight className="w-2.5 h-2.5 text-slate-300" />
+                <ChevronRight className="w-2.5 h-2.5 text-[var(--color-text-faint)]" />
               </nav>
             )}
-            <h2 className="text-[24px] sm:text-[28px] font-semibold tracking-[-0.02em] text-[var(--color-text)] leading-[1.1] break-words">{m.name}</h2>
+            <h2 className="text-title font-semibold tracking-[-0.02em] text-[var(--color-text)] leading-[1.1] break-words">{m.name}</h2>
             <div className="mt-2.5 flex items-center gap-2 flex-wrap">
               <StatusPill status={effStatus} />
               <span className="text-body font-medium tabular-nums text-[var(--color-text)]">{effPct}% done</span>
@@ -326,9 +327,9 @@ export default function TaskDetailPanel({
           </div>
           <div className="flex items-center gap-1 shrink-0">
             {canEdit && !editing && (
-              <button onClick={() => setEditing(true)} title="Edit" aria-label="Edit" className="w-9 h-9 inline-flex items-center justify-center rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><Pencil className="w-4 h-4" /></button>
+              <button onClick={() => setEditing(true)} title="Edit" aria-label="Edit" className="w-9 h-9 pointer-coarse:size-11 inline-flex items-center justify-center rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><Pencil className="w-4 h-4" /></button>
             )}
-            <button onClick={onClose} aria-label="Close" className="w-9 h-9 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><XIcon className="w-5 h-5" /></button>
+            <button onClick={onClose} aria-label="Close" className="w-9 h-9 pointer-coarse:size-11 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><XIcon className="w-5 h-5" /></button>
           </div>
         </div>
 
@@ -336,7 +337,7 @@ export default function TaskDetailPanel({
           {err && (
             <div role="alert" className="mx-4 mt-3 flex items-start gap-2 border-l-2 border-[var(--state-overdue)] pl-2.5 py-1 text-caption text-[var(--state-overdue-text)]">
               <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span className="flex-1">{err}</span>
-              <button onClick={() => setErr(null)} className="shrink-0" title="Dismiss" aria-label="Dismiss"><XIcon className="w-3.5 h-3.5" /></button>
+              <button onClick={() => setErr(null)} className="ui-hit shrink-0" title="Dismiss" aria-label="Dismiss"><XIcon className="w-3.5 h-3.5" /></button>
             </div>
           )}
           {editing ? (
@@ -382,7 +383,7 @@ export default function TaskDetailPanel({
                     <div className="space-y-1">
                       <div className="flex items-center justify-between">
                         <span className="text-caption font-medium text-[var(--color-text-muted)]">% done</span>
-                        <span className="text-sm font-medium text-[var(--color-text)] tabular-nums">{effPct}%</span>
+                        <span className="text-body font-medium text-[var(--color-text)] tabular-nums">{effPct}%</span>
                       </div>
                       <ProgressNoteForm key={`${m.id}:${effPct}`} percent={effPct} autoFocus={false} busy={busyStatus}
                         onSave={async (v, n, w) => { const ok = await onSetProgressNote(m.id!, v, n, w); loadNotes(); onChanged(); return ok; }} />
@@ -396,7 +397,7 @@ export default function TaskDetailPanel({
                   <div className="flex items-center gap-2">
                     <span className="text-body font-medium text-[var(--color-text-muted)]">Phase status</span>
                     <StatusControl status={effStatus} variant="pill" readOnly title="Rolls up from sub-tasks" onPick={() => {}} />
-                    <span className="text-sm font-medium tabular-nums text-[var(--color-text)]">{effPct}%</span>
+                    <span className="text-body font-medium tabular-nums text-[var(--color-text)]">{effPct}%</span>
                   </div>
                   {/* Rolled-up progress bar. */}
                   <div className="mt-2 h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
@@ -414,10 +415,10 @@ export default function TaskDetailPanel({
                 <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap">
                   <span className="text-body font-medium text-[var(--color-text-muted)]">Move</span>
                   <div className="inline-flex items-center rounded-lg border border-[var(--color-border)] overflow-hidden">
-                    <button onClick={() => onMoveDays(m.id!, -7)} title="1 week earlier" className="px-2 py-1 text-caption font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">−1w</button>
-                    <button onClick={() => onMoveDays(m.id!, -1)} title="1 day earlier" className="px-2 py-1 text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] border-l border-[var(--color-border)]"><ChevronLeft className="w-3.5 h-3.5" /></button>
-                    <button onClick={() => onMoveDays(m.id!, 1)} title="1 day later" className="px-2 py-1 text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] border-l border-[var(--color-border)]"><ChevronRight className="w-3.5 h-3.5" /></button>
-                    <button onClick={() => onMoveDays(m.id!, 7)} title="1 week later" className="px-2 py-1 text-caption font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] border-l border-[var(--color-border)]">+1w</button>
+                    <button onClick={() => onMoveDays(m.id!, -7)} title="1 week earlier" aria-label="Move 1 week earlier" className="px-2 py-1 pointer-coarse:min-h-11 pointer-coarse:min-w-11 text-caption font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">−1w</button>
+                    <button onClick={() => onMoveDays(m.id!, -1)} title="1 day earlier" aria-label="Move 1 day earlier" className="inline-flex items-center justify-center px-2 py-1 pointer-coarse:min-h-11 pointer-coarse:min-w-11 text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] border-l border-[var(--color-border)]"><ChevronLeft className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => onMoveDays(m.id!, 1)} title="1 day later" aria-label="Move 1 day later" className="inline-flex items-center justify-center px-2 py-1 pointer-coarse:min-h-11 pointer-coarse:min-w-11 text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] border-l border-[var(--color-border)]"><ChevronRight className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => onMoveDays(m.id!, 7)} title="1 week later" aria-label="Move 1 week later" className="px-2 py-1 pointer-coarse:min-h-11 pointer-coarse:min-w-11 text-caption font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] border-l border-[var(--color-border)]">+1w</button>
                   </div>
                   <span className="text-caption text-[var(--color-text-faint)]">{m.isSummary ? "moves the whole phase together" : "shifts this task (its sub-steps come along)"}</span>
                 </div>
@@ -498,7 +499,7 @@ export default function TaskDetailPanel({
                 {critical && <CriticalRow m={m} isLeaf={isLeaf} allTasks={allTasks ?? []} critical={critical} canEdit={canEdit}
                   userId={userId} userEmail={userEmail} onChanged={onChanged} />}
                 {m.description && (
-                  <div className="text-xs text-[var(--color-text-muted)] whitespace-pre-wrap pt-1">{m.description}</div>
+                  <div className="text-caption text-[var(--color-text-muted)] whitespace-pre-wrap pt-1">{m.description}</div>
                 )}
               </div>
 
@@ -509,7 +510,7 @@ export default function TaskDetailPanel({
                 return (
                   <div className="px-5 py-4 border-b border-[var(--color-border)]">
                     <div className="text-caption font-medium text-[var(--color-text)] dark:text-[var(--color-text)] mb-1">{ADDED[kindOf(d)].word}{d.of > 1 ? ` · step ${d.seq} of ${d.of}` : ""}</div>
-                    <div className="text-xs text-[var(--color-text)] break-words">{d.what}</div>
+                    <div className="text-caption text-[var(--color-text)] break-words">{d.what}</div>
                     <div className="text-caption text-[var(--color-text-muted)] mt-0.5">
                       {ADDED[kindOf(d)].found[0].toUpperCase() + ADDED[kindOf(d)].found.slice(1)} {fmtInTz(d.foundAt, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}{d.foundBy ? ` by ${d.foundBy}` : ""}{d.approvedBy ? ` · approved by ${d.approvedBy}` : ""}
                     </div>
@@ -551,7 +552,7 @@ export default function TaskDetailPanel({
                 <div className="px-5 py-3 border-b border-[var(--color-border)]">
                   <div className="text-body font-medium text-[var(--color-text-muted)] mb-1">Where it came from</div>
                   {originOf(m, (t) => fmtInTz(t, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })).lines.map((l) => (
-                    <div key={l} className="text-xs text-[var(--color-text)] break-words">{l}</div>
+                    <div key={l} className="text-caption text-[var(--color-text)] break-words">{l}</div>
                   ))}
                 </div>
               )}
@@ -562,7 +563,7 @@ export default function TaskDetailPanel({
                   <div className="text-body font-medium text-[var(--color-text-muted)] mb-2">From the schedule</div>
                   <div className="grid grid-cols-1 gap-1">
                     {Object.entries(m.attributes).filter(([k]) => !HIDDEN_ATTRS.has(k)).map(([k, v]) => (
-                      <div key={k} className="flex items-baseline gap-2 text-xs">
+                      <div key={k} className="flex items-baseline gap-2 text-caption">
                         <span className="text-[var(--color-text-muted)] shrink-0 capitalize">{k}</span>
                         <span className="flex-1 text-[var(--color-text)] break-words text-right font-medium">{String(v)}</span>
                       </div>
@@ -647,15 +648,15 @@ export default function TaskDetailPanel({
                           <span className="shrink-0 flex items-center gap-0.5">
                             <button
                               onClick={(e) => { e.stopPropagation(); onMoveDays(s.id!, -1); }}
-                              title="Move this step 1 day earlier"
-                              className="w-5 h-5 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)]"
+                              title="Move this step 1 day earlier" aria-label={`Move ${s.name} 1 day earlier`}
+                              className="w-5 h-5 pointer-coarse:size-11 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]"
                             >
                               <ChevronLeft className="w-3.5 h-3.5" />
                             </button>
                             <button
                               onClick={(e) => { e.stopPropagation(); onMoveDays(s.id!, 1); }}
-                              title="Move this step 1 day later"
-                              className="w-5 h-5 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-[var(--color-accent-hover)] hover:bg-[var(--color-surface-2)]"
+                              title="Move this step 1 day later" aria-label={`Move ${s.name} 1 day later`}
+                              className="w-5 h-5 pointer-coarse:size-11 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]"
                             >
                               <ChevronRight className="w-3.5 h-3.5" />
                             </button>
@@ -679,11 +680,12 @@ export default function TaskDetailPanel({
                   <div className="flex items-start gap-2 mb-3">
                     <input
                       value={noteDraft} onChange={(e) => setNoteDraft(e.target.value)}
+                      aria-label="Add a note" enterKeyHint="send"
                       placeholder="Add a note…"
-                      className="flex-1 text-xs px-2 py-1.5 border border-[var(--color-border-strong)] rounded-md"
+                      className="flex-1 text-caption px-2 py-1.5 border border-[var(--color-border-strong)] rounded-md"
                       onKeyDown={(e) => { if (e.key === "Enter") void addNote(); }}
                     />
-                    <button onClick={() => void addNote()} disabled={!noteDraft.trim()} className="p-1.5 rounded-md text-[var(--color-accent-text)] dark:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40" title="Add note">
+                    <button onClick={() => void addNote()} disabled={!noteDraft.trim()} aria-label="Add note" className="ui-hit p-1.5 rounded-md text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40" title="Add note">
                       <MessageSquarePlus className="w-4 h-4" />
                     </button>
                   </div>
@@ -695,7 +697,7 @@ export default function TaskDetailPanel({
                 ) : (
                   <ul className="space-y-2">
                     {notes.map((n) => (
-                      <li key={n.id} className="text-xs">
+                      <li key={n.id} className="text-caption">
                         <div className="flex items-center gap-1.5">
                           {n.kind === "reschedule"
                             ? <CalendarDays className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
@@ -708,9 +710,9 @@ export default function TaskDetailPanel({
                         </div>
                         {editNote && editNote.id === n.id ? (
                           <div className="mt-1 flex items-center gap-1.5">
-                            <input value={editNote.body} autoFocus onChange={(e) => setEditNote({ id: editNote.id, body: e.target.value })}
+                            <input value={editNote.body} autoFocus aria-label="Edit note" onChange={(e) => setEditNote({ id: editNote.id, body: e.target.value })}
                               onKeyDown={(e) => { if (e.key === "Enter") void saveNoteEdit(); if (e.key === "Escape") setEditNote(null); }}
-                              className="flex-1 text-xs px-2 py-1 border border-[var(--color-border-strong)] rounded-md bg-[var(--color-surface)]" />
+                              className="flex-1 text-caption px-2 py-1 border border-[var(--color-border-strong)] rounded-md bg-[var(--color-surface)]" />
                             <button onClick={() => void saveNoteEdit()} className="text-body text-[var(--color-accent-text)] hover:underline">Save</button>
                             <button onClick={() => setEditNote(null)} className="text-caption text-[var(--color-text-muted)]">Cancel</button>
                           </div>
@@ -737,17 +739,17 @@ export default function TaskDetailPanel({
 
         {/* Footer */}
         {canEdit && !editing && (
-          <div className="px-4 py-2.5 border-t border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)] flex items-center gap-2">
+          <div className="px-4 py-2.5 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center gap-2">
             {cancelling && m.id ? (
               <CancelJobForm id={m.id} name={m.name} steps={stepCount} userId={userId} userName={userName} userEmail={userEmail}
                 onClose={() => setCancelling(false)} onDone={() => { onChanged(); onClose(); }} />
             ) : (
               <>
                 <button onClick={() => setCancelling(true)} title="Planned, but not done here: kept on record as cancelled, with why (and where it moved)"
-                  className="inline-flex items-center gap-1.5 text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] px-2 py-1 rounded-md">
+                  className="inline-flex items-center gap-1.5 text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] px-2 py-1 pointer-coarse:min-h-11 rounded-md">
                   <Ban className="w-3.5 h-3.5" /> Cancel job
                 </button>
-                <button onClick={() => void onDelete()} title="Put in by mistake: gone for good" className="inline-flex items-center gap-1.5 text-caption font-medium text-[var(--state-overdue-text)] hover:text-[var(--state-overdue-text)] hover:bg-transparent px-2 py-1 rounded-md">
+                <button onClick={() => void onDelete()} title="Put in by mistake: gone for good" className="inline-flex items-center gap-1.5 text-caption font-medium text-[var(--state-overdue-text)] hover:text-[var(--state-overdue-text)] hover:bg-transparent px-2 py-1 pointer-coarse:min-h-11 rounded-md">
                   <Trash2 className="w-3.5 h-3.5" /> Delete task
                 </button>
               </>
@@ -903,7 +905,7 @@ function EditForm({
       {!isLeaf && <div className="text-caption text-[var(--color-text-muted)] -mt-1">A phase runs from its first step to its last - move the phase (or its steps) on the timeline to change its dates.</div>}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <L label="Work hours">
-          <input type="number" min={0} value={durationHours} onChange={(e) => { setDurationHours(e.target.value); setHoursTyped(true); }} className={cls("durationHours")} />
+          <input type="number" inputMode="decimal" min={0} value={durationHours} onChange={(e) => { setDurationHours(e.target.value); setHoursTyped(true); }} className={cls("durationHours")} />
           <Note err={v.errors.durationHours} warn={v.warnings.durationHours} />
           {fromDates > 0 && (Number(durationHours) !== fromDates ? (
             <span className="block mt-1 text-caption text-[var(--state-held-text)]">
@@ -941,18 +943,18 @@ function EditForm({
         </L>
       </div>
       <L label="Description"><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className={`${inp} resize-y`} /></L>
-      {error && <div role="alert" className="text-xs text-[var(--state-overdue-text)]">{error}</div>}
+      {error && <div role="alert" className="text-caption text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{error}</span></div>}
       <div className="flex items-center justify-end gap-2 pt-1">
-        <button onClick={onCancel} disabled={saving} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
-        <button onClick={() => void save()} disabled={saving || !canSave || v.hasErrors} title={v.hasErrors ? "Fix the highlighted fields first" : undefined} className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-md disabled:opacity-40">
-          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save
+        <button onClick={onCancel} disabled={saving} className="text-body text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
+        <button onClick={() => void save()} disabled={saving || !canSave || v.hasErrors} title={v.hasErrors ? "Fix the highlighted fields first" : undefined} className="inline-flex items-center gap-1.5 text-body font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-md disabled:opacity-40">
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} {saving ? "Saving" : "Save"}
         </button>
       </div>
     </div>
   );
 }
 
-const inp = "w-full px-2.5 py-1.5 text-sm border border-[var(--color-border-strong)] rounded-md ";
+const inp = "w-full px-2.5 py-1.5 text-body border border-[var(--color-border-strong)] rounded-md ";
 
 function L({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -1001,11 +1003,11 @@ function StatusPill({ status, dotOnly }: { status: MilestoneStatus; dotOnly?: bo
     status === "in_progress" ? "bg-[var(--color-text-muted)]" :
     status === "on_hold"     ? "bg-[var(--state-held)]" :
     status === "blocked"     ? "bg-[var(--state-overdue)]" :
-    status === "missed"      ? "bg-[var(--state-overdue)]" : "bg-slate-400";
+    status === "missed"      ? "bg-[var(--state-overdue)]" : "bg-[var(--color-border-control)]";
   if (dotOnly) return <span className={`shrink-0 w-2 h-2 rounded-full ${tone}`} title={labelOf(status)} />;
   const text =
     status === "completed"   ? "text-[var(--state-released-text)] bg-transparent border-[var(--color-border)]" :
-    status === "in_progress" ? "text-[var(--color-text)] dark:text-[var(--color-text)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] border-[var(--color-border)] dark:border-[var(--color-border)]" :
+    status === "in_progress" ? "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]" :
     status === "on_hold"     ? "text-[var(--state-held-text)] bg-transparent border-[var(--color-border)]" :
     status === "blocked"     ? "text-[var(--state-overdue-text)] bg-transparent border-[var(--color-border)]" :
     status === "missed"      ? "text-[var(--state-overdue-text)] bg-transparent border-[var(--color-border)]" : "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]";
@@ -1125,20 +1127,20 @@ function DependencyEditor({
                 </button>
                 {canEdit ? (
                   <>
-                    <select value={l.type} disabled={saving} title="How this task waits on it"
+                    <select value={l.type} disabled={saving} title="How this task waits on it" aria-label="How this task waits on it"
                       onChange={(e) => void save(deps, { ...links, [id]: { ...l, type: e.target.value as LinkType } })}
                       className="text-caption font-medium rounded border border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] px-1 py-0.5">
                       {(Object.keys(LINK_LABEL) as LinkType[]).map((k) => <option key={k} value={k}>{LINK_LABEL[k]}</option>)}
                     </select>
                     <label className="inline-flex items-center gap-0.5 text-caption" title="Lag in hours (negative = lead)">
-                      +<input key={`${id}-${l.lagHours}`} type="number" step={0.5} defaultValue={l.lagHours} disabled={saving}
+                      +<input key={`${id}-${l.lagHours}`} type="number" inputMode="decimal" aria-label="Lag in hours (negative is a lead)" step={0.5} defaultValue={l.lagHours} disabled={saving}
                         onBlur={(e) => { const v = Number(e.target.value) || 0; if (v !== l.lagHours) void save(deps, { ...links, [id]: { ...l, lagHours: v } }); }}
                         className="w-12 rounded border border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] px-1 py-0.5 text-right" />h
                     </label>
                   </>
                 ) : linkShort(l) ? <span className="text-caption">{linkShort(l)}</span> : null}
                 {canEdit && (
-                  <button type="button" disabled={saving} onClick={() => void save(deps.filter((dd) => dd !== id))} className="p-0.5 rounded-full hover:bg-[var(--color-border)] text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)]" title="Remove dependency">
+                  <button type="button" disabled={saving} onClick={() => void save(deps.filter((dd) => dd !== id))} aria-label="Remove dependency" className="ui-hit p-0.5 rounded-full hover:bg-[var(--color-border)] text-[var(--color-accent-text)] hover:text-[var(--color-text)]" title="Remove dependency">
                     <XIcon className="w-3 h-3" />
                   </button>
                 )}
@@ -1150,6 +1152,7 @@ function DependencyEditor({
       {canEdit && (
         <select
           value=""
+          aria-label="Add a predecessor"
           disabled={saving || candidates.length === 0}
           onChange={(e) => { if (e.target.value) void save([...deps, e.target.value]); }}
           className="w-full text-caption border border-[var(--color-border-strong)] rounded-md px-2 py-1.5 bg-[var(--color-surface)] text-[var(--color-text)] disabled:opacity-50"
@@ -1160,7 +1163,7 @@ function DependencyEditor({
           ))}
         </select>
       )}
-      {error && <div className="text-caption text-[var(--state-overdue-text)] mt-1">{error}</div>}
+      {error && <div role="alert" className="text-caption text-[var(--state-overdue-text)] mt-1 flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{error}</span></div>}
     </div>
   );
 }
@@ -1232,7 +1235,7 @@ function HoldsUpEditor({ milestone, allTasks, canEdit, userId, onChanged, onSele
                 {withTask(t, byId)}{t.status === "completed" ? " (done)" : ""}
               </button>
               {canEdit && (
-                <button type="button" disabled={saving} onClick={() => void save(t, depsOf(t).filter((d) => d !== me))} className="p-0.5 rounded-full hover:bg-transparent text-[var(--state-held-text)] hover:text-[var(--state-held-text)]" title="It doesn't wait on this">
+                <button type="button" disabled={saving} onClick={() => void save(t, depsOf(t).filter((d) => d !== me))} aria-label={`${withTask(t, byId)} doesn't wait on this`} className="ui-hit p-0.5 rounded-full hover:bg-transparent text-[var(--state-held-text)] hover:text-[var(--state-held-text)]" title="It doesn't wait on this">
                   <XIcon className="w-3 h-3" />
                 </button>
               )}
@@ -1248,7 +1251,7 @@ function HoldsUpEditor({ milestone, allTasks, canEdit, userId, onChanged, onSele
           {candidates.map((t) => <option key={t.id} value={t.id!}>{withTask(t, byId)}</option>)}
         </select>
       )}
-      {error && <div className="text-caption text-[var(--state-overdue-text)] mt-1">{error}</div>}
+      {error && <div role="alert" className="text-caption text-[var(--state-overdue-text)] mt-1 flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{error}</span></div>}
     </div>
   );
 }
@@ -1300,6 +1303,7 @@ function AssigneeEditor({ milestone, canEdit, userId, onChanged }: {
       {canEdit ? (
         <select
           value={assignedId}
+          aria-label="Responsible member"
           disabled={saving}
           onChange={(e) => void assign(e.target.value)}
           className="w-full text-caption border border-[var(--color-border-strong)] rounded-md px-2 py-1.5 bg-[var(--color-surface)] text-[var(--color-text)] disabled:opacity-50"
@@ -1312,7 +1316,7 @@ function AssigneeEditor({ milestone, canEdit, userId, onChanged }: {
           ))}
         </select>
       ) : (
-        <div className="text-xs text-[var(--color-text-muted)]">{assignedName || <span className="text-[var(--color-text-faint)] italic">Unassigned</span>}</div>
+        <div className="text-caption text-[var(--color-text-muted)]">{assignedName || <span className="text-[var(--color-text-faint)] italic">Unassigned</span>}</div>
       )}
     </div>
   );
@@ -1361,7 +1365,7 @@ function CriticalRow({ m, isLeaf, allTasks, critical, canEdit, userId, userEmail
   };
   const opt = (v: "yes" | "no" | null, label: string) => (
     <button type="button" disabled={busy} onClick={() => void set(v)} aria-pressed={own === v}
-      className={`px-2 py-0.5 text-caption font-medium ${own === v ? (v === "yes" ? "bg-[var(--state-overdue)] text-white" : "bg-slate-800 text-white dark:bg-slate-200 dark:text-slate-900") : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
+      className={`px-2 py-0.5 pointer-coarse:min-h-11 text-caption font-medium ${own === v ? (v === "yes" ? "bg-[var(--state-overdue)] text-white" : "bg-[var(--color-text)] text-[var(--color-surface)]") : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
       {label}
     </button>
   );

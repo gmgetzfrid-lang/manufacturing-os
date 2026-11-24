@@ -11,7 +11,7 @@
 // picked (lib/emailShifts), into one check screen.
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Mic, MicOff, NotebookPen, Loader2, X, Check, AlertTriangle, Search, Paperclip, Undo2, Plus } from "lucide-react";
+import { Mic, MicOff, NotebookPen, Loader2, X, Check, AlertTriangle, Search, Paperclip, Undo2, Plus, CircleAlert } from "lucide-react";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import DateTimePicker from "@/components/projects/DateTimePicker";
 import { supabase } from "@/lib/supabase";
@@ -408,7 +408,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
           <div className="flex items-center gap-2">
             <NotebookPen className="w-4 h-4 text-[var(--color-text-muted)]" />
             <span className="flex-1 text-body font-medium text-[var(--color-text)]">Update by note</span>
-            <button type="button" onClick={() => { recRef.current?.stop(); setOpen(false); }} aria-label="Close" className="p-1 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+            <button type="button" onClick={() => { recRef.current?.stop(); setOpen(false); }} aria-label="Close" className="ui-hit p-1 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
           </div>
           <div {...drag.bind} className={`relative rounded-lg ${drag.ring}`}>
           {drag.over && <div className="absolute inset-0 z-[1] flex items-center justify-center rounded-lg text-body font-medium text-[var(--color-text)] pointer-events-none">{drag.say}</div>}
@@ -432,7 +432,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
               className="inline-flex items-center gap-1.5 h-10 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
               {busy ? <><Loader2 className="w-4 h-4 animate-spin" /> {progress ?? "Reading…"}</> : parts?.length ? `Read all ${parts.filter((p) => !skip.has(p.key)).length} shift${parts.filter((p) => !skip.has(p.key)).length === 1 ? "" : "s"}` : "Read it"}
             </button>
-            {note && !busy && <button type="button" onClick={() => setDraft("")} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Clear</button>}
+            {note && !busy && <button type="button" onClick={() => setDraft("")} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Clear</button>}
             {!canSpeak && <span className="text-caption text-[var(--color-text-muted)]">To talk, use the mic on your keyboard.</span>}
           </div>
           {listening && (
@@ -451,7 +451,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
                     {words.map((w) => (
                       <li key={w.said} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] px-2 py-0.5">
                         “{w.said}” = {w.as}
-                        <button type="button" onClick={() => keepWords(words.filter((x) => x !== w))} aria-label={`Forget “${w.said}”`} className="p-0.5 hover:text-[var(--state-overdue-text)]"><X className="w-3 h-3" /></button>
+                        <button type="button" onClick={() => keepWords(words.filter((x) => x !== w))} aria-label={`Forget “${w.said}”`} className="ui-hit p-0.5 hover:text-[var(--state-overdue-text)]"><X className="w-3 h-3" /></button>
                       </li>
                     ))}
                   </ul>
@@ -463,7 +463,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
                   <span>I mean</span>
                   <input value={teach.as} onChange={(e) => setTeach((t) => ({ ...t, as: e.target.value }))} placeholder="E-2" aria-label="I mean"
                     className="h-8 pointer-coarse:h-11 w-24 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption text-[var(--color-text)]" />
-                  <button type="submit" disabled={!teach.said.trim() || !teach.as.trim()} className="h-8 rounded-md border border-[var(--color-border-strong)] px-2.5 font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Add word</button>
+                  <button type="submit" disabled={!teach.said.trim() || !teach.as.trim()} className="h-8 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] px-2.5 font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">Add word</button>
                 </form>
               </div>
             )}
@@ -553,17 +553,17 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
               </div>
             </div>
           )}
-          {err && <div role="alert" className="text-caption font-medium text-[var(--state-overdue-text)]">{err}</div>}
+          {err && <div role="alert" className="text-caption font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{err}</span></div>}
           {done && (
             <div role="status" className={`border-l-2 pl-3 py-1 text-caption text-[var(--color-text)] ${done.failed.length ? "border-[var(--state-overdue)]" : "border-[var(--state-released)]"}`}>
               <div className="flex items-center gap-2">
                 <b className="flex-1">{done.saved.length && done.saved.every((s) => done.undone[s.id] === "Undone") ? "All taken back. Your note is in the box to fix and read again." : done.saved.length ? `Saved ${done.saved.length} step${done.saved.length === 1 ? "" : "s"}.` : "Nothing saved."}</b>
                 {done.saved.some((s) => !done.undone[s.id]) && (
-                  <button type="button" disabled={undoing} onClick={() => void undo(done.saved)} className="inline-flex items-center gap-1 rounded-md border border-current px-2 py-0.5 font-medium disabled:opacity-50">
-                    {undoing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Undo2 className="w-3.5 h-3.5" />} Undo all
+                  <button type="button" disabled={undoing} onClick={() => void undo(done.saved)} className="inline-flex items-center gap-1 rounded-md border border-current px-2 py-0.5 pointer-coarse:min-h-11 font-medium disabled:opacity-50">
+                    {undoing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Undo2 className="w-3.5 h-3.5" />} {undoing ? "Undoing" : "Undo all"}
                   </button>
                 )}
-                <button type="button" onClick={() => setDone(null)} aria-label="Dismiss" className="p-0.5"><X className="w-3.5 h-3.5" /></button>
+                <button type="button" onClick={() => setDone(null)} aria-label="Dismiss" className="ui-hit p-0.5"><X className="w-3.5 h-3.5" /></button>
               </div>
               <ul className="mt-1 space-y-0.5">
                 {done.saved.map((s) => (
@@ -588,12 +588,12 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
           <ModalHeader icon={NotebookPen} title="Check before saving" subtitle={`Each line is what your note says, matched to a step. Nothing saves until you tap Save.${review.window ? ` Notes from the ${sh(review.window)}.` : ""}`} onClose={saving ? undefined : () => setReview(null)} />
           <ModalBody className="p-0">
             {review.parts ? (
-              <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-slate-50 dark:bg-[var(--color-surface-2)] text-caption text-[var(--color-text-muted)]">
+              <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] text-caption text-[var(--color-text-muted)]">
                 <b className="text-[var(--color-text)]">{review.parts.length} shift{review.parts.length === 1 ? "" : "s"} read from your note</b>, newest first. Times are read in their own shift; a line with no time goes in at the end of its shift.
                 {(review.failed?.length ?? 0) > 0 && <div className="mt-1 font-medium text-[var(--state-overdue-text)]">Not read: {review.failed!.join(" · ")}. Go back and read it again for those.</div>}
               </div>
             ) : (
-            <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-slate-50 dark:bg-[var(--color-surface-2)] text-caption">
+            <div className="px-4 py-2.5 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] text-caption">
               <div className="font-medium text-[var(--color-text)]">No time in your note? Those lines go in at:</div>
               <div className="mt-1.5 flex flex-wrap gap-1.5">
                 {choices.map((c) => (
@@ -633,7 +633,7 @@ export default function QuickUpdate({ milestones, tz, times, orgId, projectId, u
               </li>
             </ul>
             {review.unplaced.length > 0 && (
-              <div className="px-4 py-3 border-t border-[var(--color-border)] border-l-2 border-l-amber-500">
+              <div className="px-4 py-3 border-t border-[var(--color-border)] border-l-2 border-l-[var(--state-held)]">
                 <div className="text-body font-medium text-[var(--state-held-text)]">Couldn&apos;t place ({review.unplaced.length})</div>
                 <ul className="mt-1 space-y-1 text-caption text-[var(--color-text)]">
                   {review.unplaced.map((u, i) => (
@@ -737,7 +737,7 @@ function LineRow({ l, cat, step, check, tz, times, defaultLabel, choices, onEdit
             {([["start", "Started"], ["progress", "%"], ["done", "Done"], ["hold", "On hold"], ["resume", "Back on"], ["comment", "Comment only"]] as const).map(([a, label]) => (
               <button key={a} type="button" aria-pressed={l.action === a}
                 onClick={() => onEdit({ action: a, expected: false, ...(a === "progress" && l.action !== "progress" ? { percent: null, percentFrom: "said" } : {}) })}
-                className={`rounded-md border px-2 py-0.5 text-caption font-medium ${l.action === a ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{label}</button>
+                className={`rounded-md border px-2 py-0.5 pointer-coarse:min-h-11 text-caption font-medium ${l.action === a ? "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{label}</button>
             ))}
           </div>
           {l.action === "progress" && step && l.percent != null && l.percentFrom !== "guess" && (

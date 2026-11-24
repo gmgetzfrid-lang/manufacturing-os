@@ -27,13 +27,13 @@ export default function BackupIndicator() {
     <div className="fixed bottom-5 left-5 z-[300] w-[340px] max-w-[calc(100vw-2.5rem)] rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl p-3.5 animate-in slide-in-from-bottom-4">
       <div className="flex items-center gap-2 mb-2">
         {p.phase === "failed" ? (
-          <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+          <AlertTriangle className="w-4 h-4 text-[var(--state-overdue-text)] shrink-0" />
         ) : finished ? (
-          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          <CheckCircle2 className="w-4 h-4 text-[var(--state-released-text)] shrink-0" />
         ) : (
-          <HardDriveDownload className="w-4 h-4 text-emerald-600 shrink-0" />
+          <HardDriveDownload className="w-4 h-4 text-[var(--state-released-text)] shrink-0" />
         )}
-        <span className="text-xs font-semibold text-[var(--color-text)] flex-1">
+        <span className="text-caption font-semibold text-[var(--color-text)] flex-1">
           {p.phase === "envelope" && "Backup - reading every table…"}
           {p.phase === "files" && `Backup - file ${p.filesDone + 1} of ${p.filesTotal}`}
           {p.phase === "finalizing" && `Backup - packing part ${p.part}…`}
@@ -53,7 +53,7 @@ export default function BackupIndicator() {
       {!finished && (
         <>
           <div className="h-1.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden mb-1.5">
-            <div className="h-full bg-emerald-600 transition-all duration-300" style={{ width: `${pct}%` }} />
+            <div className="h-full bg-[var(--state-released)] transition-all duration-300" style={{ width: `${pct}%` }} />
           </div>
           <div className="text-caption text-[var(--color-text-muted)] truncate" title={p.currentPath}>
             {p.currentPath
@@ -62,7 +62,7 @@ export default function BackupIndicator() {
           </div>
           <div className="mt-1.5 flex items-center justify-between text-caption text-[var(--color-text-muted)]">
             <span>{mb(p.bytesDone)}{p.bytesTotal > 0 ? ` of ~${mb(p.bytesTotal)}` : ""} · part {p.part}</span>
-            <button onClick={cancelBackup} className="font-semibold text-rose-600 hover:underline">Cancel</button>
+            <button onClick={cancelBackup} className="font-semibold text-[var(--state-overdue-text)] hover:underline">Cancel</button>
           </div>
           <div className="mt-1.5 text-caption text-[var(--color-text-faint)]">
             Keep this tab open - you can use the app freely while it runs.
@@ -71,7 +71,7 @@ export default function BackupIndicator() {
       )}
 
       {p.phase === "failed" && p.fatalError && (
-        <div className="text-caption text-rose-600">{p.fatalError}</div>
+        <div className="text-caption text-[var(--state-overdue-text)]">{p.fatalError}</div>
       )}
       {finished && p.phase !== "failed" && (
         <div className="text-caption text-[var(--color-text-muted)]">

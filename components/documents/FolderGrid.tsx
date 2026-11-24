@@ -161,7 +161,7 @@ export default function FolderGrid({
           {onDelete && (
             <>
               <div className="h-px bg-[var(--color-border)] my-1" />
-              <button onClick={() => { onDelete(id); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-sm text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] flex items-center font-medium">
+              <button onClick={() => { onDelete(id); setContextMenu(null); }} className="w-full text-left px-4 py-2.5 text-body text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] flex items-center font-medium">
                 <Trash2 className="w-4 h-4 mr-2" /> Delete
               </button>
             </>
@@ -233,7 +233,7 @@ export default function FolderGrid({
                 ? null
                 : { id: folder.id!, x: Math.max(8, r.right - 208), y: r.bottom + 4 });
             }}
-            className={`p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors ${contextMenu?.id === folder.id ? 'bg-[var(--color-surface-2)] text-[var(--color-text)]' : 'text-[var(--color-text-faint)] opacity-60 sm:opacity-0 group-hover:opacity-100 focus-visible:opacity-100'}`}
+            className={`ui-hit p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors ${contextMenu?.id === folder.id ? 'bg-[var(--color-surface-2)] text-[var(--color-text)]' : 'text-[var(--color-text-faint)] opacity-60 sm:opacity-0 group-hover:opacity-100 focus-visible:opacity-100'}`}
           >
             <MoreVertical className="w-4 h-4" />
           </button>
@@ -448,7 +448,7 @@ export default function FolderGrid({
             </div>
           </div>
 
-          <h3 className="text-sm font-medium text-[var(--color-text)] truncate mb-0.5 select-none">{folder.name}</h3>
+          <h3 className="text-body font-medium text-[var(--color-text)] truncate mb-0.5 select-none">{folder.name}</h3>
           <div className="flex items-center justify-between gap-2 min-w-0">
             <p className="text-body text-[var(--color-text-faint)] font-medium truncate select-none min-w-0">
               {metaLine(folder, kids)}

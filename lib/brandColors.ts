@@ -323,6 +323,6 @@ export function tintedNeutrals(hex: string, mode: "light" | "dark") {
   }
   return {
     canvas: fromOklch(0.955, 0.009, h), surface: "#ffffff", surface2: fromOklch(0.975, 0.009, h),
-    border: fromOklch(0.915, 0.009, h), borderStrong: fromOklch(0.86, 0.012, h), borderControl: fromOklch(0.64, 0.016, h),
+    border: fromOklch(0.915, 0.009, h), borderStrong: fromOklch(0.86, 0.012, h), borderControl: fromOklch(0.62, 0.016, h),
   };
 }

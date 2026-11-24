@@ -8,13 +8,14 @@
 // filled in later instead of the coach asking for it forever.
 
 import React, { useEffect, useState } from "react";
-import { X, Loader2, Check, Pencil, Lock, Globe, Plus, Target, FileText, Search } from "lucide-react";
+import { X, Loader2, Pencil, Lock, Globe, Plus, Target, FileText, Search, CircleAlert } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { updateProjectMeta } from "@/lib/projects";
 import type { Project, ProjectVisibility } from "@/types/schema";
 import TimeZoneSelect from "@/components/projects/TimeZoneSelect";
 import { DEFAULT_SCHEDULE_TZ, normalizeTimeZone, tzLabel } from "@/lib/scheduleTz";
 import { sayError } from "@/components/projects/sayError";
+import { Button } from "@/components/ui/Button";
 
 const JOB_KINDS = [
   { v: "small", label: "Small job" },
@@ -30,8 +31,8 @@ function localDay(v: unknown): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-const inputCls = "mt-1 w-full h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm ";
-const areaCls = "mt-1 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-2 text-sm resize-y ";
+const inputCls = "mt-1 w-full h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body ";
+const areaCls = "mt-1 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-2 text-body resize-y ";
 const labelCls = "text-caption font-medium text-[var(--color-text-muted)]";
 
 export default function EditProjectModal({ project, actorUserId, actorEmail, actorRole, onClose, onSaved }: {
@@ -159,30 +160,30 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
 
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Edit project">
-      <div className="absolute inset-0 bg-black/45 backdrop-blur-[2px] animate-in fade-in" onClick={onClose} />
+      <div className="absolute inset-0 bg-[var(--color-ink)]/55 backdrop-blur-[2px] animate-in fade-in" onClick={onClose} />
       <div className="relative w-full max-w-lg max-h-[85dvh] overflow-y-auto bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-2xl animate-in fade-in zoom-in-95 duration-150">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-2">
           <Pencil className="w-4 h-4 text-[var(--color-text-muted)]" />
-          <span className="text-sm font-medium text-[var(--color-text)]">Edit project</span>
-          <button onClick={onClose} aria-label="Close" className="ml-auto p-1 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+          <span className="text-body font-medium text-[var(--color-text)]">Edit project</span>
+          <button onClick={onClose} aria-label="Close" className="ui-hit ml-auto p-1 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
         <div className="p-5 space-y-3">
           <label className="block">
             <span className="text-caption font-medium text-[var(--color-text-muted)]">Name</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 w-full h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm" />
+            <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 w-full h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body" />
           </label>
           <label className="block">
             <span className="text-caption font-medium text-[var(--color-text-muted)]">Description</span>
-            <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className="mt-1 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-2 text-sm resize-y" />
+            <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className="mt-1 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-2 text-body resize-y" />
           </label>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="block">
               <span className="text-caption font-medium text-[var(--color-text-muted)]">MOC reference</span>
-              <input value={moc} onChange={(e) => setMoc(e.target.value)} className="mt-1 w-full h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm font-display tabular-nums" />
+              <input value={moc} onChange={(e) => setMoc(e.target.value)} className="mt-1 w-full h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body font-display tabular-nums" />
             </label>
             <label className="block">
               <span className="text-caption font-medium text-[var(--color-text-muted)]">Target completion</span>
-              <input type="date" value={target} onChange={(e) => setTarget(e.target.value)} className="mt-1 w-full h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm [color-scheme:light] dark:[color-scheme:dark]" />
+              <input type="date" value={target} onChange={(e) => setTarget(e.target.value)} className="mt-1 w-full h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body [color-scheme:light] dark:[color-scheme:dark]" />
             </label>
             <label className="block">
               <span className={labelCls}>Start date</span>
@@ -207,17 +208,17 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
                 <span className={labelCls}>Goals</span>
                 <div className="mt-1 space-y-1.5">
                   {goals.map((g, i) => (
-                    <div key={i} className="flex items-center gap-2 text-xs rounded-lg border border-[var(--color-border)] px-2.5 py-1.5">
+                    <div key={i} className="flex items-center gap-2 text-caption rounded-lg border border-[var(--color-border)] px-2.5 py-1.5">
                       <Target className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
                       <input value={g} onChange={(e) => setGoals(goals.map((x, j) => (j === i ? e.target.value : x)))} aria-label={`Goal ${i + 1}`}
                         className="flex-1 min-w-0 bg-transparent text-[var(--color-text)]" />
-                      <button type="button" onClick={() => setGoals(goals.filter((_, j) => j !== i))} aria-label="Remove goal" className="p-1 text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]"><X className="w-3.5 h-3.5" /></button>
+                      <button type="button" onClick={() => setGoals(goals.filter((_, j) => j !== i))} aria-label="Remove goal" className="ui-hit p-1 text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]"><X className="w-3.5 h-3.5" /></button>
                     </div>
                   ))}
                   <div className="flex items-center gap-2">
                     <input value={goalDraft} onChange={(e) => setGoalDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addGoal(); } }}
-                      placeholder="Add a goal, e.g. Zero recordables" className="flex-1 h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm" />
-                    <button type="button" onClick={addGoal} aria-label="Add goal" className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><Plus className="w-4 h-4" /></button>
+                      aria-label="New goal" placeholder="Add a goal, e.g. Zero recordables" className="flex-1 h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body" />
+                    <button type="button" onClick={addGoal} aria-label="Add goal" className="h-9 w-9 pointer-coarse:size-11 inline-flex items-center justify-center rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><Plus className="w-4 h-4" /></button>
                   </div>
                 </div>
               </div>
@@ -228,24 +229,24 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
               <div>
                 <span className={labelCls}>Summary of Work</span>
                 {sowDoc ? (
-                  <div className="mt-1 flex items-center gap-2 rounded-lg border border-[var(--state-released)] bg-[var(--state-released)]/[0.06] px-2.5 py-2 text-sm">
+                  <div className="mt-1 flex items-center gap-2 rounded-lg border border-[var(--state-released)] bg-[var(--state-released)]/[0.06] px-2.5 py-2 text-body">
                     <FileText className="w-4 h-4 text-[var(--state-released-text)] shrink-0" />
                     <span className="font-medium text-[var(--color-text)] truncate">{sowDoc.label}</span>
-                    <button type="button" onClick={() => setSowDoc(null)} className="ml-auto inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Change</button>
+                    <button type="button" onClick={() => setSowDoc(null)} className="ml-auto inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Change</button>
                   </div>
                 ) : (
                   <div className="mt-1">
                     <div className="relative">
                       <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-faint)]" />
-                      <input value={sowQuery} onChange={(e) => setSowQuery(e.target.value)} placeholder="Find the scope document by number or title…"
-                        className="w-full h-9 pointer-coarse:h-11 pl-8 pr-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm" />
+                      <input type="search" value={sowQuery} onChange={(e) => setSowQuery(e.target.value)} aria-label="Find the Summary of Work" placeholder="Find the scope document by number or title…"
+                        className="w-full h-9 pointer-coarse:h-11 pl-8 pr-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body" />
                     </div>
                     {sowResults.length > 0 && (
                       <ul className="mt-1 rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
                         {sowResults.map((d) => (
                           <li key={d.id}>
                             <button type="button" onClick={() => { setSowDoc(d); setSowQuery(""); setSowResults([]); }}
-                              className="w-full px-3 py-2 text-left text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2">
+                              className="w-full px-3 py-2 text-left text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2">
                               <FileText className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> {d.label}
                             </button>
                           </li>
@@ -292,7 +293,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
                   key={v}
                   onClick={() => setVisibility(v)}
                   aria-pressed={visibility === v}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${visibility === v
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 pointer-coarse:min-h-11 rounded-lg text-caption font-bold transition-colors ${visibility === v
                     ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 shadow-sm"
                     : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}
                 >
@@ -304,13 +305,11 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
               <div className="mt-1 text-caption text-[var(--color-text-faint)]">Only members, the owner, and Document Control can see private projects.</div>
             )}
           </div>
-          {error && <div role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 py-1 text-xs font-medium text-[var(--state-overdue-text)]">{error}</div>}
+          {error && <div role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 py-1 text-caption font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{error}</span></div>}
         </div>
         <div className="px-5 py-3.5 border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-          <button onClick={onClose} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
-          <button onClick={() => void save()} disabled={busy} className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
-            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Save changes
-          </button>
+          <Button variant="secondary" size="sm" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button size="sm" onClick={() => void save()} loading={busy}>{busy ? "Saving" : "Save changes"}</Button>
         </div>
       </div>
     </div>

@@ -23,7 +23,7 @@ import { searchMatcher, hasQuery } from "@/lib/fuzzySearch";
 import { useDraft } from "@/hooks/useDraft";
 import { sayError } from "@/components/projects/sayError";
 
-const field = "h-9 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-body text-[var(--color-text)] disabled:opacity-50";
+const field = "h-9 pointer-coarse:h-11 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-body text-[var(--color-text)] disabled:opacity-50";
 const has = (e?: SheetEntry) => !!e && !!(e.start?.trim() || e.lunchPct?.trim() || e.endPct?.trim() || e.done?.trim() || e.hold || e.note?.trim());
 
 export default function ShiftSheetEntry({ milestones, progress, tz, times, target, projectId, userId, userName, canEdit, onClose, onSaved }: {
@@ -158,7 +158,7 @@ export default function ShiftSheetEntry({ milestones, progress, tz, times, targe
             <input type="time" aria-label={`${l.name}: done time`} value={e.done ?? ""} disabled={lock} onChange={(x) => set(l.id, { done: x.target.value })} className={field} />
           </label>
           <label className="flex items-center gap-1.5 text-caption font-medium cursor-pointer select-none">
-            <input type="checkbox" checked={!!e.hold} disabled={lock} onChange={(x) => set(l.id, { hold: x.target.checked })} className="w-4 h-4 accent-amber-600" /> Hold
+            <input type="checkbox" checked={!!e.hold} disabled={lock} onChange={(x) => set(l.id, { hold: x.target.checked })} className="w-4 h-4 accent-[var(--state-held)]" /> Hold
           </label>
           <input placeholder={e.hold ? "Why it's held" : "Note"} aria-label={`${l.name}: note`} value={e.note ?? ""} disabled={lock} onChange={(x) => set(l.id, { note: x.target.value })} className={`${field} col-span-2 sm:col-span-1`} />
         </div>
@@ -168,7 +168,7 @@ export default function ShiftSheetEntry({ milestones, progress, tz, times, targe
   };
 
   return (
-    <div className="fixed inset-0 z-[300] bg-slate-900/60 flex items-stretch sm:items-center justify-center sm:p-4" role="dialog" aria-modal="true" aria-label="Enter the shift sheet">
+    <div className="fixed inset-0 z-[300] bg-[var(--color-ink)]/55 flex items-stretch sm:items-center justify-center sm:p-4" role="dialog" aria-modal="true" aria-label="Enter the shift sheet">
       <div className="w-full sm:max-w-6xl h-full sm:h-[94vh] flex flex-col bg-[var(--color-surface)] sm:rounded-2xl shadow-2xl overflow-hidden">
         <div className="flex items-start gap-3 px-4 py-3 border-b border-[var(--color-border)]">
           <ClipboardPen className="w-5 h-5 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
@@ -179,7 +179,7 @@ export default function ShiftSheetEntry({ milestones, progress, tz, times, targe
               {" · "}{printed ? "the lines as printed" : "the lines as the sheet would print now"}
             </div>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close" className="p-2 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+          <button type="button" onClick={onClose} aria-label="Close" className="ui-hit p-2 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
         <div className="px-4 py-2 text-caption text-[var(--color-text-muted)] border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
           Fill in only what&apos;s written. The {at.lunchName} % is saved at {timeWord(at.lunch)}, the end of shift % at {timeWord(at.end)}. 100% with no done time is done then.
@@ -230,7 +230,7 @@ export default function ShiftSheetEntry({ milestones, progress, tz, times, targe
           {summary && <span role="status" className="inline-flex items-center gap-1.5 text-caption font-medium text-[var(--color-text)]"><CheckCircle2 className="w-4 h-4 text-[var(--state-released-text)]" />{summary}</span>}
           {!canEdit && <span className="text-caption text-[var(--color-text-muted)]">You can read this project; entering takes editing rights.</span>}
           <span className="ml-auto" />
-          <button type="button" onClick={onClose} className="h-9 px-3.5 rounded-lg border border-[var(--color-border-strong)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">{summary ? "Close" : "Cancel"}</button>
+          <button type="button" onClick={onClose} className="h-9 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">{summary ? "Close" : "Cancel"}</button>
           <button type="button" disabled={!canEdit || busy || filled.length === 0 || !userId} onClick={() => void save()}
             className="inline-flex items-center gap-1.5 h-10 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {busy && <Loader2 className="w-4 h-4 animate-spin" />} Save {filled.length || ""} line{filled.length === 1 ? "" : "s"}

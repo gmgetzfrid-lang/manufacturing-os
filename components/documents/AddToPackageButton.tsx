@@ -64,6 +64,7 @@ export default function AddToPackageButton({ doc, orgId, userId, userName, openS
       title: "New work package",
       message: "Name the package (e.g. the job or outage it's for). This drawing is added pinned at its current revision.",
       placeholder: "TA-2026 Exchanger bundle",
+      confirmLabel: "Create package",
     });
     if (!name?.trim() || !doc.id) return;
     try {

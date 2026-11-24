@@ -33,7 +33,7 @@ const VARIANTS: Record<ButtonVariant, string> = {
   danger: "bg-[var(--color-surface)] text-[var(--state-overdue-text)] border-[var(--color-border-strong)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_6%,var(--color-surface))] hover:border-[color-mix(in_srgb,var(--state-overdue)_45%,var(--color-border-strong))] shadow-[var(--shadow-control)] active:shadow-none disabled:shadow-none",
 };
 const SIZES: Record<ButtonSize, string> = {
-  sm: "h-8 pointer-coarse:h-10 px-3 text-body gap-1.5",
+  sm: "h-8 pointer-coarse:h-11 px-3 text-body gap-1.5",
   md: "h-10 pointer-coarse:h-11 px-4 text-reading gap-2",
 };
 

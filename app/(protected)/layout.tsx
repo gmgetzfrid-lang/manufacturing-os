@@ -23,6 +23,7 @@ import SignatureCaptureHost from "@/components/signatures/SignatureCaptureHost";
 import { DialogHost } from "@/components/providers/DialogProvider";
 import { NotificationCenterProvider } from "@/components/notifications/NotificationCenter";
 import UpdatePill from "@/components/system/UpdatePill";
+import PullToRefresh from "@/components/system/PullToRefresh";
 import { Skeleton, SkeletonRows } from "@/components/ui/Skeleton";
 import { SlowNotice, useElapsed, startOver } from "@/components/system/SlowNotice";
 import { useKeepScroll } from "@/hooks/useKeepScroll";
@@ -110,6 +111,7 @@ const ProtectedContent = ({ children }: { children: React.ReactNode }) => {
           {/* vt-page: the part that cross-fades when moving between views
               (lib/viewTransition); the side menu and top bar hold still. */}
           <main ref={setMainEl} className="vt-page flex-1 overflow-y-auto overflow-x-hidden overscroll-x-none relative">
+            <PullToRefresh scroller={mainEl} />
             <NotificationListener />
             <UpdatePill />
             <CornerDock />

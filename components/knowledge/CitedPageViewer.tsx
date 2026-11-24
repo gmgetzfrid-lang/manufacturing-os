@@ -369,9 +369,9 @@ export default function CitedPageViewer({
   const stateLine = jumped
     ? `Jumped here from ${title.replace(/\.pdf$/i, "")} · page ${pageNumber}${numPages ? ` of ${numPages}` : ""}`
     : `Page ${page} cited${pageNumber !== page ? ` · you're on page ${pageNumber}` : marks.length > 0 ? " · tags marked" : " · passage highlighted"}${numPages ? ` · ${numPages} pages` : ""}`;
-  const square = "w-9 h-9 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 transition-colors";
-  const tool = "h-8 inline-flex items-center gap-1 px-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] disabled:opacity-40 transition-colors";
-  const iconTool = "w-8 h-8 grid place-items-center rounded-lg text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 transition-colors";
+  const square = "w-9 h-9 pointer-coarse:size-11 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 transition-colors";
+  const tool = "h-8 pointer-coarse:h-11 inline-flex items-center gap-1 px-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)] disabled:opacity-40 transition-colors";
+  const iconTool = "w-8 h-8 pointer-coarse:size-11 grid place-items-center rounded-lg text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40 transition-colors";
 
   return (
     <div className={embedded
@@ -404,11 +404,11 @@ export default function CitedPageViewer({
               </button>
             )}
             <button type="button" onClick={onClose} aria-label="Close" title={embedded ? "Close" : "Close (Esc)"}
-              className="w-9 h-9 grid place-items-center rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+              className="pointer-coarse:size-11 w-9 h-9 grid place-items-center rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
               <X className="w-4 h-4" />
             </button>
           </div>
-          <h2 className="mt-1 font-display text-[22px] sm:text-[26px] leading-[1.1] font-semibold text-[var(--color-text)] line-clamp-2 break-words">
+          <h2 className="mt-1 font-display text-section sm:text-title leading-[1.1] font-semibold text-[var(--color-text)] line-clamp-2 break-words">
             {view.title.replace(/\.pdf$/i, "")}
           </h2>
           <p className="mt-1 text-body text-[var(--color-text-muted)] truncate">
@@ -442,7 +442,7 @@ export default function CitedPageViewer({
               <ZoomOut className="w-4 h-4" />
             </button>
             <button onClick={() => setZoom(1)}
-              className="h-8 px-1.5 rounded-lg text-caption font-medium tabular-nums text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
+              className="pointer-coarse:h-11 h-8 px-1.5 rounded-lg text-caption font-medium tabular-nums text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
               title="Reset to fit width" aria-label="Reset zoom to fit width">
               {Math.round(zoom * 100)}%
             </button>
@@ -473,7 +473,7 @@ export default function CitedPageViewer({
             }}>
             <div className="relative min-w-0 flex-1">
               <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]" />
-              <input value={findTag} onChange={(e) => setFindTag(e.target.value)}
+              <input type="search" value={findTag} onChange={(e) => setFindTag(e.target.value)}
                 aria-label="Find on this page"
                 placeholder="Find on this page"
                 className="w-full h-8 pl-8 pr-2 rounded-lg text-body border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] " />
@@ -521,9 +521,9 @@ export default function CitedPageViewer({
           className={`relative flex-1 overflow-auto bg-[var(--color-ink)] p-4 ${panning ? "cursor-grabbing select-none" : "cursor-grab"}`}>
           {error ? (
             <div role="alert" className="mt-16 mx-auto max-w-sm text-center">
-              <AlertTriangle className="w-5 h-5 mx-auto text-rose-300" />
+              <AlertTriangle className="w-5 h-5 mx-auto text-[var(--state-overdue)]" />
               <p className="mt-2 text-body font-medium text-[var(--color-ink-fg)]">This page didn&apos;t open.</p>
-              <p className="mt-1 text-body text-rose-200 break-words">{error}</p>
+              <p className="mt-1 text-body text-[var(--color-ink-text)] break-words">{error}</p>
             </div>
           ) : !url ? (
             <div className="mt-16 flex items-center justify-center gap-2 text-body text-[var(--color-ink-fg)] opacity-80" aria-busy="true">
@@ -604,7 +604,7 @@ export default function CitedPageViewer({
                     <button type="button" onClick={() => setIdx(i)}
                       title={`${s.title.replace(/\.pdf$/i, "")}${s.section ? ` · ${s.section}` : ""} · p.${s.page}`}
                       aria-label={`Source ${s.n ?? i + 1}: ${s.title.replace(/\.pdf$/i, "")}, page ${s.page}`}
-                      className={`w-7 h-7 rounded-full grid place-items-center font-display text-body font-semibold tabular-nums transition-colors ${
+                      className={`pointer-coarse:size-11 w-7 h-7 rounded-full grid place-items-center font-display text-body font-semibold tabular-nums transition-colors ${
                         i === idx
                           ? "bg-[var(--color-text)] text-[var(--color-surface)]"
                           : "border-2 border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:border-[var(--color-text)] hover:text-[var(--color-text)]"

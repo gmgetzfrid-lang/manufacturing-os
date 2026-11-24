@@ -90,7 +90,7 @@ export default function EstateReadiness({ orgId, onConnect, connecting }: { orgI
     return () => { alive = false; };
   }, [orgId, tick]);
   if (err) return <div className="text-body text-[var(--state-overdue)]">{err}</div>;
-  if (!r) return <div className="text-xs text-[var(--color-text-muted)] inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Checking what the estate has to work with…</div>;
+  if (!r) return <div className="text-caption text-[var(--color-text-muted)] inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Checking what the estate has to work with…</div>;
   const list = steps(r);
   const next = list.find((s) => s.state !== "done");
   return (

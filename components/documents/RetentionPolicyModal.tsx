@@ -62,7 +62,7 @@ export default function RetentionPolicyModal({ level, id, orgId, name, uid, user
     finally { setBusy(false); }
   };
 
-  const inp = "text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
+  const inp = "text-body rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
 
   return (
     <div className="fixed inset-0 z-[520] flex items-center justify-center bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] p-4" onClick={onClose}>
@@ -70,25 +70,25 @@ export default function RetentionPolicyModal({ level, id, orgId, name, uid, user
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3">
           <Archive className="w-5 h-5 text-[var(--color-text-muted)]" />
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-[var(--color-text)]">Retention</div>
+            <div className="text-body font-medium text-[var(--color-text)]">Retention</div>
             <div className="text-body text-[var(--color-text-muted)] truncate">How long records in this {scopeLabel}{name ? ` · ${name}` : ""} are kept</div>
           </div>
-          <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
+          <button aria-label="Close" onClick={onClose} className="ui-hit p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
         </div>
 
         {loading ? (
           <div className="p-8 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-muted)]" /></div>
         ) : (
           <div className="p-5 space-y-3">
-            <label className="flex items-center gap-2 text-sm text-[var(--color-text)]">
+            <label className="flex items-center gap-2 text-body text-[var(--color-text)]">
               <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Require retention
             </label>
             {enabled && (
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-body text-[var(--color-text-muted)]">Retain</span>
-                <input type="number" min={1} value={years} onChange={(e) => setYears(Math.max(1, parseInt(e.target.value) || 1))} className={`${inp} w-20`} />
+                <input inputMode="numeric" aria-label="Retain for years" type="number" min={1} value={years} onChange={(e) => setYears(Math.max(1, parseInt(e.target.value) || 1))} className={`${inp} w-20`} />
                 <span className="text-body text-[var(--color-text-muted)]">years from</span>
-                <select value={basis} onChange={(e) => setBasis(e.target.value as Basis)} className={inp}>
+                <select aria-label="Counted from" value={basis} onChange={(e) => setBasis(e.target.value as Basis)} className={inp}>
                   <option value="created">created</option><option value="issued">issued</option><option value="effective">effective</option><option value="superseded">superseded</option>
                 </select>
               </div>
@@ -96,7 +96,7 @@ export default function RetentionPolicyModal({ level, id, orgId, name, uid, user
             {enabled && (
               <div className="flex items-center gap-2">
                 <span className="text-body text-[var(--color-text-muted)]">At end of life</span>
-                <select value={action} onChange={(e) => setAction(e.target.value as Action)} className={inp}>
+                <select aria-label="At end of life" value={action} onChange={(e) => setAction(e.target.value as Action)} className={inp}>
                   <option value="review">flag for review</option><option value="archive">archive</option><option value="destroy">destroy</option>
                 </select>
               </div>
@@ -107,7 +107,7 @@ export default function RetentionPolicyModal({ level, id, orgId, name, uid, user
               <button onClick={() => void remove()} disabled={busy || !existing} className="px-3 py-2 rounded-lg text-body font-medium text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-40">Remove</button>
               <div className="flex gap-2">
                 <button onClick={onClose} className="px-3 py-2 rounded-lg text-body font-medium text-[var(--color-text-muted)]">Cancel</button>
-                <button onClick={() => void save()} disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--color-accent)] text-white text-xs font-medium disabled:opacity-50">{busy && <Loader2 className="w-4 h-4 animate-spin" />} Save</button>
+                <button onClick={() => void save()} disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium disabled:opacity-50">{busy && <Loader2 className="w-4 h-4 animate-spin" />} Save</button>
               </div>
             </div>
           </div>

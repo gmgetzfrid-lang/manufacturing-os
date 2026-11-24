@@ -104,7 +104,7 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
     finally { setBusy(false); }
   };
 
-  const inp = "text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
+  const inp = "text-body rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
 
   return (
     <div className="fixed inset-0 z-[520] flex items-center justify-center bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] p-4" onClick={onClose}>
@@ -112,10 +112,10 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3">
           <CalendarClock className="w-5 h-5 text-[var(--color-text-muted)]" />
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-[var(--color-text)]">Responsibility &amp; review</div>
+            <div className="text-body font-medium text-[var(--color-text)]">Responsibility &amp; review</div>
             <div className="text-body text-[var(--color-text-muted)] truncate">Applies to every document in this {scopeLabel}{name ? ` · ${name}` : ""}</div>
           </div>
-          <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
+          <button aria-label="Close" onClick={onClose} className="ui-hit p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
         </div>
 
         {loading ? (
@@ -127,16 +127,16 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
               <div className="text-body font-medium text-[var(--color-text-muted)]">Owner</div>
               {owner ? (
                 <div className="flex items-center gap-2">
-                  <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-xs text-[var(--color-text)]">{owner.name || owner.email}</span>
+                  <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-caption text-[var(--color-text)]">{owner.name || owner.email}</span>
                   <button onClick={() => { setOwnerState(null); setOwnerChanged(true); }} className="text-body text-[var(--state-overdue)] hover:underline">Clear</button>
                 </div>
               ) : (
                 <>
-                  <input value={ownerQuery} onChange={(e) => setOwnerQuery(e.target.value)} placeholder="Assign an owner… (defaults to Admin/DocCtrl)" className={`${inp} w-full`} />
+                  <input aria-label="Assign an owner" value={ownerQuery} onChange={(e) => setOwnerQuery(e.target.value)} placeholder="Assign an owner… (defaults to Admin/DocCtrl)" className={`${inp} w-full`} />
                   {ownerHits.length > 0 && (
                     <div className="rounded-lg border border-[var(--color-border)] max-h-32 overflow-y-auto">
                       {ownerHits.map((u) => (
-                        <button key={u.uid} onClick={() => { setOwnerState(u); setOwnerChanged(true); setOwnerQuery(""); setOwnerHits([]); }} className="w-full text-left px-2.5 py-1.5 text-xs hover:bg-[var(--color-surface-2)] flex items-center gap-1.5"><Plus className="w-3 h-3" /> {u.name || u.email}</button>
+                        <button key={u.uid} onClick={() => { setOwnerState(u); setOwnerChanged(true); setOwnerQuery(""); setOwnerHits([]); }} className="pointer-coarse:min-h-11 w-full text-left px-2.5 py-1.5 text-caption hover:bg-[var(--color-surface-2)] flex items-center gap-1.5"><Plus className="w-3 h-3" /> {u.name || u.email}</button>
                       ))}
                     </div>
                   )}
@@ -145,35 +145,35 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
               <div className="text-body text-[var(--color-text-muted)]">The owner gets this scope&apos;s notifications and review reminders; if they fall behind, Admin/DocCtrl are escalated.</div>
             </div>
 
-            <label className="flex items-center gap-2 text-sm text-[var(--color-text)]">
+            <label className="flex items-center gap-2 text-body text-[var(--color-text)]">
               <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Require periodic review
             </label>
             {enabled && (
               <>
                 <div className="flex items-center gap-2">
                   <span className="text-body text-[var(--color-text-muted)]">Every</span>
-                  <input type="number" min={1} value={count} onChange={(e) => setCount(Math.max(1, parseInt(e.target.value) || 1))} className={`${inp} w-20`} />
-                  <select value={unit} onChange={(e) => setUnit(e.target.value as typeof unit)} className={inp}>
+                  <input inputMode="numeric" aria-label="Review every" type="number" min={1} value={count} onChange={(e) => setCount(Math.max(1, parseInt(e.target.value) || 1))} className={`${inp} w-20`} />
+                  <select aria-label="Unit" value={unit} onChange={(e) => setUnit(e.target.value as typeof unit)} className={inp}>
                     <option value="days">days</option><option value="months">months</option><option value="years">years</option>
                   </select>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-body text-[var(--color-text-muted)]">Warn</span>
-                  <input type="number" min={0} value={lead} onChange={(e) => setLead(Math.max(0, parseInt(e.target.value) || 0))} className={`${inp} w-20`} />
+                  <input inputMode="numeric" aria-label="Warn days before due" type="number" min={0} value={lead} onChange={(e) => setLead(Math.max(0, parseInt(e.target.value) || 0))} className={`${inp} w-20`} />
                   <span className="text-body text-[var(--color-text-muted)]">days before due</span>
                 </div>
                 <div className="space-y-1">
                   <div className="text-body font-medium text-[var(--color-text-muted)]">Notify (besides Admin/DocCtrl)</div>
                   <div className="flex flex-wrap gap-1">
                     {reviewers.map((r) => (
-                      <span key={r.uid} className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-body text-[var(--color-text)]">{r.name || r.email}<button aria-label="Remove" onClick={() => setReviewers((p) => p.filter((x) => x.uid !== r.uid))}><X className="w-3 h-3" /></button></span>
+                      <span key={r.uid} className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-body text-[var(--color-text)]">{r.name || r.email}<button aria-label={`Remove ${r.name || r.email}`} className="ui-hit" onClick={() => setReviewers((p) => p.filter((x) => x.uid !== r.uid))}><X className="w-3 h-3" /></button></span>
                     ))}
                   </div>
-                  <input value={userQuery} onChange={(e) => setUserQuery(e.target.value)} placeholder="Search people…" className={`${inp} w-full`} />
+                  <input type="search" aria-label="Find people to notify" value={userQuery} onChange={(e) => setUserQuery(e.target.value)} placeholder="Search people…" className={`${inp} w-full`} />
                   {userHits.length > 0 && (
                     <div className="rounded-lg border border-[var(--color-border)] max-h-32 overflow-y-auto">
                       {userHits.filter((u) => !reviewers.some((r) => r.uid === u.uid)).map((u) => (
-                        <button key={u.uid} onClick={() => { setReviewers((p) => [...p, u]); setUserQuery(""); setUserHits([]); }} className="w-full text-left px-2.5 py-1.5 text-xs hover:bg-[var(--color-surface-2)] flex items-center gap-1.5"><Plus className="w-3 h-3" /> {u.name || u.email}</button>
+                        <button key={u.uid} onClick={() => { setReviewers((p) => [...p, u]); setUserQuery(""); setUserHits([]); }} className="pointer-coarse:min-h-11 w-full text-left px-2.5 py-1.5 text-caption hover:bg-[var(--color-surface-2)] flex items-center gap-1.5"><Plus className="w-3 h-3" /> {u.name || u.email}</button>
                       ))}
                     </div>
                   )}
@@ -185,7 +185,7 @@ export default function ReviewPolicyModal({ level, id, orgId, name, uid, userNam
               <button onClick={() => void remove()} disabled={busy || !existing} className="px-3 py-2 rounded-lg text-body font-medium text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-40">Remove cycle</button>
               <div className="flex gap-2">
                 <button onClick={onClose} className="px-3 py-2 rounded-lg text-body font-medium text-[var(--color-text-muted)]">Cancel</button>
-                <button onClick={() => void save()} disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--color-accent)] text-white text-xs font-medium disabled:opacity-50">{busy && <Loader2 className="w-4 h-4 animate-spin" />} Save</button>
+                <button onClick={() => void save()} disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--color-accent)] text-white text-caption font-medium disabled:opacity-50">{busy && <Loader2 className="w-4 h-4 animate-spin" />} Save</button>
               </div>
             </div>
           </div>

@@ -59,7 +59,7 @@ export default function InspectorDrawer({ isOpen, onClose, children, title }: In
           </div>
           <button
             onClick={onClose}
-            className="shrink-0 w-10 h-10 rounded-lg grid place-items-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
+            className="ui-hit shrink-0 w-10 h-10 rounded-lg grid place-items-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
             title="Close (Esc)"
             aria-label="Close"
           >

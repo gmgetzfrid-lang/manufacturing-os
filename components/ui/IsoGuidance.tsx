@@ -181,12 +181,12 @@ export default function IsoGuidance({ topic, placement, size }: Props) {
     <HelpTooltip placement={placement} size={size}>
       <div>
         <div className="flex items-center gap-1.5 mb-1.5">
-          <ShieldCheck className="w-3 h-3 text-emerald-400" />
-          <span className="text-body font-medium text-emerald-300 ">ISO Guidance</span>
+          <ShieldCheck aria-hidden className="w-3.5 h-3.5 text-[var(--state-released)]" />
+          <span className="text-body font-medium text-[var(--state-released-text)]">ISO guidance</span>
         </div>
-        <div className="text-caption font-medium mb-1">{entry.title}</div>
-        <div className="text-caption text-slate-200 leading-relaxed">{entry.body}</div>
-        <div className="mt-2 pt-2 border-t border-slate-700/60 text-caption text-[var(--color-text-faint)]">
+        <div className="text-body font-medium mb-1">{entry.title}</div>
+        <div className="text-body text-[var(--color-text-muted)] leading-relaxed">{entry.body}</div>
+        <div className="mt-2 pt-2 border-t border-[var(--color-border)] text-caption text-[var(--color-text-faint)]">
           {entry.refs.join(" · ")}
         </div>
       </div>

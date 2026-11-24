@@ -19,6 +19,7 @@ import type { BridgeConfig } from "@/lib/equipmentBridgeServer";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 import { friendlyError } from "@/lib/friendlyError";
+import { appConfirm } from "@/components/providers/DialogProvider";
 interface DocInfo { number: string | null; title: string | null; rev: string | null; sheet: string | null; sheetTotal: number | null }
 interface SuggestionRow {
   document_id: string;
@@ -135,7 +136,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
     const todo = [...unread];
     if (!todo.length) return;
     const pages = todo.reduce((n, d) => n + d.pages.length, 0);
-    if (!window.confirm(`Read ${pages} sheet${pages === 1 ? "" : "s"} with your AI model?\n\nEach sheet is read zoomed in, region by region, for its equipment tags and IDs. Billed to your key under your monthly cap. You can stop at any time and undo the run afterwards.`)) return;
+    if (!(await appConfirm({ title: `Read ${pages} sheet${pages === 1 ? "" : "s"} with your AI model?`, message: "Each sheet is read zoomed in, region by region, for its equipment tags and IDs. Billed to your key under your monthly cap. You can stop at any time and undo the run afterwards.", confirmLabel: `Read ${pages} sheet${pages === 1 ? "" : "s"}` }))) return;
     stopRead.current = false; setError(null); setNotice(null);
     const runId = newRunId();
     const runLabel = `Read ${todo.length} drawing${todo.length === 1 ? "" : "s"} with AI${folderName ? ` (${folderName})` : ""}`;
@@ -311,10 +312,10 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
         <div className="px-4 sm:px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-2.5">
           <ScanSearch className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-[var(--color-text)]">Equipment from drawings - {folderName ?? libraryName}</div>
-            <div className="text-[11.5px] text-[var(--color-text-muted)]">Read off each sheet: the tag, the ID printed beside it, what it is. Matched by the ID; you check it, then it&apos;s added.</div>
+            <div className="text-body font-medium text-[var(--color-text)]">Equipment from drawings - {folderName ?? libraryName}</div>
+            <div className="text-caption text-[var(--color-text-muted)]">Read off each sheet: the tag, the ID printed beside it, what it is. Matched by the ID; you check it, then it&apos;s added.</div>
           </div>
-          <button onClick={onClose} aria-label="Close" className="p-1.5 rounded hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4 text-[var(--color-text-muted)]" /></button>
+          <button onClick={onClose} aria-label="Close" className="ui-hit p-1.5 rounded hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4 text-[var(--color-text-muted)]" /></button>
         </div>
 
         <div className="p-3 sm:p-5 space-y-3 overflow-y-auto">
@@ -335,7 +336,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
                 <option value="" disabled>Pick the unit</option>
                 {book.units.map((u) => <option key={u.code} value={u.code}>{u.code} - {u.label}</option>)}
               </select>
-              <span className="text-[11.5px] text-[var(--color-text-muted)]">{folderUnit ? "Sheets here that print no IDs are this unit. A printed ID always says its own (5530.26 is unit 55)." : "Not set: sheets here that print no IDs have no unit until you pick one."}</span>
+              <span className="text-caption text-[var(--color-text-muted)]">{folderUnit ? "Sheets here that print no IDs are this unit. A printed ID always says its own (5530.26 is unit 55)." : "Not set: sheets here that print no IDs have no unit until you pick one."}</span>
             </label>
           ) : (
             <div className="text-body text-[var(--color-text-muted)]">This is every folder in the library. Open it from a unit&apos;s folder to check one unit at a time.</div>
@@ -353,15 +354,15 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
               <label className="flex items-start gap-2 cursor-pointer">
                 <input type="checkbox" checked={bridge.autoApply === true} onChange={(e) => void saveSettings({ autoApply: e.target.checked })} className="mt-0.5 w-4 h-4 accent-[var(--color-text)]" />
                 <span><b className="text-[var(--color-text)]">Add on its own after each drawing is read</b>
-                  <span className="block text-[11.5px] text-[var(--color-text-muted)]">Only equipment whose ID is printed on the sheet and reads as a unit and type in the site codebook. Everything else waits here for you.</span></span>
+                  <span className="block text-caption text-[var(--color-text-muted)]">Only equipment whose ID is printed on the sheet and reads as a unit and type in the site codebook. Everything else waits here for you.</span></span>
               </label>
-              <Link href="/admin/ai-instructions?scope=equipment" className="inline-flex items-center gap-1 text-[11.5px] text-[var(--color-accent-text)] dark:text-[var(--color-text)] hover:underline">
+              <Link href="/admin/ai-instructions?scope=equipment" className="inline-flex items-center gap-1 text-caption text-[var(--color-accent-text)] dark:text-[var(--color-text)] hover:underline">
                 <GraduationCap className="w-3.5 h-3.5" /> Teach the AI how your drawings print tags and IDs
               </Link>
             </div>
           )}
 
-          {error && <div role="alert" className="text-[12.5px] flex items-start gap-2 border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]"><AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {error}</div>}
+          {error && <div role="alert" className="text-body flex items-start gap-2 border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]"><AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {error}</div>}
           {notAdded.length > 0 && (() => {
             // One reason for many (the usual: one name across all units), said once.
             const by = new Map<string, string[]>();
@@ -385,17 +386,17 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
                 <>
                   <p><b>{unread.length} of {sheetCount || unread.length} sheets here haven&apos;t been read with AI yet.</b> Only their text was read, and on drawings from AutoCAD the tags are drawn as lines, so the text holds little more than the title block. Their equipment shows up here once they&apos;re read.</p>
                   <button type="button" onClick={() => void readUnread()} disabled={sweeping || applying}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 font-medium disabled:opacity-50 cursor-pointer">
+                    className={`inline-flex items-center gap-1.5 rounded-lg ${rows.length > 0 ? "border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]" : "bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)]"} px-3 py-1.5 font-medium disabled:opacity-50 cursor-pointer`}>
                     <ScanSearch className="w-4 h-4" /> Read {unread.length} sheet{unread.length === 1 ? "" : "s"} with AI
                   </button>
                 </>
               )}
             </div>
           )}
-          {notice && <div className="rounded-xl border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] p-3 text-[12.5px] text-[var(--state-released)] flex items-start gap-2"><Check className="w-4 h-4 shrink-0 mt-0.5" /> {notice}</div>}
+          {notice && <div className="rounded-xl border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] p-3 text-body text-[var(--state-released)] flex items-start gap-2"><Check className="w-4 h-4 shrink-0 mt-0.5" /> {notice}</div>}
 
           {loading ? (
-            <div className="py-10 text-center text-[12.5px] text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline mr-1" /> Loading…</div>
+            <div className="py-10 text-center text-body text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline mr-1" /> Loading…</div>
           ) : rows.length === 0 ? (
             <div className="py-8 text-center text-body text-[var(--color-text-muted)]">
               {sweeping ? "Reading the sheets…" : "No equipment read off these drawings yet. Read again once the drawings are indexed."}
@@ -420,7 +421,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
                 <label className="flex items-start gap-2 text-body cursor-pointer">
                   <input type="checkbox" checked={overwriteAll} onChange={(e) => { setOverwriteAll(e.target.checked); setChoice((cur) => Object.fromEntries(Object.entries(cur).map(([k, v]) => [k, { ...v, overwrite: undefined }]))); }} className="mt-0.5 w-4 h-4 accent-[var(--color-text)]" />
                   <span><b className="text-[var(--color-text)]">Overwrite the registry with what the sheets say</b>
-                    <span className="block text-[11.5px] text-[var(--color-text-muted)]">Where this unit already has the name with another ID, the sheet&apos;s ID goes on it instead of adding a second one; listed equipment takes the sheet&apos;s service name.{clashes ? ` ${clashes} ID${clashes === 1 ? "" : "s"} differ here.` : ""}</span></span>
+                    <span className="block text-caption text-[var(--color-text-muted)]">Where this unit already has the name with another ID, the sheet&apos;s ID goes on it instead of adding a second one; listed equipment takes the sheet&apos;s service name.{clashes ? ` ${clashes} ID${clashes === 1 ? "" : "s"} differ here.` : ""}</span></span>
                 </label>
               )}
               <div className="flex flex-wrap gap-1.5">
@@ -440,7 +441,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
                     <div key={r.document_id} className="rounded-xl border border-[var(--color-border)] overflow-hidden">
                       <div className="px-3 py-1.5 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] flex flex-wrap items-baseline gap-x-2">
                         <b className="text-body text-[var(--color-text)]">{sh ? `Sheet ${sh}${d?.sheetTotal ? ` of ${d.sheetTotal}` : ""}` : r.documentLabel}</b>
-                        <span className="text-[11.5px] text-[var(--color-text-muted)]">{[d?.number ?? (sh ? r.documentLabel : null), d?.rev ? `Rev ${d.rev}` : null].filter(Boolean).join(" · ")}</span>
+                        <span className="text-caption text-[var(--color-text-muted)]">{[d?.number ?? (sh ? r.documentLabel : null), d?.rev ? `Rev ${d.rev}` : null].filter(Boolean).join(" · ")}</span>
                         <Link href={`/documents/${libraryId}?doc=${r.document_id}`} target="_blank" className="ml-auto inline-flex items-center gap-1 text-caption text-[var(--color-accent-text)] hover:underline">Open sheet <ExternalLink className="w-3 h-3" /></Link>
                       </div>
                       <ul className="divide-y divide-[var(--color-border)]">
@@ -453,7 +454,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
                             )}
                             <div className="min-w-0">
                               <div className="font-display font-semibold tabular-nums text-body text-[var(--color-text)]">{x.s.tag}</div>
-                              {x.s.name && <div className="text-[11.5px] text-[var(--color-text-muted)] break-words">{x.s.name}</div>}
+                              {x.s.name && <div className="text-caption text-[var(--color-text-muted)] break-words">{x.s.name}</div>}
                             </div>
                             <div className="col-start-2 sm:col-start-auto min-w-0">
                               {x.kind === "linked" || x.kind === "listed" || (x.applied && x.kind === "check") ? (
@@ -495,14 +496,14 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
                               {x.kind === "check" && x.problem && <div className="text-body text-[var(--state-overdue)]">{x.problem}</div>}
                               {x.kind === "update" && x.s.clash && <div className="text-body text-[var(--state-held)]">{x.s.clash.code} becomes {x.s.code}{x.s.name ? `, named ${x.s.name}` : ""}</div>}
                               {canAdd && !x.applied && x.s.clash && x.s.code && !x.typed && (
-                                <label className="mt-0.5 inline-flex items-center gap-1 text-[11.5px] font-medium text-[var(--color-text)] cursor-pointer">
+                                <label className="mt-0.5 inline-flex items-center gap-1 text-caption font-medium text-[var(--color-text)] cursor-pointer">
                                   <input type="checkbox" checked={x.kind === "update"} onChange={(e) => set(x.k, { overwrite: e.target.checked, on: e.target.checked })} className="w-3.5 h-3.5 accent-[var(--color-text)]" />
                                   It&apos;s that one: change its ID to {x.s.code}
                                 </label>
                               )}
                               {x.applied && (
                                 <button type="button" onClick={() => void unlink(r.document_id, x.s.tag)} disabled={unlinking === x.k}
-                                  className="mt-0.5 inline-flex items-center gap-1 text-[11.5px] font-medium text-[var(--color-text-muted)] hover:text-[var(--state-overdue)] hover:underline disabled:opacity-50">
+                                  className="mt-0.5 inline-flex items-center gap-1 text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--state-overdue)] hover:underline disabled:opacity-50">
                                   {unlinking === x.k && <Loader2 className="w-3 h-3 animate-spin" />} Unlink from this sheet
                                 </button>
                               )}
@@ -529,7 +530,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, fol
               {applying ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
               {[toAdd ? `Add ${toAdd}` : null, toReplace ? `replace ${toReplace} ID${toReplace === 1 ? "" : "s"}` : null, toLink ? `link ${toLink}` : null].filter(Boolean).join(", ").replace(/^./, (ch) => ch.toUpperCase()) || "Nothing ticked"}
             </button>
-            <span className="text-[11.5px] text-[var(--color-text-muted)]">Ticked rows only. Each is linked to the sheets it&apos;s on.{canAdd ? "" : " Only admins add new equipment; you can link what's already listed."}</span>
+            <span className="text-caption text-[var(--color-text-muted)]">Ticked rows only. Each is linked to the sheets it&apos;s on.{canAdd ? "" : " Only admins add new equipment; you can link what's already listed."}</span>
           </div>
         )}
       </div>

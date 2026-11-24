@@ -208,7 +208,7 @@ export default function StagedPage() {
   };
   const nameOf = (r: Row) => r.number || r.title || "this document";
   const clearMarkups = async (r: Row) => {
-    const ok = await appConfirm({ message: `Clear your markups on ${nameOf(r)}?`, confirmLabel: "Clear markups", tone: "danger" });
+    const ok = await appConfirm({ title: `Clear your markups on ${nameOf(r)}?`, confirmLabel: "Clear markups", tone: "danger" });
     if (!ok) return;
     setActiveId(r.staged.id);
     if (staged.clearMarkups(r.staged.id)) setFresh((f) => f + 1);

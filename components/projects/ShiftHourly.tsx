@@ -16,7 +16,7 @@ import { openContractor } from "@/lib/costsNav";
 import type { CrewSettings } from "@/lib/crewSettings";
 import { newFinding } from "@/components/projects/Findings";
 import React, { useId, useRef, useState } from "react";
-import { AlertTriangle, Check, Pencil, Plus, Trash2, X as XIcon } from "lucide-react";
+import { AlertTriangle, Check, Pencil, Plus, Trash2, X as XIcon, CircleAlert } from "lucide-react";
 import { AddCompany } from "@/components/projects/ShiftRecordParts";
 import type { CrewCount, ShiftRecord } from "@/lib/shiftRecord";
 import { newId } from "@/lib/shiftRecord";
@@ -32,10 +32,10 @@ import { cleanName, crewNames, renamed, setNames, totalOnSite, withName, without
 import { sayError } from "@/components/projects/sayError";
 
 const inputCls = "rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1 text-caption text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] ";
-const btn = "inline-flex items-center gap-1.5 h-7 px-3 rounded-lg text-caption font-medium disabled:opacity-60";
+const btn = "inline-flex items-center gap-1.5 h-7 pointer-coarse:h-11 px-3 rounded-lg text-caption font-medium disabled:opacity-60";
 /** An inline editor's Save: quiet, the report's one orange button is Email / Print. */
 const saveBtn = `${btn} border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]`;
-const iconBtn = "shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]";
+const iconBtn = "shrink-0 inline-flex items-center justify-center p-1 pointer-coarse:size-11 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]";
 
 export interface HourlyCtx {
   notes?: HourlyNotes;
@@ -286,17 +286,17 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
                     {(r.mismatch ?? []).map((x) => (
                       <div key={x} className="flex items-start gap-2">
                         <span className="min-w-0 flex-1 break-words italic"><Line text={x} /></span>
-                        <button type="button" onClick={() => void dropLine(r, x)} className="shrink-0 inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Remove</button>
+                        <button type="button" onClick={() => void dropLine(r, x)} className="shrink-0 inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Remove</button>
                       </div>
                     ))}
-                    <button type="button" onClick={() => void keepHour(r)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Keep as typed</button>
+                    <button type="button" onClick={() => void keepHour(r)} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Keep as typed</button>
                   </div>
                 )}
                 {/* A typed note: a mistake, or now put in as work (its own entry
                     says it) - deleted, the hour shows its entries again. */}
                 {edit && typed && editing !== r.slot.key && !isMeeting && (
                   <button type="button" onClick={() => void setHour(r.slot, null)} title="Delete what was typed here: the hour shows its entries"
-                    className="mt-0.5 inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
+                    className="mt-0.5 inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
                     <Trash2 className="w-3 h-3" /> Delete typed note
                   </button>
                 )}
@@ -319,7 +319,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
               {edit && editing !== r.slot.key && isMeeting && (
                 <button type="button" onClick={() => void setOff(r.slot, true)} aria-label={`Remove the ${label.toLowerCase()} from the log`}
                   title="Wasn't held: take it off the log (it can be put back)"
-                  className="shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-transparent">
+                  className="shrink-0 inline-flex items-center justify-center p-1 pointer-coarse:size-11 rounded text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-transparent">
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               )}
@@ -352,7 +352,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
           ))}
         </div>
       )}
-      {msg && <div role="alert" className="text-caption font-medium text-[var(--state-overdue-text)]">{msg}</div>}
+      {msg && <div role="alert" className="text-caption font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{msg}</span></div>}
     </div>
   );
 }
@@ -360,7 +360,7 @@ export function ShiftHourlyBox({ h, edit, print, tz, meetings }: {
 type OtCtx = NonNullable<HourlyCtx["overtime"]>;
 /** "21:30" in plant time. */
 const hmOf = (ms: number, tz: string) => new Date(ms).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: tz });
-const selCls = "h-7 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-caption text-[var(--color-text)]";
+const selCls = "h-7 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-caption text-[var(--color-text)]";
 
 /** A crew held over: which crew, how many, who or why, sent home when
  *  (or still on), and who takes over after. */
@@ -427,12 +427,12 @@ function HoldOverForm({ ot, adding, onDone, onError }: { ot: OtCtx; adding: bool
             <option value="">No one takes over</option>
             {ot.crews.map((c) => <option key={c} value={c}>{c} takes over</option>)}
           </select>
-          <button type="button" onClick={() => setRows(rows.filter((_, j) => j !== i))} aria-label={`Take ${x.crew || "this crew"} off overtime`} className="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)]"><Trash2 className="w-3.5 h-3.5" /></button>
+          <button type="button" onClick={() => setRows(rows.filter((_, j) => j !== i))} aria-label={`Take ${x.crew || "this crew"} off overtime`} className="ui-hit p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)]"><Trash2 className="w-3.5 h-3.5" /></button>
           <HoldCost ot={ot} crew={x.crew} hands={Number(x.hands) || 0} until={x.until ? timeAfter(ot.shiftEnd, x.until, ot.tz, timeOnDay, dayKey) : null} />
         </div>
       ))}
       <button type="button" onClick={() => setRows([...rows, blank()])} className="text-body text-[var(--color-accent-text)] hover:underline">+ Another crew</button>
-      {err && <div role="alert" className="text-caption font-medium text-[var(--state-overdue-text)]">{err}</div>}
+      {err && <div role="alert" className="text-caption font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{err}</span></div>}
       <div className="flex items-center gap-2">
         <button type="button" disabled={busy} onClick={() => void save()} className={saveBtn}>Save</button>
         <button type="button" onClick={onDone} className="text-caption text-[var(--color-text-muted)] hover:underline">Cancel</button>
@@ -464,7 +464,7 @@ function SentHomeForm({ ot, onDone, onError }: { ot: OtCtx; onDone: () => void; 
       </select>
       <button type="button" onClick={() => void save()} className={saveBtn}>Save</button>
       <button type="button" onClick={onDone} className="text-caption text-[var(--color-text-muted)] hover:underline">Cancel</button>
-      {err && <div role="alert" className="w-full text-caption font-medium text-[var(--state-overdue-text)]">{err}</div>}
+      {err && <div role="alert" className="w-full text-caption font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{err}</span></div>}
     </div>
   );
 }
@@ -575,7 +575,7 @@ export function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
       </div>
       <SafetyTopic value={m.record?.meeting?.safety} topics={m.topics} edit={edit}
         onSave={(t) => void save((r) => ({ ...r, meeting: { ...(r.meeting ?? {}), safety: t || undefined } })).catch(() => undefined)} />
-      {msg && <div role="alert" className="text-caption font-medium text-[var(--state-overdue-text)]">{msg}</div>}
+      {msg && <div role="alert" className="text-caption font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{msg}</span></div>}
     </div>
   );
 }
@@ -615,7 +615,7 @@ function CrewRow({ grid, crew, value, known, edit, plan, onNames, onCount, onTot
         <b className="text-caption text-[var(--color-text)] break-words">{crew}</b>
         {edit && onRemove && (
           <button type="button" onClick={onRemove} aria-label={`Take ${crew} off the meeting`} title="Take this company off the meeting"
-            className="shrink-0 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]"><XIcon className="w-3 h-3" /></button>
+            className="ui-hit shrink-0 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]"><XIcon className="w-3 h-3" /></button>
         )}
         {plan?.first && <PlanBeside plan={plan} count={countOf(value).total} edit={edit} onSame={() => onCount(plan.direct, plan.indirect)} />}
       </div>
@@ -630,7 +630,7 @@ function CrewRow({ grid, crew, value, known, edit, plan, onNames, onCount, onTot
         )}
         {edit && !adding && (
           <button type="button" onClick={() => setAdding(true)} aria-label={`Add an attendee from ${crew}`} title="Add an attendee"
-            className="shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full border border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
+            className="shrink-0 inline-flex items-center justify-center w-6 h-6 pointer-coarse:size-11 rounded-full border border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">
             <Plus className="w-3.5 h-3.5" />
           </button>
         )}
@@ -655,10 +655,10 @@ function NamePill({ name, edit, listId, onRename, onRemove }: { name: string; ed
       <span className="min-w-0 truncate">{name}</span>
       {edit && (
         <>
-          <button type="button" onClick={() => setEditing(true)} aria-label={`Edit ${name}`} className="ml-0.5 shrink-0 p-1 rounded-full text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]">
+          <button type="button" onClick={() => setEditing(true)} aria-label={`Edit ${name}`} className="ml-0.5 shrink-0 inline-flex items-center justify-center p-1 pointer-coarse:size-11 rounded-full text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]">
             <Pencil className="w-3 h-3" />
           </button>
-          <button type="button" onClick={onRemove} aria-label={`Remove ${name}`} className="shrink-0 p-1 rounded-full text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-transparent">
+          <button type="button" onClick={onRemove} aria-label={`Remove ${name}`} className="shrink-0 inline-flex items-center justify-center p-1 pointer-coarse:size-11 rounded-full text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-transparent">
             <Trash2 className="w-3 h-3" />
           </button>
         </>
@@ -793,13 +793,13 @@ function SafetyTopic({ value, topics, edit, onSave }: { value?: string; topics?:
   const picks = (topics ?? []).filter((x) => x !== t);
   return (
     <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 px-2 py-1 rounded-md border border-dashed border-[var(--color-border)] text-caption">
-      <span className="shrink-0 text-caption font-medium text-[var(--color-text)] dark:text-[var(--color-text)]">Safety topic</span>
+      <span className="shrink-0 text-caption font-medium text-[var(--color-text)]">Safety topic</span>
       {editing ? (
         <span className="flex-1 min-w-[12rem] flex items-center gap-1.5">
           <input autoFocus value={v} onChange={(e) => setV(e.target.value)} aria-label="Safety topic" placeholder="What the meeting talked through"
             onKeyDown={(e) => { if (e.key === "Enter") commit(v); if (e.key === "Escape") setEditing(false); }}
             className={`${inputCls} flex-1 min-w-0 h-7 pointer-coarse:h-11`} />
-          <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => commit(v)} className={`${saveBtn} h-7`}>Save</button>
+          <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => commit(v)} className={`${saveBtn} h-7 pointer-coarse:h-11`}>Save</button>
           <button type="button" onClick={() => setEditing(false)} className="text-caption text-[var(--color-text-muted)] hover:underline">Cancel</button>
         </span>
       ) : t ? (
@@ -807,13 +807,13 @@ function SafetyTopic({ value, topics, edit, onSave }: { value?: string; topics?:
           <span className="min-w-0 break-words font-medium text-[var(--color-text)]">{t}</span>
           {edit && (
             <span className="inline-flex items-center">
-              <button type="button" onClick={open} aria-label="Edit the safety topic" className="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><Pencil className="w-3 h-3" /></button>
-              <button type="button" onClick={() => onSave("")} aria-label="Remove the safety topic" className="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-transparent"><Trash2 className="w-3 h-3" /></button>
+              <button type="button" onClick={open} aria-label="Edit the safety topic" className="inline-flex items-center justify-center p-1 pointer-coarse:size-11 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><Pencil className="w-3 h-3" /></button>
+              <button type="button" onClick={() => onSave("")} aria-label="Remove the safety topic" className="inline-flex items-center justify-center p-1 pointer-coarse:size-11 rounded text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-transparent"><Trash2 className="w-3 h-3" /></button>
             </span>
           )}
         </>
       ) : edit ? (
-        <button type="button" onClick={open} aria-label="Add the safety topic" className="inline-flex items-center gap-0.5 h-8 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+        <button type="button" onClick={open} aria-label="Add the safety topic" className="inline-flex items-center gap-0.5 h-8 pointer-coarse:h-11 px-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
           <Plus className="w-3 h-3" /> Add
         </button>
       ) : <span className="text-[var(--color-text-faint)]">-</span>}

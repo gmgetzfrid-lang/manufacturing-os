@@ -7,7 +7,7 @@
 // comment goes on each step.
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { X, CircleAlert } from "lucide-react";
 import type { MilestoneStatus } from "@/types/schema";
 import type { ShiftCredit, ShiftTimes } from "@/lib/shiftReport";
 import { shiftChoices, resolveWhen, WhenFields, pickOf } from "@/components/projects/ProgressControl";
@@ -72,7 +72,7 @@ export default function MarkSheet({ names, status, tz, times, now: clockNow, ahe
             <div className="text-body font-medium text-[var(--color-text-muted)]">{n === 1 ? "Mark a step" : `Mark ${n} steps`}</div>
             <div className="mt-0.5 text-reading font-medium">{word}</div>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close" className="-mr-1.5 w-8 h-8 shrink-0 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+          <button type="button" onClick={onClose} aria-label="Close" className="ui-hit -mr-1.5 w-8 h-8 shrink-0 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
         <div className="px-4 py-3 space-y-3">
           <ul className="max-h-24 overflow-y-auto border-l-2 border-[var(--color-border-strong)] pl-2.5 space-y-0.5">
@@ -90,9 +90,9 @@ export default function MarkSheet({ names, status, tz, times, now: clockNow, ahe
               placeholder={status === "completed" ? "e.g. Bundle pulled and set on the pad" : status === "in_progress" ? "e.g. Blinds going in, 4 of 9" : "e.g. Waiting on the crane"}
               className="w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1.5 text-caption" />
           </label>
-          {msg && <div role="alert" className="font-medium text-[var(--state-overdue-text)]">{msg}</div>}
+          {msg && <div role="alert" className="font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-0.5" /><span>{msg}</span></div>}
           <div className="flex items-center justify-end gap-2">
-            <button type="button" onClick={onClose} className="h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] font-medium hover:bg-[var(--color-surface-2)]">Cancel</button>
+            <button type="button" onClick={onClose} className="h-9 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] font-medium hover:bg-[var(--color-surface-2)]">Cancel</button>
             <button type="button" onClick={() => void save()} disabled={busy}
               className="h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
               {busy ? "Saving…" : `Mark ${word}`}

@@ -7,7 +7,7 @@
 
 import React, { useRef, useState } from "react";
 import Link from "next/link";
-import { Upload } from "lucide-react";
+import { Upload, CircleAlert } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { useOrgBranding } from "@/components/providers/OrgBrandingProvider";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -54,7 +54,7 @@ export default function LogoUploadModal({ onClose }: { onClose: () => void }) {
   };
 
   const remove = async () => {
-    if (!(await appConfirm({ message: "Remove the workspace logo? Everyone sees the app's name in its place until a new one is uploaded.", tone: "danger", confirmLabel: "Remove logo" }))) return;
+    if (!(await appConfirm({ title: "Remove the workspace logo?", message: "Everyone sees the app's name in its place until a new one is uploaded.", tone: "danger", confirmLabel: "Remove logo" }))) return;
     setBusy("remove"); setError(null);
     try {
       await save({ ...branding, logoPath: undefined, logoShape: shape });
@@ -105,18 +105,18 @@ export default function LogoUploadModal({ onClose }: { onClose: () => void }) {
             )}
           </div>
         )}
-        {error && <p role="alert" className="text-body font-medium text-[var(--state-overdue-text)]">{error}</p>}
+        {error && <p role="alert" className="text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" /><span>{error}</span></p>}
 
         <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { void pick(e.target.files?.[0]); e.target.value = ""; }} />
         <Button className="w-full" loading={busy === "upload"} disabled={!!busy} onClick={() => fileRef.current?.click()}>
           {busy !== "upload" && <Upload className="w-4 h-4" />}
-          {logoUrl ? "Replace logo" : "Upload logo"}
+          {busy === "upload" ? "Uploading" : logoUrl ? "Replace logo" : "Upload logo"}
         </Button>
 
         <div className="flex flex-wrap items-center justify-between gap-2">
           <Link href="/admin/branding" onClick={onClose} className={`${link} text-body`}>Colors and slide template</Link>
           {logoUrl && (
-            <Button size="sm" variant="danger" loading={busy === "remove"} disabled={!!busy} onClick={() => void remove()}>Remove logo</Button>
+            <Button size="sm" variant="danger" loading={busy === "remove"} disabled={!!busy} onClick={() => void remove()}>{busy === "remove" ? "Removing" : "Remove logo"}</Button>
           )}
         </div>
       </ModalBody>

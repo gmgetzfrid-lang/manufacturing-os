@@ -305,8 +305,9 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   const onClearSchedule = async () => {
     const n = allMilestones.length;
     const ok = await appConfirm({
-      message: `Delete all ${n} task${n === 1 ? "" : "s"} on this project's schedule${phases.length ? `, every phase (${phases.map((p) => p.name).join(" and ")})` : ""}? Notes on them go too.${progressWarning(allMilestones) ? ` ${progressWarning(allMilestones)} To bring in a revised schedule and keep it, use Import and leave Replace unticked: it merges.` : ""} Undo is offered right after; once you leave the page, it can't be undone. This action is audited.`,
-      tone: "danger",
+      title: `Delete all ${n} task${n === 1 ? "" : "s"} on this schedule?`,
+      message: `${phases.length ? `Every phase goes (${phases.map((p) => p.name).join(" and ")}). ` : ""}Notes on them go too.${progressWarning(allMilestones) ? ` ${progressWarning(allMilestones)} To bring in a revised schedule and keep it, use Import and leave Replace unticked: it merges.` : ""} Undo is offered right after; once you leave the page, you can't undo this. This is recorded in the audit log.`,
+      tone: "danger", confirmLabel: `Delete ${n} task${n === 1 ? "" : "s"}`,
     });
     if (!ok) return;
     setClearing(true); setError(null);
@@ -325,8 +326,9 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   const onResetProgress = async () => {
     const n = allMilestones.length;
     const ok = await appConfirm({
-      message: `Reset progress on all ${n} task${n === 1 ? "" : "s"}${phases.length ? `, every phase (${phases.map((p) => p.name).join(" and ")})` : ""}? Every task goes back to 0% and "planned", and its actual start / completion stamps are cleared, so the real outage starts clean after testing. Planned dates, the baseline, dependencies and notes stay (status-change notes from the rehearsal are removed). Undo is offered right after. This action is audited.`,
-      tone: "danger",
+      title: `Reset progress on all ${n} task${n === 1 ? "" : "s"}?`,
+      message: `${phases.length ? `Every phase too (${phases.map((p) => p.name).join(" and ")}). ` : ""}Every task goes back to 0% and "planned", and its actual start and finish times are cleared, so the real outage starts clean after testing. Planned dates, the baseline, dependencies and notes stay (status-change notes from the rehearsal are removed). Undo is offered right after. This is recorded in the audit log.`,
+      tone: "danger", confirmLabel: "Reset progress",
     });
     if (!ok) return;
     setResetting(true); setError(null);
@@ -356,7 +358,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   };
 
   const onDelete = async (id: string) => {
-    if (!(await appConfirm({ message: "Delete this task? This action is audited.", tone: "danger" }))) return;
+    if (!(await appConfirm({ title: "Delete this task?", message: "This is recorded in the audit log.", tone: "danger", confirmLabel: "Delete task" }))) return;
     setBusy(true);
     try { await deleteMilestone(id, userId); await refresh(); }
     catch (e) { setError(sayError(e)); }
@@ -371,10 +373,14 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   const onSetBaseline = async () => {
     const whose = pickedPhase ? `${pickedPhase.name}'s` : "the current";
     const msg = (hasBaseline
-      ? `Re-capture ${whose} plan as the new baseline? Drift will be measured from now on against this snapshot.${pickedPhase ? " Other phases keep theirs." : ""}`
-      : `Snapshot ${whose} plan as the baseline? Every view will then show how far the schedule drifts from it.`)
+      ? `Drift will be measured from now on against this snapshot.${pickedPhase ? " Other phases keep theirs." : ""}`
+      : "Every view will then show how far the schedule drifts from it.")
       + (!pickedPhase && phases.length > 1 && hasBaseline ? " This replaces every phase's saved plan; pick a phase first to re-capture only its own." : "");
-    if (!(await appConfirm(msg))) return;
+    if (!(await appConfirm({
+      title: hasBaseline ? `Re-capture ${whose} plan as the new baseline?` : `Save ${whose} plan as the baseline?`,
+      message: msg,
+      confirmLabel: hasBaseline ? "Replace baseline" : "Save baseline",
+    }))) return;
     setBaselineBusy(true);
     try {
       const res = await setBaseline({ orgId, projectId, actorUserId: userId, actorUserEmail: userEmail, actorUserRole: userRole, ids: baselineIds });
@@ -409,9 +415,9 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
         {" "}Undo puts {undoable.kind === "clear" ? "every task back with its notes" : "each task's status, %, times and baseline back as they were"}.
       </span>
       <button onClick={() => void onUndo()} disabled={undoing} className={QUIET}>
-        {undoing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />} Undo
+        {undoing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />} {undoing ? "Undoing" : "Undo"}
       </button>
-      <button onClick={() => setUndoable(null)} disabled={undoing} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Dismiss</button>
+      <button onClick={() => setUndoable(null)} disabled={undoing} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Dismiss</button>
     </div>
   ) : null;
 
@@ -856,12 +862,12 @@ function FinishNote({ f, fmtDay }: { f: PlanFacts; fmtDay: (d: Date) => string }
   if (f.actual) {
     const late = f.slipDays > 0;
     return (
-      <div className={`text-body whitespace-nowrap ${late ? "text-[var(--state-overdue)] font-medium" : "text-[var(--color-text-muted)]"}`}>
+      <div className={`text-body whitespace-nowrap ${late ? "text-[var(--state-overdue-text)] font-medium" : "text-[var(--color-text-muted)]"}`}>
         Done {fmtDay(f.actual)}, {Math.abs(f.slipDays)}d {late ? "late" : "early"}
       </div>
     );
   }
-  if (f.overdue) return <div className="text-body font-medium whitespace-nowrap text-[var(--state-overdue)]">{f.lateDays > 0 ? `${f.lateDays}d late` : "Late"}</div>;
+  if (f.overdue) return <div className="text-body font-medium whitespace-nowrap text-[var(--state-overdue-text)]">{f.lateDays > 0 ? `${f.lateDays}d late` : "Late"}</div>;
   return null;
 }
 
@@ -913,7 +919,7 @@ function RowMenu({ name, current, onPick, onDelete, disabled }: {
   return (
     <>
       <button ref={btnRef} type="button" onClick={toggle} disabled={disabled} aria-haspopup="menu" aria-expanded={open} aria-label={`More for ${name}`} title={current ? "Status, delete" : "Delete"}
-        className="w-8 h-8 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
+        className="ui-hit w-8 h-8 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
         <MoreHorizontal className="w-4 h-4" />
       </button>
       {open && typeof document !== "undefined" && createPortal(
@@ -935,7 +941,7 @@ function RowMenu({ name, current, onPick, onDelete, disabled }: {
               <div className="px-3 py-2 text-body text-[var(--color-text-muted)]">Its status rolls up from its steps.</div>
             )}
             <div className="my-1 h-px bg-[var(--color-border)]" />
-            <button type="button" role="menuitem" onClick={() => { setOpen(false); onDelete(); }} className={`${item} text-[var(--state-overdue)]`}>
+            <button type="button" role="menuitem" onClick={() => { setOpen(false); onDelete(); }} className={`${item} text-[var(--state-overdue-text)]`}>
               <Trash2 className="w-4 h-4" /> Delete task
             </button>
           </div>
@@ -953,13 +959,13 @@ function RowDetails({ m, f, fmtWhen, fmtDay }: { m: Milestone; f: PlanFacts; fmt
   const facts: Array<[string, React.ReactNode]> = [
     ["Planned start", f.start ? fmtWhen(f.start) : "-"],
     ["Planned finish", fmtWhen(f.finish)],
-    ...(f.actual ? [["Finished", <span key="a" className={f.slipDays > 0 ? "text-[var(--state-overdue)] font-medium" : ""}>{fmtWhen(f.actual)}</span>] as [string, React.ReactNode]] : []),
+    ...(f.actual ? [["Finished", <span key="a" className={f.slipDays > 0 ? "text-[var(--state-overdue-text)] font-medium" : ""}>{fmtWhen(f.actual)}</span>] as [string, React.ReactNode]] : []),
     ...(typeof m.durationHours === "number" && m.durationHours > 0 ? [["Hours of work", <span key="h" className="font-display tabular-nums">{m.durationHours} h</span>] as [string, React.ReactNode]] : []),
     ...(m.workOrderRef ? [["Work order", <span key="w" className="ui-id">WO {m.workOrderRef}</span>] as [string, React.ReactNode]] : []),
     ...(f.crew ? [["Crew", f.crew] as [string, React.ReactNode]] : []),
     ...(m.location ? [["Location", m.location] as [string, React.ReactNode]] : []),
     ...(m.linkedRevisionLabel ? [["Linked ref", <span key="l" className="font-display tabular-nums">{m.linkedRevisionLabel}</span>] as [string, React.ReactNode]] : []),
-    ...(f.baseline ? [["Against baseline", <span key="b" className={f.driftDays > 0 ? "text-[var(--state-overdue)] font-medium" : ""}>{f.driftDays === 0 ? `On it (${fmtDay(f.baseline)})` : `${Math.abs(f.driftDays)}d ${f.driftDays > 0 ? "later" : "earlier"} than ${fmtDay(f.baseline)}`}</span>] as [string, React.ReactNode]] : []),
+    ...(f.baseline ? [["Against baseline", <span key="b" className={f.driftDays > 0 ? "text-[var(--state-overdue-text)] font-medium" : ""}>{f.driftDays === 0 ? `On it (${fmtDay(f.baseline)})` : `${Math.abs(f.driftDays)}d ${f.driftDays > 0 ? "later" : "earlier"} than ${fmtDay(f.baseline)}`}</span>] as [string, React.ReactNode]] : []),
     ...(m.wbs ? [["WBS", <span key="s" className="font-display tabular-nums">{m.wbs}</span>] as [string, React.ReactNode]] : []),
     ["Source", f.imported ? "Imported schedule" : "Added by hand"],
   ];
@@ -1006,7 +1012,7 @@ function PlanTable({ rows, progress, freshId, canEdit, busy, onSetStatus, onDele
   const edgeOf = (f: PlanFacts) => f.edge && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px]" style={{ background: f.edge === "bad" ? "var(--state-overdue)" : "var(--state-held)" }} />;
   const chevron = (key: string, name: string, isOpen: boolean) => (
     <button type="button" onClick={() => toggle(key)} aria-expanded={isOpen} aria-label={`${isOpen ? "Close" : "Open"} details for ${name}`}
-      className="shrink-0 w-6 h-6 -ml-1 inline-flex items-center justify-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+      className="ui-hit shrink-0 w-6 h-6 -ml-1 inline-flex items-center justify-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
       <ChevronRight className={`w-4 h-4 transition-transform ${isOpen ? "rotate-90" : ""}`} />
     </button>
   );
@@ -1061,7 +1067,7 @@ function PlanTable({ rows, progress, freshId, canEdit, busy, onSetStatus, onDele
                   <td className="px-3 py-2.5 leading-6"><PctBar f={f} /></td>
                   <td className="px-3 py-2.5 leading-6 whitespace-nowrap font-display tabular-nums text-[var(--color-text)]">{f.start ? fmtDay(f.start) : "-"}</td>
                   <td className="px-3 py-2.5 leading-6">
-                    <div className={`whitespace-nowrap font-display tabular-nums ${f.overdue ? "text-[var(--state-overdue)] font-semibold" : "text-[var(--color-text)]"}`}>{fmtDay(f.finish)}</div>
+                    <div className={`whitespace-nowrap font-display tabular-nums ${f.overdue ? "text-[var(--state-overdue-text)] font-semibold" : "text-[var(--color-text)]"}`}>{fmtDay(f.finish)}</div>
                     <FinishNote f={f} fmtDay={fmtDay} />
                   </td>
                   <td className="px-3 py-2.5 leading-6 hidden lg:table-cell">{crewTag(f)}</td>
@@ -1095,7 +1101,7 @@ function PlanTable({ rows, progress, freshId, canEdit, busy, onSetStatus, onDele
                 </div>
                 <div className="mt-1 pl-6 flex items-center gap-x-3 text-body text-[var(--color-text-muted)]">
                   <span className="shrink-0"><PctBar f={f} /></span>
-                  <span className={`shrink-0 font-display tabular-nums ${f.overdue ? "text-[var(--state-overdue)] font-semibold" : ""}`}>
+                  <span className={`shrink-0 font-display tabular-nums ${f.overdue ? "text-[var(--state-overdue-text)] font-semibold" : ""}`}>
                     {f.start && fmtDay(f.start) !== fmtDay(f.finish) ? `${fmtDay(f.start)} to ${fmtDay(f.finish)}` : fmtDay(f.finish)}
                   </span>
                   <span className="min-w-0 flex-1 truncate">{f.crew && crewTag(f)}</span>
@@ -1190,7 +1196,7 @@ function AddMilestoneForm({
     finally { setBusy(false); }
   };
 
-  const inp = "h-9 text-body border border-[var(--color-border-strong)] rounded-lg px-2.5 bg-[var(--color-surface)]";
+  const inp = "h-9 pointer-coarse:h-11 text-body border border-[var(--color-border-strong)] rounded-lg px-2.5 bg-[var(--color-surface)]";
   const lbl = "block text-body font-medium text-[var(--color-text-muted)] mb-1";
 
   return (
@@ -1231,19 +1237,19 @@ function AddMilestoneForm({
         </label>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
-        <input value={linkedRev} onChange={(e) => setLinkedRev(e.target.value)} placeholder='Linked ref (e.g. "WO 48812")' className={inp} />
-        <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional notes" rows={1} className={`${inp} h-auto min-h-9 py-1.5 md:col-span-3 resize-y`} />
+        <input value={linkedRev} onChange={(e) => setLinkedRev(e.target.value)} aria-label="Linked reference" placeholder='Linked ref (e.g. "WO 48812")' className={inp} />
+        <textarea value={description} onChange={(e) => setDescription(e.target.value)} aria-label="Notes (optional)" placeholder="Optional notes" rows={1} className={`${inp} h-auto min-h-9 py-1.5 md:col-span-3 resize-y`} />
       </div>
       {finishFromHours && !finishAt && (
         <div className="text-body text-[var(--color-text-muted)]">Finish will be set to <b>{fmtInTz(finishFromHours, tz, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</b> (start + {hours} h).</div>
       )}
       {error && (
-        <div role="alert" className="text-body font-medium text-[var(--state-overdue)]">{error}</div>
+        <div role="alert" className="text-body font-medium text-[var(--state-overdue-text)]">{error}</div>
       )}
       <div className="flex items-center justify-end gap-2">
         <button type="button" onClick={onCancel} className={QUIET}>Cancel</button>
-        <button type="submit" disabled={busy || !name.trim() || !startAt} className={quiet ? QUIET : "inline-flex items-center gap-1.5 h-10 px-4 rounded-md text-body font-medium disabled:opacity-40 transition-colors text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]"}>
-          {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Add to schedule
+        <button type="submit" disabled={busy || !name.trim() || !startAt} className={quiet ? QUIET : "inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-4 rounded-md text-body font-medium disabled:opacity-40 transition-colors text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]"}>
+          {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} {busy ? "Adding" : "Add to schedule"}
         </button>
       </div>
     </form>

@@ -425,7 +425,7 @@ export default function Sidebar({
               <UserAvatar uid={uid} email={userEmail} size={40} rounded="xl" />
             </Link>
             <button onClick={handleLogout} title="Sign out"
-              className="w-10 h-10 inline-flex items-center justify-center text-[var(--color-text-muted)] hover:text-red-500 hover:bg-[var(--color-surface-2)] rounded-xl transition-colors">
+              className="w-10 h-10 inline-flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)] rounded-xl transition-colors">
               <LogOut className="w-4 h-4" />
             </button>
           </div>
@@ -440,7 +440,7 @@ export default function Sidebar({
             </Link>
             <button
               onClick={handleLogout}
-              className="p-2 text-[var(--color-text-muted)] hover:text-red-500 hover:bg-[var(--color-surface-2)] rounded-lg transition-colors shrink-0"
+              className="p-2 text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)] rounded-lg transition-colors shrink-0"
               title="Sign out"
             >
               <LogOut className="w-3.5 h-3.5" />
@@ -545,8 +545,8 @@ function SidebarLeaf({
           title={badgeWords}
           aria-label={`${leaf.label}: ${badgeWords}`}
           className={urgent
-            ? 'ui-badge cursor-pointer hover:brightness-110'
-            : 'min-w-5 h-5 px-1 rounded text-caption tabular-nums text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer'}
+            ? 'ui-badge ui-hit cursor-pointer hover:brightness-110'
+            : 'ui-hit min-w-5 h-5 px-1 rounded text-caption tabular-nums text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer'}
         >
           {badgeText(leaf.badge!)}
         </button>

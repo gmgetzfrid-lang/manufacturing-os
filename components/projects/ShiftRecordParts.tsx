@@ -14,7 +14,7 @@
 
 import React, { useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import { FileSpreadsheet, RotateCcw } from "lucide-react";
+import { FileSpreadsheet, RotateCcw, CircleAlert } from "lucide-react";
 import {
   INCIDENT_KINDS, saveShiftRecord, editIncident, restoreIncident, editNote, restoreNote, unclearNote,
   type Incident, type IncidentKind, type ShiftNote, type ShiftRecord,
@@ -55,8 +55,8 @@ function UndoLine({ text, onUndo, onDismiss }: { text: string; onUndo: () => voi
   return (
     <div role="status" className="mt-1 flex items-center gap-2 border-l-2 border-[var(--color-border-strong)] pl-2 py-0.5 text-caption text-[var(--color-text)]">
       <span className="min-w-0 flex-1 truncate">{text}</span>
-      <button type="button" onClick={onUndo} className="inline-flex items-center gap-1 px-2 py-1 rounded border border-[var(--color-border-strong)] font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><RotateCcw className="w-3 h-3" /> Undo</button>
-      <button type="button" onClick={onDismiss} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Dismiss</button>
+      <button type="button" onClick={onUndo} className="inline-flex items-center gap-1 px-2 py-1 pointer-coarse:min-h-11 rounded border border-[var(--color-border-strong)] font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><RotateCcw className="w-3 h-3" /> Undo</button>
+      <button type="button" onClick={onDismiss} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Dismiss</button>
     </div>
   );
 }
@@ -165,7 +165,7 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
     setEditingId(x.id); setClock(clockOf(x.at, tz)); setKind(x.kind); setText(x.text); setMsg(null); setOpen(true); setRemoved(null);
   };
   const remove = async (x: Incident) => {
-    if (!(await appConfirm({ title: "Remove this incident?", message: `${x.kind}: "${x.text}" comes off the shift's record. You can undo right after.`, confirmLabel: "Remove", tone: "danger" }))) return;
+    if (!(await appConfirm({ title: "Remove this incident?", message: `${x.kind}: "${x.text}" comes off the shift's record. You can undo right after.`, confirmLabel: "Remove incident", tone: "danger" }))) return;
     onRemove(x.id);
     setRemoved(x);
     if (editingId === x.id) reset();
@@ -224,8 +224,8 @@ export function IncidentsLine({ incidents, edit, print, shift, tz, T, onNone, on
           </select>
           <input value={text} onChange={(e) => { setText(e.target.value); setMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="What happened, who, what was done" aria-label="What happened" className={`${inputCls} flex-1 min-w-[180px]`} />
           <button type="button" onClick={add} className={addBtn}>{editingId ? "Save" : "Add"}</button>
-          {editingId && <button type="button" onClick={reset} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>}
-          {msg && <span className="basis-full text-[var(--state-overdue-text)] font-medium">{msg}</span>}
+          {editingId && <button type="button" onClick={reset} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>}
+          {msg && <span role="alert" className="basis-full text-[var(--state-overdue-text)] font-medium flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-0.5" /><span>{msg}</span></span>}
         </div>
       )}
       {!open && msg && <div className="mt-1 text-[var(--state-overdue-text)] font-medium">{msg}</div>}
@@ -283,7 +283,7 @@ export function ShiftNotesBox({ notes, edit, print, shift, tz, T, D, onAdd, onCl
     setEditing(n); setClock(clockOf(n.at, tz)); setText(n.text); setFollow(!!n.followUp); setMsg(null); setRemoved(null);
   };
   const remove = async (n: ShiftNote & { shiftKey: string }) => {
-    if (!(await appConfirm({ title: "Remove this note?", message: `"${n.text}" comes off the shift's record. You can undo right after.`, confirmLabel: "Remove", tone: "danger" }))) return;
+    if (!(await appConfirm({ title: "Remove this note?", message: `"${n.text}" comes off the shift's record. You can undo right after.`, confirmLabel: "Remove note", tone: "danger" }))) return;
     onRemove(n);
     setRemoved(n);
     if (editing?.id === n.id) reset();
@@ -347,8 +347,8 @@ export function ShiftNotesBox({ notes, edit, print, shift, tz, T, D, onAdd, onCl
           <input value={text} onChange={(e) => { setText(e.target.value); setMsg(null); }} onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="What happened, or what needs doing" aria-label="Note" className={`${inputCls} flex-1 min-w-[160px]`} />
           <label className="inline-flex items-center gap-1 text-caption"><input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} /> Follow-up</label>
           <button type="button" onClick={add} className={addBtn}>{editing ? "Save" : "Add"}</button>
-          {editing && <button type="button" onClick={reset} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>}
-          {msg && <span className="basis-full text-caption text-[var(--state-overdue-text)] font-medium">{msg}</span>}
+          {editing && <button type="button" onClick={reset} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>}
+          {msg && <span role="alert" className="basis-full text-caption text-[var(--state-overdue-text)] font-medium flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{msg}</span></span>}
         </div>
       )}
     </div>

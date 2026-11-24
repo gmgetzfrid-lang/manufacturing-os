@@ -62,7 +62,6 @@ import { SkeletonRows } from "@/components/ui/Skeleton";
 import quietTags from "@/components/documents/quietTags.module.css";
 import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
 import { bandInput, bandInputIcon, bandSeg, bandSegItem } from "@/components/admin/band";
-import { fieldError } from "@/components/admin/kit";
 import plainError from "@/components/documents/plainError";
 import { StatusTag, docStatusTone, humanDate } from "@/components/documents/StatusTag";
 import { isDocumentCheckedOut } from "@/lib/documentGuards";
@@ -221,6 +220,7 @@ import { friendlyError } from "@/lib/friendlyError";
 import { readAsk, type Ask } from "@/lib/asks";
 import { shownRevision, uploadedName } from "@/lib/revisionShown";
 import LibraryAsk from "@/components/documents/LibraryAsk";
+import { FieldError } from "@/components/ui/Field";
 // The selection bars float over the list: above a phone's Upload bar, and
 // above the staged tray when it shows (--staged-tray-h).
 const SELECTION_BAR_BOTTOM = "bottom-[calc(5rem_+_var(--staged-tray-h,0px))] sm:bottom-[calc(2.5rem_+_var(--staged-tray-h,0px))]";
@@ -1223,7 +1223,7 @@ export default function LibraryExplorerPage() {
   // via the metadata editor or the per-doc inspector.
   const handleBulkArchive = async () => {
     if (selectedDocIds.size === 0) return;
-    if (!(await appConfirm({ title: `Archive ${selectedDocIds.size} document${selectedDocIds.size === 1 ? "" : "s"}?`, message: "They keep their history but disappear from the default view." }))) return;
+    if (!(await appConfirm({ title: `Archive ${selectedDocIds.size} document${selectedDocIds.size === 1 ? "" : "s"}?`, message: "They keep their history but disappear from the default view.", confirmLabel: `Archive ${selectedDocIds.size} document${selectedDocIds.size === 1 ? "" : "s"}` }))) return;
     const ids = Array.from(selectedDocIds);
     const now = new Date().toISOString();
     // Sliced (ids ride in the URL) and checked — a failed slice used to be
@@ -1434,7 +1434,7 @@ export default function LibraryExplorerPage() {
 
   const handleForceUnlock = async (docRecord: DocumentRecord) => {
     if (!docRecord.id || !activeOrgId) return;
-    if (!(await appConfirm({ title: `Force release lock for ${docRecord.title}?`, message: "This ends every active session and closes the checkout.", tone: "danger" }))) return;
+    if (!(await appConfirm({ title: `Force release lock for ${docRecord.title}?`, message: "This ends every active session and closes the checkout.", confirmLabel: "Force release", tone: "danger" }))) return;
 
     try {
       // Ends all sessions, closes the checkout episode, clears the lock +
@@ -1462,6 +1462,7 @@ export default function LibraryExplorerPage() {
     if (!(await appConfirm({
       title: `Delete "${selectedDoc.title || selectedDoc.name || selectedDoc.documentNumber || "this document"}"?`,
       message: "This removes the document and every revision of it. This cannot be undone. To hide it but keep it, use Archive instead.",
+      confirmLabel: "Delete document",
       tone: "danger",
     }))) return;
 
@@ -4365,11 +4366,11 @@ export default function LibraryExplorerPage() {
                   title="Number, title, equipment tag (E-22) or words inside"
                   aria-label="Search documents and equipment"
                   data-find-input
-                  className={`${bandInput} !pr-11 max-sm:text-base`}
+                  className={`${bandInput} !pr-11 max-sm:text-reading`}
                 />
                 {find && (
                   <button type="button" onClick={() => setFind("")} title="Clear the search" aria-label="Clear the search"
-                    className="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                    className="ui-hit absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                     <X className="w-4 h-4" />
                   </button>
                 )}
@@ -4382,20 +4383,20 @@ export default function LibraryExplorerPage() {
                   {staged.error && (
                     <div role="alert" className="text-body text-[var(--color-text)] flex items-start gap-2"><CircleAlert aria-hidden className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-overdue)]" />
                       <span className="flex-1 min-w-0">{plainError(staged.error)}</span>
-                      <button onClick={staged.dismissError} className="shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]" aria-label="Dismiss"><X className="w-3.5 h-3.5" /></button>
+                      <button onClick={staged.dismissError} className="ui-hit shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]" aria-label="Dismiss"><X className="w-3.5 h-3.5" /></button>
                     </div>
                   )}
                   {error && (
                     <div role="alert" className="text-body text-[var(--color-text)] flex items-start gap-2"><CircleAlert aria-hidden className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-overdue)]" />
                       <span className="flex-1 min-w-0">{plainError(error)}</span>
-                      <button onClick={() => setError(null)} className="shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]" aria-label="Dismiss"><X className="w-3.5 h-3.5" /></button>
+                      <button onClick={() => setError(null)} className="ui-hit shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]" aria-label="Dismiss"><X className="w-3.5 h-3.5" /></button>
                     </div>
                   )}
                   {notice && (
                     <div role="status" className="text-body text-[var(--color-text)] flex items-start gap-2">
                       <Check className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-released)]" />
                       <span className="flex-1 min-w-0">{notice}</span>
-                      <button onClick={() => setNotice(null)} className="shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]" aria-label="Dismiss"><X className="w-3.5 h-3.5" /></button>
+                      <button onClick={() => setNotice(null)} className="ui-hit shrink-0 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)]" aria-label="Dismiss"><X className="w-3.5 h-3.5" /></button>
                     </div>
                   )}
                 </div>
@@ -4613,7 +4614,9 @@ export default function LibraryExplorerPage() {
                 <h2 id="lib-docs-h" className="flex items-baseline gap-2 min-w-0 mr-auto">
                   <span className="font-display text-section leading-tight font-semibold text-[var(--color-heading)]">{noun.many === "documents" ? "Documents" : library.name}</span>
                   <span className="text-body text-[var(--color-text-muted)] tabular-nums"
-                    title="Documents filed directly in this folder">{filteredDocs.length.toLocaleString()} here</span>
+                    title="Documents filed directly in this folder">{deferredSearch.trim() && filteredDocs.length !== readableDocs.length
+                      ? `${filteredDocs.length.toLocaleString()} of ${readableDocs.length.toLocaleString()} here`
+                      : `${filteredDocs.length.toLocaleString()} here`}</span>
                   {folderCounts && (() => {
                     const below = currentFolderId ? folderCounts.totals.get(currentFolderId) ?? 0 : folderCounts.libraryTotal;
                     return below > (folderCounts.direct.get(currentFolderId ?? null) ?? 0) && below !== filteredDocs.length ? (
@@ -4652,7 +4655,7 @@ export default function LibraryExplorerPage() {
                       onClick={() => setSearch("")}
                       title="Clear filter"
                       aria-label="Clear filter"
-                      className="absolute right-1 top-1/2 -translate-y-1/2 w-7 h-7 grid place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                      className="ui-hit absolute right-1 top-1/2 -translate-y-1/2 w-7 h-7 grid place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
@@ -4984,6 +4987,7 @@ export default function LibraryExplorerPage() {
                               checked={allSelected}
                               ref={(el) => { if (el) el.indeterminate = someSelected; }}
                               onChange={toggleSelectAll}
+                              aria-label="Select all documents"
                               className="w-3.5 h-3.5 rounded accent-[var(--color-main)] cursor-pointer"
                             />
                           </th>
@@ -5114,6 +5118,7 @@ export default function LibraryExplorerPage() {
                                     type="checkbox"
                                     checked={isRowSelected}
                                     onChange={() => {}}
+                                    aria-label={`Select ${docRecord.documentNumber || docRecord.title || "this document"}`}
                                     className="w-3.5 h-3.5 rounded accent-[var(--color-main)] cursor-pointer"
                                   />
                                 </td>
@@ -5171,6 +5176,7 @@ export default function LibraryExplorerPage() {
                                           <div className="flex items-center gap-1">
                                             <input
                                               autoFocus
+                                              aria-label="Title"
                                               value={editingTitleValue}
                                               onChange={(e) => setEditingTitleValue(e.target.value)}
                                               onClick={(e) => e.stopPropagation()}
@@ -5181,7 +5187,7 @@ export default function LibraryExplorerPage() {
                                               }}
                                               onBlur={() => { if (!savingTitle) void saveInlineTitle(docRecord.id!, editingTitleValue); }}
                                               disabled={savingTitle}
-                                              className="w-full text-sm px-1.5 py-0.5 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface-2)]"
+                                              className="w-full text-body px-1.5 py-0.5 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface-2)]"
                                             />
                                             {savingTitle && <Loader2 className="w-3 h-3 animate-spin text-[var(--color-text-muted)] shrink-0" />}
                                           </div>
@@ -5257,7 +5263,7 @@ export default function LibraryExplorerPage() {
                                                 setEditingDocNumValue(docRecord.documentNumber || "");
                                                 setEditingDocNumError(null);
                                               }}
-                                              className="shrink-0 w-7 h-7 grid place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
+                                              className="ui-hit shrink-0 w-7 h-7 grid place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
                                               title="Rename the number"
                                               aria-label={`Rename ${docRecord.documentNumber || "the number"}`}
                                             >
@@ -5286,7 +5292,7 @@ export default function LibraryExplorerPage() {
                                     return (
                                       <button
                                         onClick={(e) => handleStageDoc(docRecord, e)}
-                                        className={`w-8 h-8 grid place-items-center rounded-lg transition-colors ${
+                                        className={`pointer-coarse:size-11 w-8 h-8 grid place-items-center rounded-lg transition-colors ${
                                           isStaged
                                             ? "text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]"
                                             : "text-[var(--color-text-faint)] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 hover:!text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
@@ -5300,12 +5306,12 @@ export default function LibraryExplorerPage() {
                                     );
                                   })()}
                                 </td>
-                                <td className={`px-1 ${rowPad} text-center sticky right-0 z-[2] ${stickyBg}`}>
+                                <td className={`px-1 pointer-coarse:px-0 ${rowPad} text-center sticky right-0 z-[2] ${stickyBg}`}>
                                   {/* Every other row action, in one menu (the same one a right-click opens). */}
                                   <button
                                     type="button"
                                     onClick={(e) => openRowMenu(docRecord, e)}
-                                    className="w-8 h-8 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
+                                    className="pointer-coarse:size-11 w-8 h-8 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
                                     title="Actions"
                                     aria-haspopup="menu"
                                     aria-label={`Actions for ${docRecord.documentNumber || docRecord.title || "this document"}`}
@@ -5674,7 +5680,7 @@ export default function LibraryExplorerPage() {
 
       {/* Phase 4: saved views — floating panel anchored top-right */}
       {showViewSelector && activeOrgId && uid && (
-        <div className="fixed top-16 right-4 z-[100] bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg p-3 animate-in fade-in zoom-in-95 duration-150 origin-top-right">
+        <div className="fixed top-16 right-4 z-[100] bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-[var(--color-ink)]/5 rounded-xl shadow-lg p-3 animate-in fade-in zoom-in-95 duration-150 origin-top-right">
           <ViewSelector
             orgId={activeOrgId}
             libraryId={libraryId}
@@ -5718,11 +5724,11 @@ export default function LibraryExplorerPage() {
                 // FIXED, not absolute: in a tall library the centre of the
                 // file area can be far below the screen, which made this read
                 // as a frozen page.
-                <div className="fixed inset-0 z-[250] flex items-center justify-center bg-slate-900/40 backdrop-blur-[2px] p-4">
+                <div className="fixed inset-0 z-[250] flex items-center justify-center bg-[var(--color-ink)]/40 backdrop-blur-[2px] p-4">
                   <div className="w-full max-w-sm rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl p-5 text-center">
                     <Loader2 className="w-8 h-8 text-[var(--color-text-muted)] animate-spin mx-auto mb-3" />
-                    <p className="text-base font-medium text-[var(--color-text)]">Reading your folder…</p>
-                    <p className="text-sm text-[var(--color-text)] mt-1">
+                    <p className="text-reading font-medium text-[var(--color-text)]">Reading your folder…</p>
+                    <p className="text-body text-[var(--color-text)] mt-1">
                       <b>{readingDrop.toLocaleString()}</b> file{readingDrop === 1 ? "" : "s"} found
                     </p>
                     <ReadingHint startedAt={readingStartRef.current} />
@@ -5934,10 +5940,10 @@ export default function LibraryExplorerPage() {
                 onChange={(e) => { setRenameValue(e.target.value); setFolderErr(null); }}
                 placeholder="Folder name"
                 aria-label="Folder name"
-                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm"
+                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-body"
                 autoFocus
               />
-              {folderErr && <p role="alert" className={fieldError}>{plainError(folderErr)}</p>}
+              {folderErr && <FieldError>{plainError(folderErr)}</FieldError>}
             </ModalBody>
             <ModalFooter>
               <Button type="button" variant="secondary" onClick={() => setCreatingFolder(false)}>Cancel</Button>
@@ -5990,10 +5996,10 @@ export default function LibraryExplorerPage() {
                 onChange={(e) => { setRenameValue(e.target.value); setFolderErr(null); }}
                 placeholder="Folder name"
                 aria-label="Folder name"
-                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm"
+                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-body"
                 autoFocus
               />
-              {folderErr && <p role="alert" className={fieldError}>{plainError(folderErr)}</p>}
+              {folderErr && <FieldError>{plainError(folderErr)}</FieldError>}
             </ModalBody>
             <ModalFooter>
               <Button type="button" variant="secondary" onClick={() => setRenameFolderId(null)}>Cancel</Button>
@@ -6042,12 +6048,12 @@ function LibraryNumberingModal({ orgId, libraryId, onClose }: {
     <Modal onClose={onClose} size="sm" zIndex={95}>
         <ModalHeader icon={Hash} title="Auto-numbering" subtitle="Uploads with a blank number get the next one. A typed number always wins." onClose={onClose} />
         {loadErr ? (
-          <p role="alert" className="m-5 border-l-2 border-[var(--state-overdue)] pl-3 text-body text-[var(--state-overdue-text)]">{plainError(loadErr)}</p>
+          <div className="m-5"><FieldError>{plainError(loadErr)}</FieldError></div>
         ) : cfg === null ? (
-          <div className="p-6 text-center text-sm text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline" /> Loading the numbering settings…</div>
+          <div className="p-6 text-center text-body text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline" /> Loading the numbering settings…</div>
         ) : (
           <div className="p-5 space-y-3">
-            <label className="flex items-center gap-2 text-sm font-medium text-[var(--color-text)] cursor-pointer">
+            <label className="flex items-center gap-2 text-body font-medium text-[var(--color-text)] cursor-pointer">
               <input type="checkbox" checked={cfg.enabled}
                 onChange={(e) => setCfg({ ...cfg, enabled: e.target.checked })}
                 className="w-4 h-4 accent-[var(--color-main)]" />
@@ -6056,26 +6062,26 @@ function LibraryNumberingModal({ orgId, libraryId, onClose }: {
             <div className="grid grid-cols-3 gap-2">
               <div className="col-span-1">
                 <label className="text-body font-medium text-[var(--color-text)]">Prefix</label>
-                <input value={cfg.prefix} onChange={(e) => setCfg({ ...cfg, prefix: e.target.value })}
-                  placeholder="PROC-" className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm font-display tabular-nums" />
+                <input aria-label="Prefix" value={cfg.prefix} onChange={(e) => setCfg({ ...cfg, prefix: e.target.value })}
+                  placeholder="PROC-" className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-body font-display tabular-nums" />
               </div>
               <div>
                 <label className="text-body font-medium text-[var(--color-text)]">Digits</label>
-                <input type="number" min={1} max={8} value={cfg.pad}
+                <input type="number" inputMode="numeric" aria-label="Digits" min={1} max={8} value={cfg.pad}
                   onChange={(e) => setCfg({ ...cfg, pad: Math.max(1, Math.min(8, Number(e.target.value) || 4)) })}
-                  className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
+                  className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-body" />
               </div>
               <div>
                 <label className="text-body font-medium text-[var(--color-text)]">Next #</label>
-                <input type="number" min={1} value={cfg.next_number}
+                <input type="number" inputMode="numeric" aria-label="Next number" min={1} value={cfg.next_number}
                   onChange={(e) => setCfg({ ...cfg, next_number: Math.max(1, Number(e.target.value) || 1) })}
-                  className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
+                  className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-body" />
               </div>
             </div>
             <div className="text-body text-[var(--color-text-muted)]">
               Next issued number: <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{preview}</span>
             </div>
-            {err && <p role="alert" className={fieldError}>{plainError(err)}</p>}
+            {err && <FieldError>{plainError(err)}</FieldError>}
           </div>
         )}
         <ModalFooter>

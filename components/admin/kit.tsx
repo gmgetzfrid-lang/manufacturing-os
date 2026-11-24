@@ -26,7 +26,7 @@ export const btnQuiet =
 
 /** A small secondary button for a table row. */
 export const btnRow =
-  "ui-press inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 h-8 pointer-coarse:h-10 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-[var(--shadow-control)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-control)] active:shadow-none disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed transition-[color,background-color,border-color,box-shadow,transform]";
+  "ui-press inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 h-8 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-[var(--shadow-control)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-control)] active:shadow-none disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed transition-[color,background-color,border-color,box-shadow,transform]";
 
 /** A destructive action: red words on a secondary button. Confirm first. */
 export const btnDanger =
@@ -42,8 +42,11 @@ export const btnIcon =
   "inline-flex items-center justify-center w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)] disabled:opacity-40 disabled:cursor-not-allowed transition-colors";
 
 /** A link: the brand's readable shade, underlined on hover. */
+// On touch, 12 px of padding above and below (cancelled by an equal
+// negative margin) makes a 20 px line of link text a 44 px tap area
+// without moving anything (design rule T1).
 export const link =
-  "text-[var(--color-accent-text)] hover:underline underline-offset-2";
+  "text-[var(--color-accent-text)] hover:underline underline-offset-2 pointer-coarse:py-3 pointer-coarse:-my-3";
 
 /** A text field with no size: give it a width, height and text size. The
  *  resting edge is 3:1 against the page; focus is the app-wide ring. */

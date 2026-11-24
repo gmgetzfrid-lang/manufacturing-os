@@ -178,7 +178,7 @@ export default function CollectionModal({
 
   const onDelete = async () => {
     if (!collection) return;
-    if (!(await appConfirm({ title: "Delete collection", message: "Delete this collection? Documents themselves aren't deleted, only the curated grouping.", tone: "danger" }))) return;
+    if (!(await appConfirm({ title: "Delete this collection?", message: "Only the grouping is deleted. The documents stay where they are.", confirmLabel: "Delete collection", tone: "danger" }))) return;
     setBusy(true);
     try {
       await deleteCollection(collection.id);
@@ -308,7 +308,7 @@ export default function CollectionModal({
               <ListChecks className={`w-5 h-5 ${scope === "org" ? "text-[var(--color-text-muted)]" : "text-[var(--color-text-muted)]"}`} />
             </div>
             <div className="min-w-0">
-              <div className="text-sm font-medium text-[var(--color-text)] truncate">
+              <div className="text-body font-medium text-[var(--color-text)] truncate">
                 {mode === "create" ? "New Collection" : (collection?.name ?? "Collection")}
               </div>
               <div className="text-body text-[var(--color-text-muted)] truncate">
@@ -316,24 +316,24 @@ export default function CollectionModal({
               </div>
             </div>
           </div>
-          <button aria-label="Close" onClick={onClose} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
+          <button aria-label="Close" onClick={onClose} className="ui-hit p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             <X className="w-4 h-4" />
           </button>
         </div>
 
         <div className="flex-1 overflow-auto">
           {loading ? (
-            <div className="p-8 text-center text-sm text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline" /> Loading…</div>
+            <div className="p-8 text-center text-body text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin inline" /> Loading…</div>
           ) : (
             <>
               {/* Form (create + edit) */}
               {(mode === "create" || mode === "edit") && (
                 <div className="p-6 space-y-4 border-b border-[var(--color-border)]">
                   <Field label="Name *">
-                    <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Crude Cold Side - Receipt to Surge" className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
+                    <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Crude Cold Side - Receipt to Surge" className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-body" />
                   </Field>
                   <Field label="Description" hint="Optional. Describe what this collection is for.">
-                    <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} placeholder="e.g. P&IDs and isos for crude unit cold side, in flow order." className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y" />
+                    <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} placeholder="e.g. P&IDs and isos for crude unit cold side, in flow order." className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-body resize-y" />
                   </Field>
                   <Field label="Lives in" hint="The folder this book belongs to. It only appears when browsing that folder.">
                     <div className="flex items-center gap-2">
@@ -341,7 +341,7 @@ export default function CollectionModal({
                       <select
                         value={targetFolderId ?? ""}
                         onChange={(e) => setTargetFolderId(e.target.value || null)}
-                        className="flex-1 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]"
+                        className="flex-1 px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-body bg-[var(--color-surface)]"
                       >
                         <option value="">Library root</option>
                         {folderOptions.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
@@ -378,7 +378,7 @@ export default function CollectionModal({
                     </div>
                   )}
                   {mode === "view" && collection.description && (
-                    <p className="text-sm text-[var(--color-text-muted)] mb-4 leading-relaxed">{collection.description}</p>
+                    <p className="text-body text-[var(--color-text-muted)] mb-4 leading-relaxed">{collection.description}</p>
                   )}
 
                   <div className="flex items-center justify-between mb-2 gap-2">
@@ -435,13 +435,13 @@ export default function CollectionModal({
                           )}
                           {mode === "edit" && (
                             <div className="flex items-center gap-0.5 shrink-0">
-                              <button onClick={() => onMove(item.document_id, -1)} disabled={idx === 0 || busy} className="p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-slate-200 rounded disabled:opacity-30">
+                              <button aria-label="Move up" onClick={() => onMove(item.document_id, -1)} disabled={idx === 0 || busy} className="inline-flex items-center justify-center pointer-coarse:size-11 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded disabled:opacity-30">
                                 <ArrowUp className="w-3 h-3" />
                               </button>
-                              <button onClick={() => onMove(item.document_id, 1)} disabled={idx === itemsHydrated.length - 1 || busy} className="p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-slate-200 rounded disabled:opacity-30">
+                              <button aria-label="Move down" onClick={() => onMove(item.document_id, 1)} disabled={idx === itemsHydrated.length - 1 || busy} className="inline-flex items-center justify-center pointer-coarse:size-11 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded disabled:opacity-30">
                                 <ArrowDown className="w-3 h-3" />
                               </button>
-                              <button onClick={() => onRemoveDoc(item.document_id)} disabled={busy} className="p-1 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] rounded">
+                              <button aria-label="Remove from collection" onClick={() => onRemoveDoc(item.document_id)} disabled={busy} className="inline-flex items-center justify-center pointer-coarse:size-11 p-1 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] rounded">
                                 <Trash2 className="w-3 h-3" />
                               </button>
                             </div>
@@ -458,15 +458,15 @@ export default function CollectionModal({
                 <div className="fixed inset-0 z-[310] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
                   <div className="w-full max-w-lg bg-[var(--color-surface)] rounded-lg shadow-2xl border border-[var(--color-border)] overflow-hidden flex flex-col max-h-[80vh] animate-in fade-in zoom-in-95">
                     <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between">
-                      <div className="text-sm font-medium text-[var(--color-text)]">Add documents</div>
-                      <button aria-label="Close" onClick={() => setShowPicker(false)} className="p-1.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                      <div className="text-body font-medium text-[var(--color-text)]">Add documents</div>
+                      <button aria-label="Close" onClick={() => setShowPicker(false)} className="ui-hit p-1.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                         <X className="w-3.5 h-3.5" />
                       </button>
                     </div>
                     <div className="px-4 py-2 border-b border-[var(--color-border)]">
                       <div className="flex items-center gap-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg px-2 py-1.5">
                         <Search className="w-3.5 h-3.5 text-[var(--color-text-faint)]" />
-                        <input value={pickerSearch} onChange={(e) => setPickerSearch(e.target.value)} placeholder="Search document #, title…" className="flex-1 bg-transparent text-body outline-none" />
+                        <input type="search" aria-label="Search documents" value={pickerSearch} onChange={(e) => setPickerSearch(e.target.value)} placeholder="Search document #, title…" className="flex-1 bg-transparent text-body outline-none" />
                       </div>
                     </div>
                     <div className="flex-1 overflow-y-auto p-2">

@@ -21,7 +21,7 @@ import { StatusTag, type DocTone } from "@/components/documents/StatusTag";
 import { Note, Cells } from "@/components/knowledge/panelKit";
 
 /** The ⋯ trigger, ruled like a secondary button. */
-const btnIconRuled = "inline-flex items-center justify-center w-9 h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]";
+const btnIconRuled = "inline-flex items-center justify-center w-9 h-9 pointer-coarse:size-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]";
 import {
   getDrawingIntel, rebuildDrawingIndex, downloadEquipmentRegister, recordDrawingAudit,
   type DrawingIntel, type RecordedAuditSheet,

@@ -130,7 +130,7 @@ export default function LibraryOrderModal({
 
   // ── Reset: clear sort_order on every doc → fall back to date ────
   const reset = async () => {
-    if (!(await appConfirm({ title: "Clear custom order", message: "Clear custom order? Documents will fall back to updated-date order.", tone: "danger" }))) return;
+    if (!(await appConfirm({ title: "Clear the custom order?", message: "Documents go back to updated-date order.", confirmLabel: "Clear order", tone: "danger" }))) return;
     setBusy(true);
     try {
       const { error: resetErr } = await supabase.from("documents")
@@ -161,11 +161,11 @@ export default function LibraryOrderModal({
           <div className="flex items-center gap-2.5">
             <div className="p-1.5 bg-[var(--color-surface-2)] rounded-lg"><GripVertical className="w-4 h-4 text-[var(--color-text-muted)]" /></div>
             <div>
-              <div className="text-sm font-medium text-[var(--color-text)]">Library Display Order</div>
+              <div className="text-body font-medium text-[var(--color-text)]">Library Display Order</div>
               <div className="text-body text-[var(--color-text-muted)]">Drag rows to set the order documents appear in this library.</div>
             </div>
           </div>
-          <button aria-label="Close" onClick={onClose} disabled={busy} className="p-1.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+          <button aria-label="Close" onClick={onClose} disabled={busy} className="ui-hit p-1.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -182,11 +182,11 @@ export default function LibraryOrderModal({
 
         <div className="flex-1 overflow-auto p-3">
           {loading ? (
-            <div className="text-center text-sm text-[var(--color-text-muted)] py-8">
+            <div className="text-center text-body text-[var(--color-text-muted)] py-8">
               <Loader2 className="w-4 h-4 animate-spin inline" /> Loading…
             </div>
           ) : docs.length === 0 ? (
-            <div className="text-center text-sm text-[var(--color-text-faint)] py-8 italic">No documents in this library yet.</div>
+            <div className="text-center text-body text-[var(--color-text-faint)] py-8 italic">No documents in this library yet.</div>
           ) : (
             <div className="space-y-1">
               {docs.map((d, idx) => (
@@ -209,12 +209,12 @@ export default function LibraryOrderModal({
                   </div>
                   {d.rev && <span className="text-body font-medium text-[var(--color-text-muted)] shrink-0">Rev {d.rev}</span>}
                   <div className="flex flex-col shrink-0 -my-1">
-                    <button onClick={() => move(d.id, -1)} disabled={idx === 0} title="Move up"
-                      className="p-0.5 text-[var(--color-text-faint)] hover:text-[var(--color-text)] disabled:opacity-25">
+                    <button onClick={() => move(d.id, -1)} disabled={idx === 0} title="Move up" aria-label={`Move ${d.documentNumber} up`}
+                      className="inline-flex items-center justify-center pointer-coarse:size-11 p-0.5 text-[var(--color-text-faint)] hover:text-[var(--color-text)] disabled:opacity-25">
                       <ChevronUp className="w-3.5 h-3.5" />
                     </button>
-                    <button onClick={() => move(d.id, 1)} disabled={idx === docs.length - 1} title="Move down"
-                      className="p-0.5 text-[var(--color-text-faint)] hover:text-[var(--color-text)] disabled:opacity-25">
+                    <button onClick={() => move(d.id, 1)} disabled={idx === docs.length - 1} title="Move down" aria-label={`Move ${d.documentNumber} down`}
+                      className="inline-flex items-center justify-center pointer-coarse:size-11 p-0.5 text-[var(--color-text-faint)] hover:text-[var(--color-text)] disabled:opacity-25">
                       <ChevronDown className="w-3.5 h-3.5" />
                     </button>
                   </div>

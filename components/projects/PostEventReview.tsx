@@ -19,7 +19,7 @@
 // on screen (View slides) on a computer or a phone.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, ChevronDown, Download, Loader2, Plus, Presentation, RefreshCw, RotateCcw, X } from "lucide-react";
+import { Check, ChevronDown, Download, Loader2, Plus, Presentation, RefreshCw, RotateCcw, X, CircleAlert } from "lucide-react";
 import type { Milestone, MilestoneNote } from "@/types/schema";
 import type { ProgressLogRow } from "@/lib/progressHistory";
 import type { ShiftRecord } from "@/lib/shiftRecord";
@@ -73,7 +73,7 @@ import { sayError } from "@/components/projects/sayError";
 import { SubTabs } from "@/components/projects/SubTabs";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 
-const btn = "inline-flex items-center justify-center gap-1.5 h-10 sm:h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50 transition-colors";
+const btn = "inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 sm:h-10 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50 transition-colors";
 const pri = "inline-flex items-center justify-center gap-1.5 h-10 sm:h-10 px-3.5 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] whitespace-nowrap disabled:opacity-50 transition-colors";
 const field = "w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-1.5 text-body text-[var(--color-text)]";
 const label = "text-caption font-medium text-[var(--color-text-muted)]";
@@ -466,8 +466,8 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
             items={phases.map((p) => ({ id: p.id, label: p.name }))} />
         )}
         {(busy === "slides" || busy === "word") && <p role="status" className="mt-2 text-body text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1.5" />Making the {busy === "word" ? "Word report" : "PowerPoint"}</p>}
-        {err && <div role="alert" className="mt-2 text-body font-medium text-[var(--state-overdue)]">{err}</div>}
-        {msg && <div role="status" className="mt-2 text-body font-medium text-[var(--state-held)]">{msg}</div>}
+        {err && <div role="alert" className="mt-2 text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-0.5" /><span>{err}</span></div>}
+        {msg && <div role="status" className="mt-2 text-body font-medium text-[var(--state-held-text)]">{msg}</div>}
         {held && !viewing && <div role="status" className="mt-2 flex items-center gap-2 flex-wrap text-body font-medium text-[var(--color-text)]" data-file-ready><span className="min-w-0 flex-1 basis-40">The file is ready.</span><button type="button" onClick={() => void saveHeld()} className={btn}><Download className="w-4 h-4" /> Save file</button></div>}
       </div>
       {viewing && viewSpecs && <ReviewSlides slides={viewSpecs} name={`${phase?.name ?? projectName} post-event review`} onClose={() => setViewing(false)} onDownload={() => void download("slides")} downloading={busy === "slides"} ready={held ? { name: held.name, onSave: () => void saveHeld() } : null} look={slideLook} template={tpl?.name ?? null}
@@ -489,11 +489,11 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
 
       {!m.steps ? <div className={`${box} text-body text-[var(--color-text-muted)]`}>No schedule{phase ? ` for ${phase.name}` : ""} yet, so there is nothing to review.</div> : <>
         <section className={box} data-review-answer>
-          <h3 className="font-display text-section sm:text-[22px] font-semibold leading-snug text-[var(--color-text)]"><Tags text={pt.headline} /></h3>
+          <h3 className="font-display text-section font-semibold leading-snug text-[var(--color-text)]"><Tags text={pt.headline} /></h3>
           <dl className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2.5 text-body">
             <div><dt className="text-[var(--color-text-muted)]">Baseline finish</dt><dd className="font-medium text-reading text-[var(--color-text)]">{at(m.baselineFinish)}</dd></div>
             <div><dt className="text-[var(--color-text-muted)]">Actual finish</dt><dd className="font-medium text-reading text-[var(--color-text)]">{at(m.actualFinish)}</dd></div>
-            <div className="col-span-2 sm:col-span-1"><dt className="text-[var(--color-text-muted)]">Against the baseline</dt><dd className={`font-medium text-reading ${m.varianceH == null ? "text-[var(--color-text)]" : m.varianceH >= 1 ? "text-[var(--state-overdue)]" : "text-[var(--state-released)]"}`}>{m.varianceH == null ? `${m.steps - m.stepsDone} of ${m.steps} activities still open` : Math.abs(m.varianceH) < 1 ? "On the baseline finish" : `${Math.abs(m.varianceH)} h ${m.varianceH > 0 ? "late" : "early"}`}</dd></div>
+            <div className="col-span-2 sm:col-span-1"><dt className="text-[var(--color-text-muted)]">Against the baseline</dt><dd className={`font-medium text-reading ${m.varianceH == null ? "text-[var(--color-text)]" : m.varianceH >= 1 ? "text-[var(--state-overdue-text)]" : "text-[var(--state-released-text)]"}`}>{m.varianceH == null ? `${m.steps - m.stepsDone} of ${m.steps} activities still open` : Math.abs(m.varianceH) < 1 ? "On the baseline finish" : `${Math.abs(m.varianceH)} h ${m.varianceH > 0 ? "late" : "early"}`}</dd></div>
           </dl>
           {late && review.lateBars.length > 0 && (
             <div className="mt-5">
@@ -655,7 +655,7 @@ function LoadBody({ L, tz, canManage, busy, onCrews }: { L: PartyLoad; tz: strin
             <label className="inline-flex items-center gap-1.5 text-body">Jobs {L.party} can work at once
               <input autoFocus type="number" inputMode="numeric" min={1} max={50} value={edit} onChange={(e) => setEdit(e.target.value)} className={`${field} !w-20 h-10 pointer-coarse:h-11 sm:h-9 !py-0`} />
             </label>
-            <button type="submit" disabled={saving || !(Number(edit) >= 1 && Number(edit) <= 50)} className={btn}>{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Save</button>
+            <button type="submit" disabled={saving || !(Number(edit) >= 1 && Number(edit) <= 50)} className={btn}>{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null} {saving ? "Saving" : "Save"}</button>
             {L.planned.from === "set" && <button type="button" className={link} onClick={() => { onCrews(L.party, null); setEdit(null); }}>Use the schedule&apos;s {L.planned.sched}</button>}
             <button type="button" className={link} onClick={() => setEdit(null)}>Cancel</button>
             <span className="basis-full text-caption text-[var(--color-text-muted)]">Kept with {L.party}&apos;s staffing settings for this phase. The review counts again with it.</span>
@@ -683,7 +683,7 @@ function QuestionLine({ q, said, canManage, busy, onSave }: { q: Question; said:
       {text != null && (
         <form className="mt-1.5 flex items-center gap-1.5 flex-wrap" onSubmit={(e) => { e.preventDefault(); onSave(text); setText(null); }}>
           <input autoFocus value={text} onChange={(e) => setText(e.target.value)} aria-label={q.ask} placeholder="One line is enough" maxLength={1000} className={`${field} min-w-0 flex-1 basis-56 h-10 pointer-coarse:h-11 sm:h-9 !py-0`} />
-          <button type="submit" disabled={busy} className={btn}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Save</button>
+          <button type="submit" disabled={busy} className={btn}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : null} {busy ? "Saving" : "Save"}</button>
           <button type="button" className={link} onClick={() => setText(null)}>Cancel</button>
         </form>
       )}
@@ -791,7 +791,7 @@ function FindingForm({ title, init, pickCategory, busy, onSave, onCancel, draftK
         <label className="block"><span className={label}>What it will cost</span><input value={e.cost ?? ""} onChange={(ev) => set("cost", ev.target.value)} placeholder="$ or hours" className={`${field} mt-0.5`} /></label>
       </div>
       <div className="flex gap-1.5 flex-wrap">
-        <button type="button" disabled={!ok || busy} onClick={() => onSave(e, pickCategory ? category : undefined)} className={pri}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save</button>
+        <button type="button" disabled={!ok || busy} onClick={() => onSave(e, pickCategory ? category : undefined)} className={pri}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {busy ? "Saving" : "Save"}</button>
         <button type="button" onClick={onCancel} className={btn}>Cancel</button>
         {!ok && <span className="text-caption text-[var(--color-text-muted)] self-center">Needs the finding and what happened.</span>}
       </div>

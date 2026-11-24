@@ -340,7 +340,7 @@ export default function ScheduleImportModal({
   const moreCount = (parseResult?.rows.length ?? 0) - previewRows.length;
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
+    <div className="fixed inset-0 z-[200] bg-[var(--color-ink)]/55 backdrop-blur-sm animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-3xl bg-[var(--color-surface)] rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh] animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -370,7 +370,7 @@ export default function ScheduleImportModal({
               )}
             </div>
           </div>
-          <button onClick={importResult ? onDone : onClose} disabled={importing} aria-label="Close" className="p-1.5 rounded hover:bg-[var(--color-surface)] text-[var(--color-text-muted)] transition-colors disabled:opacity-40">
+          <button onClick={importResult ? onDone : onClose} disabled={importing} aria-label="Close" className="ui-hit p-1.5 rounded hover:bg-[var(--color-surface)] text-[var(--color-text-muted)] transition-colors disabled:opacity-40">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -399,7 +399,7 @@ export default function ScheduleImportModal({
               ) : parsing ? (
                 <div className="flex flex-col items-center gap-2">
                   <Spinner size="lg" />
-                  <div className="text-sm font-medium text-[var(--color-text)]">Reading {filename}…</div>
+                  <div className="text-body font-medium text-[var(--color-text)]">Reading {filename}…</div>
                 </div>
               ) : (
                 <>
@@ -407,7 +407,7 @@ export default function ScheduleImportModal({
                     <FileUp className="w-8 h-8 text-[var(--color-text-muted)]" />
                   </div>
                   <div className="text-body font-medium text-[var(--color-text)]">Drop your schedule here</div>
-                  <div className="text-sm text-[var(--color-text-muted)] mt-1">or tap to pick a file</div>
+                  <div className="text-body text-[var(--color-text-muted)] mt-1">or tap to pick a file</div>
                   <div className="mt-4 flex items-center justify-center gap-2 flex-wrap">
                     <FormatBadge label=".xml" hint="MS Project / P6 XML" />
                     <FormatBadge label=".xer" hint="Primavera P6 native" />
@@ -429,12 +429,12 @@ export default function ScheduleImportModal({
                   </div>
                 )}
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-[var(--color-text)] truncate">{filename}</div>
+                  <div className="text-body font-medium text-[var(--color-text)] truncate">{filename}</div>
                   <div className="text-caption text-[var(--color-text-muted)]">{file ? `${sizeOf(file.size)} · ` : ""}{FORMAT_LABEL[parseResult.format]} · read {parseResult.rows.length} task{parseResult.rows.length === 1 ? "" : "s"}</div>
                 </div>
                 <button
                   onClick={() => { setParseResult(null); setFile(null); setFilename(null); setImportResult(null); }}
-                  className="text-caption font-medium text-[var(--color-text)] border border-[var(--color-border)] px-2 py-1 rounded hover:bg-[var(--color-surface)] transition-colors"
+                  className="text-caption font-medium text-[var(--color-text)] border border-[var(--color-border)] px-2 py-1 pointer-coarse:min-h-11 rounded hover:bg-[var(--color-surface)] transition-colors"
                   disabled={importing}
                 >
                   Choose another
@@ -450,7 +450,7 @@ export default function ScheduleImportModal({
               {/* Warnings — for everything except the refused-format case,
                   which the guide above covers. */}
               {parseResult.format !== "msproject-mpp" && parseResult.format !== "msproject-mpx" && parseResult.warnings.length > 0 && (
-                <div className="border-l-2 border-[var(--state-held)] pl-3 text-xs text-[var(--state-held-text)]">
+                <div className="border-l-2 border-[var(--state-held)] pl-3 text-caption text-[var(--state-held-text)]">
                   <div className="font-medium mb-1">
                     {parseResult.warnings.length} note{parseResult.warnings.length === 1 ? "" : "s"} from reading the file
                   </div>
@@ -475,7 +475,7 @@ export default function ScheduleImportModal({
                 <div className="rounded-xl border border-[var(--color-border)] p-3">
                   <div className="flex items-center gap-1.5 mb-1">
                     <Columns3 className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-                    <span className="text-xs font-medium text-[var(--color-text)]">{detectedColumns.length} extra column{detectedColumns.length === 1 ? "" : "s"} detected</span>
+                    <span className="text-caption font-medium text-[var(--color-text)]">{detectedColumns.length} extra column{detectedColumns.length === 1 ? "" : "s"} detected</span>
                   </div>
                   <p className="text-caption text-[var(--color-text-muted)] mb-2.5">Rename, drop, or map any of these to a built-in field before importing. Everything else is kept on each task as a custom field.</p>
                   <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
@@ -483,17 +483,19 @@ export default function ScheduleImportModal({
                       const cfg = colConfig[k] ?? { include: true, rename: k, mapTo: "" };
                       return (
                         <div key={k} className={`flex items-center gap-2 ${cfg.include ? "" : "opacity-50"}`}>
-                          <input type="checkbox" checked={cfg.include} onChange={(e) => setColConfig((p) => ({ ...p, [k]: { ...cfg, include: e.target.checked } }))} className="w-3.5 h-3.5 accent-[var(--color-text)] shrink-0" title="Include this column" />
+                          <input type="checkbox" aria-label={`Bring in column ${k}`} checked={cfg.include} onChange={(e) => setColConfig((p) => ({ ...p, [k]: { ...cfg, include: e.target.checked } }))} className="w-3.5 h-3.5 accent-[var(--color-text)] shrink-0" title="Include this column" />
                           <span className="font-display tabular-nums text-caption text-[var(--color-text-muted)] w-28 truncate shrink-0" title={k}>{k}</span>
-                          <ArrowRight className="w-3 h-3 text-slate-300 shrink-0" />
+                          <ArrowRight className="w-3 h-3 text-[var(--color-text-faint)] shrink-0" />
                           <input
+                            aria-label={`Name for column ${k}`}
                             value={cfg.rename}
                             onChange={(e) => setColConfig((p) => ({ ...p, [k]: { ...cfg, rename: e.target.value } }))}
                             disabled={!cfg.include || !!cfg.mapTo}
                             placeholder={k}
-                            className="flex-1 min-w-0 h-7 px-2 rounded-md border border-[var(--color-border)] text-xs disabled:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-faint)]"
+                            className="flex-1 min-w-0 h-7 pointer-coarse:h-11 px-2 rounded-md border border-[var(--color-border)] text-caption disabled:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-faint)]"
                           />
                           <Select
+                            aria-label={`Map column ${k} to a field`}
                             value={cfg.mapTo}
                             onChange={(e) => setColConfig((p) => ({ ...p, [k]: { ...cfg, mapTo: e.target.value } }))}
                             disabled={!cfg.include}
@@ -519,7 +521,7 @@ export default function ScheduleImportModal({
                     Preview · first {previewRows.length} {moreCount > 0 ? `of ${parseResult.rows.length}` : "row" + (previewRows.length === 1 ? "" : "s")}
                   </div>
                   <div className="overflow-x-auto">
-                  <table className="w-full min-w-[560px] text-xs">
+                  <table className="w-full min-w-[560px] text-caption">
                     <thead className="bg-[var(--color-surface)] border-b border-[var(--color-border)] text-caption font-medium text-[var(--color-text-muted)]">
                       <tr>
                         <th className="text-left px-3 py-1.5">Task</th>
@@ -552,10 +554,10 @@ export default function ScheduleImportModal({
                             {humanDate(r.plannedAt, tz)}
                           </td>
                           <td className="px-3 py-1.5 text-caption font-display tabular-nums text-[var(--color-text-muted)] truncate">
-                            {r.parentExternalRef ? r.parentExternalRef.split(":")[1] : <span className="text-slate-300">-</span>}
+                            {r.parentExternalRef ? r.parentExternalRef.split(":")[1] : <span className="text-[var(--color-text-faint)]">-</span>}
                           </td>
-                          <td className="px-3 py-1.5 text-[var(--color-text)] font-display tabular-nums">{r.outlineLevel ?? <span className="text-slate-300">-</span>}</td>
-                          <td className="px-3 py-1.5 text-[var(--color-text)] font-display tabular-nums">{r.percentComplete != null ? `${Math.round(r.percentComplete)}%` : <span className="text-slate-300">-</span>}</td>
+                          <td className="px-3 py-1.5 text-[var(--color-text)] font-display tabular-nums">{r.outlineLevel ?? <span className="text-[var(--color-text-faint)]">-</span>}</td>
+                          <td className="px-3 py-1.5 text-[var(--color-text)] font-display tabular-nums">{r.percentComplete != null ? `${Math.round(r.percentComplete)}%` : <span className="text-[var(--color-text-faint)]">-</span>}</td>
                         </tr>
                       ))}
                       {moreCount > 0 && (
@@ -570,13 +572,13 @@ export default function ScheduleImportModal({
               {/* Import result */}
               {importResult && (
                 <div className={`pl-3 py-1 border-l-2 ${importResult.errors.length > 0 ? "border-[var(--state-overdue)]" : "border-[var(--state-released)]"}`}>
-                  <div className="flex items-center gap-2 font-medium text-sm">
+                  <div className="flex items-center gap-2 font-medium text-body">
                     {importResult.errors.length > 0
                       ? <><AlertTriangle className="w-4 h-4 text-[var(--state-overdue-text)]" /> Imported with errors</>
                       : <><CheckCircle2 className="w-4 h-4 text-[var(--state-released-text)]" /> Imported successfully</>
                     }
                   </div>
-                  <div className="mt-1 text-xs space-y-0.5">
+                  <div className="mt-1 text-caption space-y-0.5">
                     <div>Inserted: <b>{importResult.inserted}</b></div>
                     <div>Updated: <b>{importResult.updated}</b></div>
                     {importResult.skipped > 0 && <div>Skipped: <b>{importResult.skipped}</b></div>}
@@ -592,8 +594,8 @@ export default function ScheduleImportModal({
                           <span className="font-medium text-[var(--state-released-text)]">Import undone. The schedule is back as it was.</span>
                         ) : (
                           <button onClick={() => void undo()} disabled={undoing === "busy"}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-[var(--color-border-strong)] font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
-                            {undoing === "busy" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} Undo this import
+                            className="inline-flex items-center gap-1 px-2.5 py-1 pointer-coarse:min-h-11 rounded-md border border-[var(--color-border-strong)] font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+                            {undoing === "busy" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} {undoing === "busy" ? "Undoing" : "Undo this import"}
                           </button>
                         )}
                         {undoError && <span className="text-[var(--state-overdue-text)]">{undoError}</span>}
@@ -640,12 +642,12 @@ export default function ScheduleImportModal({
         )}
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2 shrink-0">
           {/* After an import (or its undo) closing refreshes the schedule. */}
-          <button onClick={importResult ? onDone : onClose} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">{importResult ? "Done" : "Close"}</button>
+          <button onClick={importResult ? onDone : onClose} className="text-body text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">{importResult ? "Done" : "Close"}</button>
           {parseResult && parseResult.rows.length > 0 && !importResult && (
             <button
               onClick={submit}
               disabled={!canSubmit}
-              className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg shadow-sm disabled:opacity-40 transition-colors"
+              className="inline-flex items-center gap-1.5 text-body font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg shadow-sm disabled:opacity-40 transition-colors"
             >
               {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
               {failed && failed.back !== false ? "Try again" : `Import ${parseResult.rows.length} task${parseResult.rows.length === 1 ? "" : "s"}`}
@@ -690,7 +692,7 @@ function XmlExportGuide({ filename, format }: { filename: string; format: "mspro
           <FileText className="w-4 h-4 text-[var(--color-text-muted)]" />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium text-[var(--color-text)]">This file needs to be exported as XML first</div>
+          <div className="text-body font-medium text-[var(--color-text)]">This file needs to be exported as XML first</div>
           <div className="text-caption text-[var(--color-text-muted)]">
             <code className="font-mono">{ext}</code> files are not accepted: only MS Project&apos;s XML export is an
             exact copy of your schedule.
@@ -699,7 +701,7 @@ function XmlExportGuide({ filename, format }: { filename: string; format: "mspro
       </div>
       <div className="p-4">
         <div>
-          <ol className="space-y-1.5 text-xs text-[var(--color-text)]">
+          <ol className="space-y-1.5 text-caption text-[var(--color-text)]">
             <Step n={1}>
               Open <code className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-[var(--color-border)] text-caption">{filename || "your schedule"}</code> in Microsoft Project.
             </Step>
@@ -748,7 +750,7 @@ function ParseQualityStats({ result }: { result: ParseResult }) {
           ? <AlertTriangle className="w-4 h-4 text-[var(--state-overdue-text)] shrink-0" />
           : <CheckCircle2 className="w-4 h-4 text-[var(--state-released-text)] shrink-0" />
         }
-        <div className={`text-sm font-medium ${noHierarchy ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>
+        <div className={`text-body font-medium ${noHierarchy ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>
           {noHierarchy
             ? "No phases or sub-tasks found in the file"
             : `Found ${summaries} phase or group row${summaries === 1 ? "" : "s"} and ${withParent} sub-task${withParent === 1 ? "" : "s"}`}

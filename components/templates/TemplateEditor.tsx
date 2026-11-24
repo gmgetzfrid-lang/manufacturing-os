@@ -180,7 +180,7 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center justify-between sticky top-0 bg-[var(--color-surface)] rounded-t-xl z-10">
           <div>
             <div className="text-body font-medium text-[var(--color-text)]">Output docs</div>
-            <h2 className="mt-1 font-display text-[24px] leading-tight font-semibold text-[var(--color-text)]">
+            <h2 className="mt-1 font-display text-title leading-tight font-semibold text-[var(--color-text)]">
               {template ? (template.name || "Edit template") : "New output template."}
             </h2>
             <p className="text-body text-[var(--color-text-muted)] mt-1">
@@ -278,12 +278,12 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
                       </div>
                     </div>
                     {p.kind === "ai" && (
-                      <Input className="mt-1.5 text-body" value={p.guidance ?? ""}
+                      <Input aria-label={`What the AI writes for ${p.tag}`} className="mt-1.5 text-body" value={p.guidance ?? ""}
                         onChange={(e) => updatePlaceholder(p.tag, { guidance: e.target.value })}
                         placeholder="What should the AI write here? e.g. 'Two paragraphs describing the work, referencing the equipment tag.'" />
                     )}
                     {p.kind === "static" && (
-                      <Input className="mt-1.5 text-body" value={p.value ?? ""}
+                      <Input aria-label={`Fixed text for ${p.tag}`} className="mt-1.5 text-body" value={p.value ?? ""}
                         onChange={(e) => updatePlaceholder(p.tag, { value: e.target.value })}
                         placeholder="Fixed text used in every document" />
                     )}
@@ -322,7 +322,7 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
                   {pickedFiles[ex.key] ? <FileThumb file={pickedFiles[ex.key]} size={28} /> : <FileText className="w-3 h-3" />} {ex.name}
                   {pickedFiles[ex.key] && <span className="font-normal text-[var(--color-text-muted)]">{(pickedFiles[ex.key].size / 1024).toFixed(0)} KB</span>}
                   <button onClick={() => setExamples((prev) => prev.filter((p) => p.key !== ex.key))} aria-label={`Remove ${ex.name}`}
-                    className="text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)]"><Trash2 className="w-3 h-3" /></button>
+                    className="ui-hit text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)]"><Trash2 className="w-3 h-3" /></button>
                 </span>
               ))}
             </div>
@@ -344,7 +344,7 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
           <label className="block">
             <span className="block text-body font-medium text-[var(--color-text)] mb-1.5">File naming</span>
             <Input value={filenamePattern} onChange={(e) => setFilenamePattern(e.target.value)}
-              placeholder="SOW-{wo_number}-{unit}" className="text-xs font-mono" />
+              placeholder="SOW-{wo_number}-{unit}" className="text-caption font-mono" />
             <span className="block mt-1 text-body text-[var(--color-text-muted)]">
               Use any fill point in braces. Blank = the template name plus a number.
             </span>
@@ -353,7 +353,7 @@ export default function TemplateEditor({ orgId, template, onClose, onSaved }: {
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={onClose}>Cancel</Button>
             <Button onClick={() => void save()} disabled={busy !== null}>
-              {busy === "save" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save template
+              {busy === "save" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}{" "}{busy === "save" ? "Saving" : "Save template"}
             </Button>
           </div>
         </div>

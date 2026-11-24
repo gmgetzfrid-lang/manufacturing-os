@@ -14,7 +14,7 @@
 //     it's answered.
 
 import React, { useEffect, useMemo, useState } from "react";
-import { Wrench, Loader2, Plus, Search, Check, AlertTriangle, Send, X, Ban } from "lucide-react";
+import { Wrench, Loader2, Plus, Search, Check, AlertTriangle, Send, X, Ban, CircleAlert } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { useRole } from "@/components/providers/RoleContext";
@@ -29,12 +29,12 @@ import { nameKey, plainName, scheduleId, sameEquipmentId, linkedLabel, checkNew,
 import { splitTag } from "@/lib/codebook";
 import { sayError } from "@/components/projects/sayError";
 
-const btn = "inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-body font-medium px-3.5 h-10 shadow-sm disabled:opacity-50";
-const quiet = "inline-flex items-center justify-center gap-1.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-body font-medium text-[var(--color-text)] px-3 h-10 disabled:opacity-50";
+const btn = "inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-body font-medium px-3.5 h-10 pointer-coarse:h-11 shadow-sm disabled:opacity-50";
+const quiet = "inline-flex items-center justify-center gap-1.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-body font-medium text-[var(--color-text)] px-3 h-10 pointer-coarse:h-11 disabled:opacity-50";
 const LBL = "block text-body font-medium text-[var(--color-text-muted)]";
 // A suggestion read off the work order: ringed in ink, a tap links it.
 const hit = "w-full flex items-center gap-2 rounded-xl border-2 border-[var(--color-text)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] px-3 min-h-12 text-left";
-const field = "h-10 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-body text-[var(--color-text)]";
+const field = "h-10 pointer-coarse:h-11 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-body text-[var(--color-text)]";
 
 /** "E-26 (5530.19)" on top, what it is underneath. */
 function AssetText({ a }: { a: PickAsset }) {
@@ -244,7 +244,7 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
               </ul>
             </>
           )}
-          {err && <p className="text-caption text-[var(--state-overdue-text)]">{err}</p>}
+          {err && <p role="alert" className="text-caption text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{err}</span></p>}
         </ModalBody>
       </Modal>
     );
@@ -304,12 +304,12 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
           {sameNameElsewhere(adding.tag, registry, [adding.unit]).length > 0 && check.kind !== "same_name" && (
             <p className="text-caption text-[var(--color-text-muted)]">{plainName(adding.tag)} is also on {sameNameElsewhere(adding.tag, registry, [adding.unit]).map((a) => `${unitLabel(a.unitCode)} as ${equipmentLabel(a)}`).join(", ")}: a different piece, with its own ID.</p>
           )}
-          {err && <p className="text-caption text-[var(--state-overdue-text)]">{err}</p>}
+          {err && <p role="alert" className="text-caption text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{err}</span></p>}
         </ModalBody>
         <ModalFooter>
           <button type="button" onClick={() => setAdding(null)} className={quiet}>Back</button>
           <button type="button" disabled={!!busy || (check.kind !== "ok" && check.kind !== "same_name")} onClick={() => void save()} className={btn}>
-            {busy === "add" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Add and link
+            {busy === "add" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} {busy === "add" ? "Adding" : "Add and link"}
           </button>
         </ModalFooter>
       </Modal>
@@ -408,7 +408,7 @@ export function EquipmentPicker({ target, milestones, onClose }: { target: Miles
             {!isAdmin && <p className="text-caption text-[var(--color-text-muted)]">Only admins add equipment to a unit, so nothing gets added twice or wrong.</p>}
           </div>
         )}
-        {err && <p className="text-caption text-[var(--state-overdue-text)]">{err}</p>}
+        {err && <p role="alert" className="text-caption text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{err}</span></p>}
       </ModalBody>
       <ModalFooter>
         <button type="button" disabled={!!busy} onClick={() => void setNone()} className={quiet}><Ban className="w-4 h-4" /> On no equipment</button>

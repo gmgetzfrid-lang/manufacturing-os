@@ -136,7 +136,7 @@ export default function AdminTeamsPage() {
   };
 
   const handleDelete = async (team: Team) => {
-    if (!(await appConfirm({ message: `Delete the team "${team.name}"? Its people keep their accounts, and rules that name the team stop applying. Libraries it owns go back to having no department.`, tone: "danger", confirmLabel: "Delete team" }))) return;
+    if (!(await appConfirm({ title: `Delete the team "${team.name}"?`, message: "Its people keep their accounts, and rules that name the team stop applying. Libraries it owns go back to having no department.", tone: "danger", confirmLabel: "Delete team" }))) return;
     try { await deleteTeam(team.id); }
     catch (e) { await appAlert({ title: "Couldn't delete the team", message: said(e), tone: "danger" }); return; }
     if (selected?.id === team.id) setSelected(null);

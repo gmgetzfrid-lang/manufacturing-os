@@ -162,7 +162,7 @@ export function CostGlossary() {
       {open && (
         <dl className="px-4 pb-4 pt-1 grid md:grid-cols-2 gap-x-6 gap-y-2 border-t border-[var(--color-border)]">
           {TERMS.map((t) => (
-            <div key={t.term} className="text-xs">
+            <div key={t.term} className="text-caption">
               <dt className="font-medium text-[var(--color-text)]">{t.term}</dt>
               <dd className="text-[var(--color-text-muted)] mt-0.5">{t.plain}</dd>
             </div>

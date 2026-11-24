@@ -686,7 +686,7 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
       />
       {hoverNode && (
         <div
-          className="pointer-events-none absolute max-w-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]/95 px-2.5 py-1.5 text-xs shadow-md z-10"
+          className="pointer-events-none absolute max-w-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]/95 px-2.5 py-1.5 text-caption shadow-md z-10"
           style={{
             left: hoverAt.x + 16,
             top: hoverAt.y + 16,

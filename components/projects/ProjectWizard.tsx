@@ -361,7 +361,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
     : null;
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="new-project-title" className="fixed inset-0 z-[200] bg-slate-900/50 flex items-start sm:items-center justify-center overflow-y-auto p-4">
+    <div role="dialog" aria-modal="true" aria-labelledby="new-project-title" className="fixed inset-0 z-[200] bg-[var(--color-ink)]/55 flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="ui-float ui-float-in w-full max-w-2xl bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] overflow-hidden">
         {/* Where you are: the title, the step by name, and the path of steps. */}
         <div className="px-6 pt-4 pb-4 border-b border-[var(--color-border)]">
@@ -717,7 +717,7 @@ function FromDocSummary({ result, onClear }: { result: BudgetReadResult; onClear
             </div>
           )}
         </div>
-        <button onClick={onClear} aria-label="Don't keep this document" className="text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]" title="Don't keep this document as the budget basis (prefilled fields stay)"><X className="w-3.5 h-3.5" /></button>
+        <button onClick={onClear} aria-label="Don't keep this document" className="ui-hit text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]" title="Don't keep this document as the budget basis (prefilled fields stay)"><X className="w-3.5 h-3.5" /></button>
       </div>
     </div>
   );

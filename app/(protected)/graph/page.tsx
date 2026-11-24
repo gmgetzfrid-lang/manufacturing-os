@@ -559,7 +559,7 @@ function GraphPageInner() {
             placeholder="Find E-22, or ask a question…"
             title="Type to light up matching nodes. Press Enter to search what your documents SAY."
             aria-label="Find on the graph, or ask a question"
-            className={`${bandInput} ${rawQuery.trim().length > 2 ? "!pr-20" : rawQuery ? "!pr-10" : ""} sm:w-80 max-sm:text-base`}
+            className={`${bandInput} ${rawQuery.trim().length > 2 ? "!pr-20" : rawQuery ? "!pr-10" : ""} sm:w-80 max-sm:text-reading`}
           />
           {/* Enter searches the TEXT, not the labels. A label filter can never
               answer "any standards about pipe supports" — the answer lives in
@@ -567,13 +567,13 @@ function GraphPageInner() {
           {rawQuery.trim().length > 2 && (
             <button onClick={() => void runAsk()} disabled={asking}
               title="Search what your documents say"
-              className="absolute right-9 top-1/2 -translate-y-1/2 inline-flex items-center gap-1 text-body text-[var(--color-accent-text)] hover:underline underline-offset-2 disabled:opacity-50">
+              className="pointer-coarse:min-h-11 absolute right-9 top-1/2 -translate-y-1/2 inline-flex items-center gap-1 text-body text-[var(--color-accent-text)] hover:underline underline-offset-2 disabled:opacity-50">
               {asking ? <Loader2 className="w-3 h-3 animate-spin" /> : <>Ask <CornerDownLeft className="w-3 h-3" /></>}
             </button>
           )}
           {rawQuery && (
             <button onClick={() => { setRawQuery(""); setAnswer(null); }} aria-label="Clear search"
-              className="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+              className="ui-hit absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
               <X className="w-4 h-4" />
             </button>
           )}
@@ -809,7 +809,7 @@ function GraphPageInner() {
                   <Route className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                   <span className="text-body font-medium text-[var(--color-text)] flex-1">Connection path</span>
                   <button onClick={() => { setPathMode(false); setPathEnds({ from: null, to: null }); }}
-                    aria-label="Close" className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
+                    aria-label="Close" className="ui-hit text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
                     <X className="w-3.5 h-3.5" />
                   </button>
                 </div>
@@ -887,7 +887,7 @@ function GraphPageInner() {
                     </div>
                   </div>
                   <button onClick={() => setAnswer(null)} aria-label="Close answer"
-                    className="p-1 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
+                    className="ui-hit p-1 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
                 </div>
 
                 <div className="flex-1 overflow-y-auto px-3 pb-3 space-y-1.5 min-h-0">
@@ -906,7 +906,7 @@ function GraphPageInner() {
                             const n = view?.nodes.find((x) => x.id === `asset:${a.assetId}`);
                             if (n) { handleSelect(n); setHighlight({ ids: [n.id], nonce: Date.now() }); }
                           }}
-                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-[var(--color-border-strong)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                          className="pointer-coarse:min-h-11 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-[var(--color-border-strong)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                           <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: NODE_COLORS.asset }} />
                           {a.tag}
                           <span className="text-[var(--color-text-faint)]">{a.count}</span>
@@ -947,7 +947,7 @@ function GraphPageInner() {
                   <Link2 className="w-3.5 h-3.5 text-[var(--state-released)]" />
                   <span className="text-body font-medium text-[var(--color-text)] flex-1">Draw a connection</span>
                   <button onClick={() => setConnect(null)} aria-label="Done connecting"
-                    className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
+                    className="ui-hit text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
                     <X className="w-3.5 h-3.5" />
                   </button>
                 </div>

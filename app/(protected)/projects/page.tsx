@@ -270,6 +270,7 @@ export default function ProjectsPage() {
             <div className="relative flex-1 min-w-[220px] max-w-md max-sm:basis-full max-sm:order-first">
               <Search className={bandInputIcon} />
               <input
+                type="search" enterKeyHint="search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search projects by name"
@@ -322,6 +323,12 @@ export default function ProjectsPage() {
           )
         ) : (
           <>
+            {(searchQ || unitPick || typeFilter) && shownCount > 0 && (
+              <p className="text-body text-[var(--color-text-muted)]">
+                <span className="tabular-nums">{shownCount} of {tabCounts[statusFilter] ?? 0}</span> {statusFilter === "all" ? "" : `${statusFilter} `}projects{" "}
+                <button type="button" onClick={() => { setSearch(""); setUnitPick(""); setTypeFilter(null); }} className="font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Clear</button>
+              </p>
+            )}
             {shownGroups.map((g) => {
               const open = !folded.has(g.key) || !!typeFilter;
               return (
@@ -472,7 +479,7 @@ function ProjectTable({ projects, factsOf }: { projects: Project[]; factsOf: (p:
                 {f.dueDay ? (
                   <>
                     <div className="font-display font-semibold tabular-nums text-[var(--color-text)]">{f.dueDay}</div>
-                    {f.dueNote && <div className={`text-body ${f.late && (f.due?.kind === "past target" || f.due?.kind === "ended") ? "text-[var(--state-overdue)] font-medium" : "text-[var(--color-text-muted)]"}`}>{f.dueNote}</div>}
+                    {f.dueNote && <div className={`text-body ${f.late && (f.due?.kind === "past target" || f.due?.kind === "ended") ? "text-[var(--state-overdue-text)] font-medium" : "text-[var(--color-text-muted)]"}`}>{f.dueNote}</div>}
                   </>
                 ) : null}
               </td>
@@ -501,7 +508,7 @@ function ProjectTable({ projects, factsOf }: { projects: Project[]; factsOf: (p:
                 {f.progress && <ProgressBar f={f} />}
                 {f.progress === null && <span>No schedule yet</span>}
                 {f.phaseNote && <span>{f.phaseNote}</span>}
-                {f.dueDay && <span className={f.late && (f.due?.kind === "past target" || f.due?.kind === "ended") ? "text-[var(--state-overdue)] font-medium" : ""}>{f.due?.kind === "starts" ? "Starts" : f.due?.kind === "ended" ? "Ended" : "Due"} {f.dueDay}</span>}
+                {f.dueDay && <span className={f.late && (f.due?.kind === "past target" || f.due?.kind === "ended") ? "text-[var(--state-overdue-text)] font-medium" : ""}>{f.due?.kind === "starts" ? "Starts" : f.due?.kind === "ended" ? "Ended" : "Due"} {f.dueDay}</span>}
               </div>
             </Link>
           </li>

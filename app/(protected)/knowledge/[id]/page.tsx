@@ -359,7 +359,8 @@ export default function KnowledgeLibraryPage() {
       message: (ids.length === 1 ? `"${names[0]}"` : `${ids.length} documents`) +
         " - the PDF" + (ids.length === 1 ? "" : "s") + " and the search index - will be deleted from this library. " +
         "Answers they already contributed to stay in the history.",
-      confirmLabel: ids.length === 1 ? "Remove" : `Remove ${ids.length}`,
+      confirmLabel: ids.length === 1 ? "Remove document" : `Remove ${ids.length} documents`,
+      tone: "danger",
     });
     if (!ok) return;
     setRemoving({ label: "Removing documents", done: 0, total: ids.length });
@@ -380,6 +381,7 @@ export default function KnowledgeLibraryPage() {
         "their search index, and the library's conversations and question history. " +
         "Controlled documents mirrored from Document Control stay in Document Control. This cannot be undone.",
       confirmLabel: "Delete library",
+      tone: "danger",
     });
     if (!ok) return;
     setRemoving({ label: "Deleting library", done: 0, total: docs.length });
@@ -613,7 +615,7 @@ export default function KnowledgeLibraryPage() {
                     showToast({ type: "error", title: friendlyError(e) });
                   }
                 }}
-                className="inline-flex items-center gap-1.5 h-8 pointer-coarse:h-10 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                className="inline-flex items-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
               >
                 <RefreshCw aria-hidden className="w-3.5 h-3.5" /> Re-index all
               </button>
@@ -642,7 +644,7 @@ export default function KnowledgeLibraryPage() {
                     showToast({ type: "error", title: friendlyError(e) });
                   }
                 }}
-                className="inline-flex items-center gap-1.5 h-8 pointer-coarse:h-10 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                className="inline-flex items-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
               >
                 <ImageIcon aria-hidden className="w-3.5 h-3.5" /> Read figures
               </button>
@@ -731,7 +733,7 @@ export default function KnowledgeLibraryPage() {
             <div className="mb-3 flex items-center gap-2 flex-wrap">
               <div className="relative flex-1 min-w-[200px]">
                 <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
-                <input id="kdoc-search" value={docQuery} onChange={(e) => { setDocQuery(e.target.value); setDocLimit(200); }}
+                <input type="search" id="kdoc-search" value={docQuery} onChange={(e) => { setDocQuery(e.target.value); setDocLimit(200); }}
                   aria-label="Search documents"
                   placeholder={`e.g. EP 5-2-3 or piping specs (${docs.length.toLocaleString()} documents)`}
                   autoComplete="off" enterKeyHint="search"

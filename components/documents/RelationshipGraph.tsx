@@ -89,12 +89,12 @@ export default function RelationshipGraph({
   const go = (href: string) => { onClose(); router.push(href); };
 
   return (
-    <div className="fixed inset-0 z-[400] bg-slate-900/75 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[400] bg-[var(--color-ink)]/75 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
       <div className="w-full max-w-3xl bg-[var(--color-surface)] rounded-lg shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-5 py-3 border-b border-[var(--color-border)]">
           <Network className="w-4 h-4 text-[var(--color-text-muted)]" />
           <div className="flex-1 min-w-0">
-            <h2 className="text-sm font-medium text-[var(--color-text)]">Relationship map</h2>
+            <h2 className="text-body font-medium text-[var(--color-text)]">Relationship map</h2>
             <p className="text-body text-[var(--color-text-muted)]">Supersession lineage and same-scope documents. Click any node to open it.</p>
           </div>
           <button
@@ -104,16 +104,16 @@ export default function RelationshipGraph({
           >
             <Waypoints className="w-3.5 h-3.5" /> Full org graph
           </button>
-          <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+          <button onClick={onClose} aria-label="Close" className="ui-hit p-1.5 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
 
         <div className="p-4">
           {error ? (
-            <div className="text-sm text-[var(--state-overdue)] p-8 text-center">{error}</div>
+            <div className="text-body text-[var(--state-overdue)] p-8 text-center">{error}</div>
           ) : !related ? (
             <div className="flex items-center justify-center h-64"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-faint)]" /></div>
           ) : nodes.length === 0 ? (
-            <div className="text-center text-sm text-[var(--color-text-muted)] py-16">
+            <div className="text-center text-body text-[var(--color-text-muted)] py-16">
               No related documents found - this drawing stands alone (no supersession lineage or shared scope).
             </div>
           ) : (

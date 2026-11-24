@@ -174,7 +174,7 @@ export default function AssetCsvImportModal({
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="p-2 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)]"><KeyRound className="w-5 h-5" /></div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-[var(--color-text)]">Import assets from CSV</div>
+            <div className="text-body font-medium text-[var(--color-text)]">Import assets from CSV</div>
             <div className="text-body text-[var(--color-text-muted)]">Add many tags at once, with type, description and location.</div>
           </div>
           <button onClick={onClose} disabled={busy} aria-label="Close" className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
@@ -204,7 +204,7 @@ export default function AssetCsvImportModal({
                 onChange={(e) => setRaw(e.target.value)}
                 placeholder={`tag,type,description,location\nP-101,Pump,Crude charge pump,Unit 100\nV-201,Vessel,Reflux drum,Unit 200`}
                 rows={10}
-                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-xs font-mono"
+                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-caption font-mono"
               />
               <div className="text-body text-[var(--color-text-muted)]">First row = headers. The <code>type</code> column matches an existing asset-type by name (case-insensitive); unmatched types are left blank.</div>
             </div>
@@ -264,7 +264,7 @@ export default function AssetCsvImportModal({
 
           {step === "done" && result && (
             <div className="space-y-2">
-              <p className="text-sm text-[var(--state-released)] flex items-start gap-2">
+              <p className="text-body text-[var(--state-released)] flex items-start gap-2">
                 <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
                 <span>Added <b>{result.ok}</b> piece{result.ok === 1 ? "" : "s"} of equipment.</span>
               </p>

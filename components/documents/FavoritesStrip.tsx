@@ -49,7 +49,7 @@ export default function FavoritesStrip({
               {d.rev && <span className="font-sans text-body font-normal opacity-80">rev {d.rev}</span>}
             </button>
             <button type="button" onClick={() => void toggle(d.id)} aria-label={`Remove ${d.documentNumber} from favorites`} title="Remove from favorites"
-              className="w-7 h-7 grid place-items-center rounded text-[var(--state-held)] hover:bg-[var(--color-surface)]">
+              className="ui-hit w-7 h-7 grid place-items-center rounded text-[var(--state-held)] hover:bg-[var(--color-surface)]">
               <Star className="w-3.5 h-3.5 fill-current" />
             </button>
           </span>

@@ -50,7 +50,7 @@ export default function EquipmentTablePanel({ table, onOpenTag }: {
         <span className="flex-1" />
         <div className="relative">
           <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
-          <input value={filter} onChange={(e) => setFilter(e.target.value)}
+          <input type="search" aria-label="Filter tags" value={filter} onChange={(e) => setFilter(e.target.value)}
             placeholder="Filter tags…"
             className="pl-6 pr-2 py-1 w-36 rounded-lg text-body font-display tabular-nums border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]" />
         </div>
@@ -99,7 +99,7 @@ export default function EquipmentTablePanel({ table, onOpenTag }: {
                               <button key={`${s.documentId}-${s.page}`}
                                 onClick={() => onOpenTag(s.documentId, s.page, item.tag, s.documentName)}
                                 title={`${s.documentName} - page ${s.page}, ${item.tag} ringed`}
-                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border border-[var(--color-border)] dark:border-[var(--color-border)] bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)] font-medium hover:bg-[var(--color-surface-2)] dark:hover:bg-[var(--color-surface-2)] transition-colors">
+                                className="pointer-coarse:min-h-11 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] font-medium hover:bg-[var(--color-surface-2)] transition-colors">
                                 <Crosshair className="w-2.5 h-2.5" />
                                 <span className="truncate max-w-[9rem]">{s.documentName.replace(/\.pdf$/i, "")}</span>
                                 <span className="text-[var(--color-text)]">{s.sheetLabel ?? `p.${s.page}`}</span>

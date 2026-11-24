@@ -171,7 +171,7 @@ export default function FindMap({ orgId, unit: unitProp, assetId, docs, candidat
           {options.map((o) => (
             <button key={o} type="button" role="radio" aria-checked={scope === o} onClick={() => pick(o)}
               title={o === "here" ? (folderProp ? `What is in ${folderProp.name}` : "Every library and its top folders") : o === "unit" ? `Everything in unit ${unitProp}` : "Every unit on the site"}
-              className={`h-8 pointer-coarse:h-10 px-2.5 rounded-md text-body font-medium whitespace-nowrap transition-colors ${scope === o ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-border-strong)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+              className={`h-8 pointer-coarse:h-11 px-2.5 rounded-md text-body font-medium whitespace-nowrap transition-colors ${scope === o ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-border-strong)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
               {o === "here" ? (folderProp ? "This folder" : "Libraries") : o === "unit" ? `Unit ${unitProp}` : "Whole site"}
             </button>
           ))}

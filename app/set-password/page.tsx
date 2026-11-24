@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
 import { AlertCircle, Check } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { AuthCard, authField, authBtn } from "@/components/marketing/AuthCard";
+import { PasswordInput } from "@/components/ui/Field";
 import { Button } from "@/components/ui/Button";
 import { SkeletonText } from "@/components/ui/Skeleton";
 import { label, btnLink } from "@/components/admin/kit";
@@ -22,12 +23,11 @@ export default function SetPasswordPage() {
   const [email, setEmail] = useState<string | null>(null);
   const [until, setUntil] = useState<string | null>(null);
   const [pw, setPw] = useState("");
-  const [again, setAgain] = useState("");
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // A field's problem shows after the person leaves it, never while typing.
-  const [left, setLeft] = useState<{ pw?: boolean; again?: boolean }>({});
+  const [left, setLeft] = useState<{ pw?: boolean }>({});
 
   useEffect(() => {
     let alive = true;
@@ -47,15 +47,13 @@ export default function SetPasswordPage() {
 
   const problem = pw ? passwordProblem(pw, email) : null;
   const shownProblem = left.pw ? problem : null;
-  const mismatch = left.again && again && again !== pw ? "The two don't match." : null;
-  const ready = !!pw && !problem && pw === again;
+  const ready = !!pw && !problem;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     const p = passwordProblem(pw, email);
     if (p) { setError(p); return; }
-    if (pw !== again) { setError("The two don't match."); return; }
     setBusy(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -90,27 +88,21 @@ export default function SetPasswordPage() {
           <p className="mb-5 text-body text-[var(--color-text-muted)]">Signed in as <b className="font-medium text-[var(--color-text)]">{email}</b> with a one-time password.</p>
           <div>
             <label htmlFor="np" className={label}>New password</label>
-            <input id="np" type="password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} onBlur={() => setLeft((l) => ({ ...l, pw: true }))}
-              className={authField} required aria-invalid={!!shownProblem} aria-describedby="np-note" />
+            <PasswordInput id="np" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} onBlur={() => setLeft((l) => ({ ...l, pw: true }))}
+              fieldClassName={authField} required aria-invalid={!!shownProblem} aria-describedby="np-note" />
             <p id="np-note" className={`mt-1.5 text-body ${shownProblem ? "font-medium text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]"}`}>
               {shownProblem ?? (pw && !problem
                 ? <span className="inline-flex items-center gap-1 text-[var(--state-released-text)]"><Check aria-hidden className="w-3.5 h-3.5" /> Strong enough</span>
                 : `At least ${MIN_PASSWORD} characters, with numbers or symbols.`)}
             </p>
           </div>
-          <div className="mt-4">
-            <label htmlFor="np2" className={label}>Type it again</label>
-            <input id="np2" type="password" autoComplete="new-password" value={again} onChange={(e) => setAgain(e.target.value)} onBlur={() => setLeft((l) => ({ ...l, again: true }))}
-              className={authField} required aria-invalid={!!mismatch} aria-describedby={mismatch ? "np2-note" : undefined} />
-            {mismatch && <p id="np2-note" className="mt-1.5 text-body font-medium text-[var(--state-overdue-text)]">{mismatch}</p>}
-          </div>
-          {/* Wakes once both fields agree and the password is strong enough;
-              says why when it can't. */}
+          {/* Wakes once the password is strong enough; says why when it
+              can't. */}
           <Button type="submit" variant={ready ? "primary" : "secondary"} loading={busy} done={saved} doneLabel="Saved" disabled={!ready} className={`mt-6 ${authBtn}`}>
             {busy ? "Saving" : "Save and continue"}
           </Button>
           {!ready && pw && (
-            <p className="mt-2 text-body text-[var(--color-text-muted)]">{problem ? "Make the password stronger to go on." : "Type the same password again to go on."}</p>
+            <p className="mt-2 text-body text-[var(--color-text-muted)]">{problem ? "Make the password stronger to go on." : "Type a password to go on."}</p>
           )}
           <div className="mt-5 pt-4 border-t border-[var(--color-border)]">
             <button type="button" onClick={async () => { await supabase.auth.signOut(); router.replace("/"); }} className={btnLink}>

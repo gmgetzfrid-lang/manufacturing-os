@@ -20,6 +20,18 @@ export function setRememberSession(remember: boolean) {
   }
 }
 
+/** What "Keep me signed in" starts as: the last choice made on this
+ *  device; with none yet, on for a phone or tablet (one person's device)
+ *  and off for a computer (plant PCs are often shared). */
+export function rememberDefault(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    const v = window.localStorage.getItem(REMEMBER_KEY);
+    if (v !== null) return v !== "false";
+  } catch { /* storage unavailable */ }
+  return !!window.matchMedia?.("(pointer: coarse)").matches && !window.matchMedia?.("(any-pointer: fine)").matches;
+}
+
 function shouldRemember(): boolean {
   if (typeof window === "undefined") return true;
   try {

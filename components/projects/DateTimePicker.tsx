@@ -171,7 +171,7 @@ function TimeSheet({ title, hm, start, onSet, onClose }: { title: string; hm: st
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); set(); } }}
             aria-label="Type the time" inputMode="text" autoComplete="off" spellCheck={false} enterKeyHint="done"
             className={`w-[118px] h-9 pointer-coarse:h-11 rounded-lg border px-2 text-right text-reading font-medium tabular-nums bg-[var(--color-surface-2)]  ${bad ? "border-[var(--state-overdue)]" : "border-transparent "}`} />
-          <button type="button" onClick={onClose} aria-label="Close" className="shrink-0 -mr-1.5 w-8 h-8 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+          <button type="button" onClick={onClose} aria-label="Close" className="ui-hit shrink-0 -mr-1.5 w-8 h-8 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
         <div className="relative flex justify-center gap-2">
           <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 h-10 rounded-lg bg-[var(--color-surface-2)]" />
@@ -288,7 +288,7 @@ function Month({ value, today, planned, onPick, future, earliest }: { value: str
   // No month, and no day, before the job started.
   const first = !!earliest && ym <= Number(earliest.slice(0, 4)) * 12 + Number(earliest.slice(5, 7)) - 1;
   const key = (d: number) => `${y}-${p2(mo + 1)}-${p2(d)}`;
-  const nav = "w-8 h-8 inline-flex items-center justify-center rounded-md hover:bg-[var(--color-surface-2)] disabled:opacity-30";
+  const nav = "ui-hit w-8 h-8 inline-flex items-center justify-center rounded-md hover:bg-[var(--color-surface-2)] disabled:opacity-30";
   return (
     <div className="pt-0.5 w-[280px] max-w-full">
       <div className="flex items-center justify-between mb-1">

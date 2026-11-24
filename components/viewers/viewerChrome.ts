@@ -27,9 +27,10 @@ export const vIcon =
   "w-10 h-10 pointer-coarse:w-11 pointer-coarse:h-11 shrink-0 rounded-lg grid place-items-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)] disabled:opacity-30 disabled:pointer-events-none transition-colors";
 
 /** A tool button: quiet, or a white pill when it's the chosen one (never
- *  orange: orange is only for the one action). */
-export function vTool(on: boolean, size = "w-10 h-10 pointer-coarse:w-11 pointer-coarse:h-11") {
-  return `${size} shrink-0 rounded-lg grid place-items-center transition-colors ${on
+ *  orange: orange is only for the one action). Whatever the size, it is
+ *  44 px on a touch screen. */
+export function vTool(on: boolean, size = "w-10 h-10") {
+  return `${size} pointer-coarse:w-11 pointer-coarse:h-11 shrink-0 rounded-lg grid place-items-center transition-colors ${on
     ? "bg-[var(--color-ink-fg)] text-[var(--color-ink)]"
     : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]"}`;
 }

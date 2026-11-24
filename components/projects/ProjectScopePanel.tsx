@@ -10,7 +10,7 @@ import HelpTooltip from "@/components/ui/HelpTooltip";
 import { Card } from "@/components/ui/PageHero";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Factory, Cpu, FileText, Plus, X, Loader2, Link2 } from "lucide-react";
+import { Factory, Cpu, FileText, Plus, X, Loader2, Link2, CircleAlert } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { loadCodebook } from "@/lib/codebook";
@@ -84,7 +84,7 @@ export default function ProjectScopePanel({ orgId, projectId, projectName, canMa
     <Card label="Scope: what this project is about"
       action={<Link href={`/graph?focus=${encodeURIComponent(node)}`} className="text-body text-[var(--color-accent-text)] hover:underline inline-flex items-center gap-1 whitespace-nowrap"><Link2 className="w-3.5 h-3.5" /> See on the graph</Link>}>
       <div className="space-y-3">
-        {err && <div role="alert" className="text-body text-[var(--state-overdue-text)]">{err}</div>}
+        {err && <div role="alert" className="text-body text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-0.5" /><span>{err}</span></div>}
         {edges === null ? (
           <div className="text-body text-[var(--color-text-muted)] inline-flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading the scope…</div>
         ) : (
@@ -99,7 +99,7 @@ export default function ProjectScopePanel({ orgId, projectId, projectName, canMa
                     {l.href ? <Link href={l.href} className="font-medium hover:underline">{l.label}</Link> : <span className="font-medium">{l.label}</span>}
                     {e.status === "pending" && <span className="text-caption text-[var(--state-held-text)]">proposed · {Math.round(e.confidence * 100)}%</span>}
                     {canManage && e.status === "pending" && <button onClick={() => accept(e)} disabled={busy} className="text-body text-[var(--color-accent-text)] hover:underline">accept</button>}
-                    {canManage && <button onClick={() => drop(e)} disabled={busy} className="opacity-50 hover:opacity-100" title={e.origin === "human" ? "Remove" : "Dismiss"} aria-label={`${e.origin === "human" ? "Remove" : "Dismiss"} ${l.label}`}><X className="w-3 h-3" /></button>}
+                    {canManage && <button onClick={() => drop(e)} disabled={busy} className="inline-flex items-center justify-center pointer-coarse:size-11 opacity-50 hover:opacity-100" title={e.origin === "human" ? "Remove" : "Dismiss"} aria-label={`${e.origin === "human" ? "Remove" : "Dismiss"} ${l.label}`}><X className="w-3 h-3" /></button>}
                   </span>
                 );
               })}
@@ -113,12 +113,12 @@ export default function ProjectScopePanel({ orgId, projectId, projectName, canMa
             )}
             {canManage && (
               <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-[var(--color-border)]">
-                <select value={unitPick} onChange={(e) => setUnitPick(e.target.value)} aria-label="Unit" className="h-9 text-body font-medium rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2">
+                <select value={unitPick} onChange={(e) => setUnitPick(e.target.value)} aria-label="Unit" className="h-9 pointer-coarse:h-11 text-body font-medium rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2">
                   <option value="">Add a unit…</option>
                   {units.map((u) => <option key={u.code} value={u.code}>{u.label} ({u.code})</option>)}
                 </select>
                 <button onClick={addUnit} disabled={busy || !unitPick} className="inline-flex items-center gap-1 h-10 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"><Plus className="w-3.5 h-3.5" /> Unit</button>
-                <input value={tagInput} onChange={(e) => setTagInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void addAsset(); }} placeholder="Equipment tag, e.g. X-35" aria-label="Equipment tag" className="h-9 text-body rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 w-44" />
+                <input value={tagInput} onChange={(e) => setTagInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void addAsset(); }} placeholder="Equipment tag, e.g. X-35" aria-label="Equipment tag" className="h-9 pointer-coarse:h-11 text-body rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 w-44" />
                 <button onClick={addAsset} disabled={busy || !tagInput.trim()} className="inline-flex items-center gap-1 h-10 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"><Plus className="w-3.5 h-3.5" /> Equipment</button>
               </div>
             )}

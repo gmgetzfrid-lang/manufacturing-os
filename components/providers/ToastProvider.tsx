@@ -65,10 +65,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             "
           >
             <div className={`mt-0.5 shrink-0 
-              ${toast.type === "success" ? "text-green-600" : ""}
-              ${toast.type === "error" ? "text-red-600" : ""}
+              ${toast.type === "success" ? "text-[var(--state-released-text)]" : ""}
+              ${toast.type === "error" ? "text-[var(--state-overdue-text)]" : ""}
               ${toast.type === "info" ? "text-[var(--color-text)]" : ""}
-              ${toast.type === "warning" ? "text-amber-600" : ""}
+              ${toast.type === "warning" ? "text-[var(--state-held-text)]" : ""}
             `}>
               {toast.type === "success" && <CheckCircle className="w-5 h-5" />}
               {toast.type === "error" && <AlertCircle className="w-5 h-5" />}
@@ -77,11 +77,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             </div>
             
             <div className="flex-1 min-w-0">
-              <h4 className="text-sm font-medium text-[var(--color-text)]">
+              <h4 className="text-body font-medium text-[var(--color-text)]">
                 {toast.title}
               </h4>
               {toast.message && (
-                <p className="text-xs text-[var(--color-text-muted)] mt-1 leading-relaxed">
+                <p className="text-caption text-[var(--color-text-muted)] mt-1 leading-relaxed">
                   {toast.message}
                 </p>
               )}

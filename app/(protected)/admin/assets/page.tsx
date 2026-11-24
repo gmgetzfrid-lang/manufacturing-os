@@ -426,7 +426,7 @@ function AssetsPageInner() {
       <div className="flex items-center gap-3 min-w-0">
         {cover && (
           <button type="button" onClick={(e) => { e.stopPropagation(); setCarouselOpenFor(a); }} aria-label={`Photos of ${a.tag}`}
-            className="shrink-0 w-10 h-8 rounded-md overflow-hidden border border-[var(--color-border)] bg-[var(--color-surface-2)] relative">
+            className="shrink-0 w-10 h-8 pointer-coarse:w-14 pointer-coarse:h-11 rounded-md overflow-hidden border border-[var(--color-border)] bg-[var(--color-surface-2)] relative">
             <SignedImg path={cover} alt="" className="absolute inset-0 w-full h-full object-cover" />
           </button>
         )}
@@ -601,6 +601,7 @@ function AssetsPageInner() {
             <label htmlFor="equipment-search" className="sr-only">Search all equipment</label>
             <input
               id="equipment-search"
+              type="search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Find by tag (E-22), site code or description"
@@ -892,7 +893,7 @@ function UnitResources({ orgId, unitCode, links, canEdit, onChanged }: {
   const [busy, setBusy] = useState(false);
 
   const removeLink = async (id: string) => {
-    if (!(await appConfirm({ title: "Unpin this library?", message: "It comes off this unit's page. The library itself is untouched.", confirmLabel: "Unpin", tone: "danger" }))) return;
+    if (!(await appConfirm({ title: "Unpin this library?", message: "It comes off this unit's page. The library itself is untouched.", confirmLabel: "Unpin library", tone: "danger" }))) return;
     setBusy(true);
     try {
       await saveUnitLinks(orgId, unitCode, links.filter((l) => l.id !== id));
@@ -1363,7 +1364,7 @@ function AssetEditDrawer({
     const ok = await appConfirm({
       title: "Unlink this document?",
       message: "The document stays; only its link to this equipment is removed. A future sweep can re-link it if the document still carries the tag.",
-      confirmLabel: "Unlink",
+      confirmLabel: "Unlink document",
     });
     if (!ok) return;
     const { error: e } = await supabase.from("document_assets").delete()
@@ -1415,7 +1416,7 @@ function AssetEditDrawer({
 
   const onDelete = async () => {
     if (!asset) return;
-    if (!(await appConfirm({ title: `Delete ${asset.tag}?`, message: "Its photos go with it. This can't be undone.", confirmLabel: "Delete", tone: "danger" }))) return;
+    if (!(await appConfirm({ title: `Delete ${asset.tag}?`, message: "Its photos go with it. You can't undo this.", confirmLabel: `Delete ${asset.tag}`, tone: "danger" }))) return;
     setBusy(true);
     try {
       await deleteAsset(asset.id);
@@ -1437,7 +1438,7 @@ function AssetEditDrawer({
   };
 
   const onDeletePhoto = async (p: AssetPhoto) => {
-    if (!(await appConfirm({ title: "Remove this photo?", message: "It can't be brought back.", confirmLabel: "Remove", tone: "danger" }))) return;
+    if (!(await appConfirm({ title: "Remove this photo?", message: "It can't be brought back.", confirmLabel: "Remove photo", tone: "danger" }))) return;
     try {
       await deletePhoto(p.id);
       setPhotos((prev) => prev.filter((x) => x.id !== p.id));
@@ -1467,7 +1468,7 @@ function AssetEditDrawer({
               <X className="w-4 h-4" />
             </button>
           </div>
-          <h2 className="mt-2 font-display text-[26px] leading-tight font-semibold text-[var(--color-text)] break-words">
+          <h2 className="mt-2 font-display text-title leading-tight font-semibold text-[var(--color-text)] break-words">
             {isCreate ? (tag.trim() || "New asset") : asset ? <CopyId value={asset.tag} label="tag" /> : null}
           </h2>
           <p className="mt-1 text-reading text-[var(--color-text-muted)]">
@@ -1561,13 +1562,13 @@ function AssetEditDrawer({
                       <div key={p.id} className="relative group rounded-lg overflow-hidden border border-[var(--color-border)] aspect-square bg-[var(--color-surface-2)]">
                         <SignedImg path={p.file_url} alt={p.caption || ""} className="w-full h-full object-cover" />
                         {/* Date and status on one strip along the bottom of the photo. */}
-                        <div className="absolute bottom-0 inset-x-0 px-1.5 py-1 bg-black/65">
-                          <div className="text-body font-mono flex items-center gap-1 text-white">
-                            <span className={age.category === "stale" ? "text-red-300" : age.category === "aging" ? "text-amber-300" : ""}>
+                        <div className="absolute bottom-0 inset-x-0 px-1.5 py-1 bg-[var(--color-surface)]/90">
+                          <div className="text-body tabular-nums flex items-center gap-1 text-[var(--color-text)]">
+                            <span className={age.category === "stale" ? "text-[var(--state-overdue-text)]" : age.category === "aging" ? "text-[var(--state-held-text)]" : ""}>
                               {p.captured_at ? new Date(p.captured_at).toLocaleDateString() : "No date"}
                             </span>
                             {p.status !== "current" && (
-                              <span className={`ml-auto font-sans font-medium ${p.status === "needs_verification" ? "text-amber-300" : "text-red-300"}`}>
+                              <span className={`ml-auto font-medium ${p.status === "needs_verification" ? "text-[var(--state-held-text)]" : "text-[var(--state-overdue-text)]"}`}>
                                 {p.status === "needs_verification" ? "Check" : "Old"}
                               </span>
                             )}
@@ -1575,10 +1576,10 @@ function AssetEditDrawer({
                         </div>
                         {canEdit && (
                           <div className="absolute top-1 right-1 flex flex-col gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => markPhotoStatus(p, p.status === "current" ? "needs_verification" : "current")} title={p.status === "current" ? "Mark as needs checking" : "Mark as current"} aria-label={p.status === "current" ? "Mark as needs checking" : "Mark as current"} className="p-1 bg-[var(--color-surface)]/90 rounded hover:bg-[var(--color-surface)]">
+                            <button onClick={() => markPhotoStatus(p, p.status === "current" ? "needs_verification" : "current")} title={p.status === "current" ? "Mark as needs checking" : "Mark as current"} aria-label={p.status === "current" ? "Mark as needs checking" : "Mark as current"} className="inline-flex items-center justify-center pointer-coarse:size-11 p-1 bg-[var(--color-surface)]/90 rounded hover:bg-[var(--color-surface)]">
                               <AlertTriangle className="w-3 h-3 text-[var(--state-held)]" />
                             </button>
-                            <button onClick={() => onDeletePhoto(p)} title="Delete photo" aria-label="Delete photo" className="p-1 bg-[var(--color-surface)]/90 rounded hover:bg-[var(--color-surface)]">
+                            <button onClick={() => onDeletePhoto(p)} title="Delete photo" aria-label="Delete photo" className="inline-flex items-center justify-center pointer-coarse:size-11 p-1 bg-[var(--color-surface)]/90 rounded hover:bg-[var(--color-surface)]">
                               <Trash2 className="w-3 h-3 text-[var(--state-overdue)]" />
                             </button>
                           </div>
@@ -1629,7 +1630,7 @@ function AssetEditDrawer({
                       {canEdit && (
                         <button type="button" title="Unlink from this equipment" aria-label="Unlink from this equipment"
                           onClick={() => void unlinkDocument(d.documentId)}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 z-10 p-1.5 rounded-md text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] opacity-0 group-hover/docrow:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
+                          className="ui-hit absolute right-2 top-1/2 -translate-y-1/2 z-10 p-1.5 rounded-md text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] opacity-0 group-hover/docrow:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
                           <X className="w-3.5 h-3.5" />
                         </button>
                       )}

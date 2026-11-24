@@ -5,6 +5,7 @@ import { ChevronDown, ChevronUp, Eye, EyeOff, X, Trash2, Pencil, Check, Loader2,
 import { appConfirm } from "@/components/providers/DialogProvider";
 
 import { friendlyError } from "@/lib/friendlyError";
+import { FieldError } from "@/components/ui/Field";
 export type ColumnOption = {
   key: string;
   label: string;
@@ -182,7 +183,7 @@ export default function ColumnManager(props: {
 
   const handleDelete = async (key: string, label: string) => {
     if (!onDeleteColumn) return;
-    if (!(await appConfirm({ title: `Delete the "${label}" column?`, message: "This removes the column definition from the library. Existing document values are kept in the database but won't be visible until the column is recreated.", tone: "danger" }))) return;
+    if (!(await appConfirm({ title: `Delete the "${label}" column?`, message: "This removes the column definition from the library. Existing document values are kept in the database but won't be visible until the column is recreated.", confirmLabel: "Delete column", tone: "danger" }))) return;
     setDeleting(key);
     try {
       await onDeleteColumn(key);
@@ -199,7 +200,7 @@ export default function ColumnManager(props: {
       <div className="w-full max-w-2xl rounded-lg bg-[var(--color-surface)] shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-between">
           <div>
-            <div className="text-sm font-medium text-[var(--color-text)]">Columns</div>
+            <div className="text-body font-medium text-[var(--color-text)]">Columns</div>
             <div className="text-body text-[var(--color-text-muted)]">
               {isController ? "Show, hide, order, rename or remove columns." : "Show, hide and order the columns."}{" "}
               {source === "library" ? "This folder uses the library's columns."
@@ -210,7 +211,7 @@ export default function ColumnManager(props: {
           </div>
           <button aria-label="Close"
             onClick={onClose}
-            className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"
+            className="ui-hit h-9 w-9 inline-flex items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]"
           >
             <X className="h-4 w-4 text-[var(--color-text-muted)]" />
           </button>
@@ -274,7 +275,7 @@ export default function ColumnManager(props: {
                   <div key={col.key} className={`flex items-center gap-1 ${isEditing ? "p-1.5 rounded-lg bg-[var(--color-surface-2)] ring-1 ring-[var(--color-border-strong)]" : ""}`}>
                     {isEditing ? (
                       <>
-                        <input
+                        <input aria-label="Column name"
                           value={editValue}
                           onChange={(e) => setEditValue(e.target.value)}
                           onKeyDown={(e) => {
@@ -283,20 +284,21 @@ export default function ColumnManager(props: {
                           }}
                           autoFocus
                           disabled={savingRename}
-                          className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-[var(--color-main)]/40 bg-[var(--color-surface)] text-sm font-medium text-[var(--color-text)] outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]"
+                          className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-[var(--color-main)]/40 bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]"
                         />
                         <button
                           onClick={() => void saveRename()}
                           disabled={savingRename || !editValue.trim()}
-                          className="shrink-0 p-2 rounded-lg border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50"
+                          className="inline-flex items-center justify-center pointer-coarse:size-11 shrink-0 p-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
                           title="Save"
+                          aria-label="Save name"
                         >
                           {savingRename ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
                         </button>
                         <button aria-label="Cancel rename"
                           onClick={cancelRename}
                           disabled={savingRename}
-                          className="shrink-0 p-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
+                          className="inline-flex items-center justify-center pointer-coarse:size-11 shrink-0 p-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"
                           title="Cancel"
                         >
                           <X className="h-3.5 w-3.5" />
@@ -305,7 +307,7 @@ export default function ColumnManager(props: {
                     ) : (
                       <>
                         <button
-                          className={`flex-1 min-w-0 text-left px-3 py-2 rounded-lg border text-sm flex items-center justify-between ${
+                          className={`flex-1 min-w-0 text-left px-3 py-2 rounded-lg border text-body flex items-center justify-between ${
                             on
                               ? "border-[var(--color-text-muted)] bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm"
                               : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
@@ -320,8 +322,9 @@ export default function ColumnManager(props: {
                         {canRename && (
                           <button
                             onClick={() => startRename(col.key, col.label)}
-                            className="shrink-0 p-2 rounded-lg border-2 border-[var(--color-main)]/25 bg-[var(--color-surface-2)] text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)] hover:border-[var(--color-main)]/50 transition-colors"
+                            className="inline-flex items-center justify-center pointer-coarse:size-11 shrink-0 p-2 rounded-lg border-2 border-[var(--color-main)]/25 bg-[var(--color-surface-2)] text-[var(--color-accent-text)] hover:text-[var(--color-accent-hover)] hover:border-[var(--color-main)]/50 transition-colors"
                             title={`Rename "${col.label}": works for built-in columns too`}
+                            aria-label={`Rename ${col.label}`}
                           >
                             <Pencil className="h-3.5 w-3.5" />
                           </button>
@@ -330,8 +333,9 @@ export default function ColumnManager(props: {
                           <button
                             onClick={() => handleDelete(col.key, col.label)}
                             disabled={isDeleting}
-                            className="shrink-0 p-2 rounded-lg border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] hover:text-[var(--state-overdue)] transition-colors disabled:opacity-40"
+                            className="inline-flex items-center justify-center pointer-coarse:size-11 shrink-0 p-2 rounded-lg border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] hover:text-[var(--state-overdue)] transition-colors disabled:opacity-40"
                             title={`Delete "${col.label}" column`}
+                            aria-label={`Delete the ${col.label} column`}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
@@ -386,13 +390,13 @@ export default function ColumnManager(props: {
                       <div className="flex items-center min-w-0 gap-1.5">
                         <GripVertical className="h-4 w-4 text-[var(--color-text-faint)] cursor-grab active:cursor-grabbing shrink-0" />
                         <div className="min-w-0">
-                          <div className="text-sm font-medium text-[var(--color-text)] truncate">{col.label}</div>
+                          <div className="text-body font-medium text-[var(--color-text)] truncate">{col.label}</div>
                           <div className="text-body text-[var(--color-text-muted)]">{col.key}</div>
                         </div>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
                         <button
-                          className="h-7 w-7 inline-flex items-center justify-center rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-30"
+                          className="pointer-coarse:size-11 h-7 w-7 inline-flex items-center justify-center rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-30"
                           onClick={() => move(idx, "up")}
                           disabled={idx === 0}
                           title="Move up"
@@ -401,7 +405,7 @@ export default function ColumnManager(props: {
                           <ChevronUp className="h-3.5 w-3.5" />
                         </button>
                         <button
-                          className="h-7 w-7 inline-flex items-center justify-center rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-30"
+                          className="pointer-coarse:size-11 h-7 w-7 inline-flex items-center justify-center rounded-md border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-30"
                           onClick={() => move(idx, "down")}
                           disabled={idx === options.length - 1}
                           title="Move down"
@@ -474,21 +478,21 @@ export default function ColumnManager(props: {
             </div>
           )}
           {applyError && (
-            <div role="alert" className="mt-2 text-body text-[var(--state-overdue)]">{applyError}</div>
+            <div className="mt-2"><FieldError>{applyError}</FieldError></div>
           )}
         </div>
 
         <div className="px-5 py-4 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+            className="px-4 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
           >
             Cancel
           </button>
           <button
             onClick={() => void apply()}
             disabled={applying}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-medium disabled:opacity-60"
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-body font-medium disabled:opacity-60"
           >
             {applying && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
             {target === "library" && onApplyToLibrary ? "Use for every folder" : "Apply"}

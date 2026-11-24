@@ -77,28 +77,28 @@ export default function MarkupRequestModal({
             <MessageSquare className="w-5 h-5 text-[var(--color-text-muted)]" />
           </div>
           <div className="flex-1">
-            <div className="text-sm font-medium text-[var(--color-text)]">Request markups</div>
+            <div className="text-body font-medium text-[var(--color-text)]">Request markups</div>
             <div className="text-body text-[var(--color-text-muted)] truncate">
               {document.documentNumber || document.title || document.name} - from <b>{holderUserName || "the current checkout holder"}</b>
             </div>
           </div>
-          <button aria-label="Close" onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
+          <button aria-label="Close" onClick={onClose} disabled={busy} className="ui-hit p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             <X className="w-4 h-4" />
           </button>
         </div>
 
         <div className="px-6 py-5 space-y-4">
-          <p className="text-sm text-[var(--color-text-muted)]">
+          <p className="text-body text-[var(--color-text-muted)]">
             Your request will be visible on the project feed{projectId ? "" : " (this is an ad-hoc checkout, so it will only be visible to you and the holder)"}.
             The holder can decline, share their current markup PDF, or upload a stamped copy in response.
           </p>
           <div>
             <label className="text-body font-medium text-[var(--color-text)] ">Message *</label>
-            <textarea
+            <textarea aria-label="Message"
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               rows={4}
-              className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y"
+              className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-body resize-y"
               placeholder="e.g. Working on the discharge piping for the same project, could you share your markups on PSV-201 so we don't conflict?"
             />
           </div>

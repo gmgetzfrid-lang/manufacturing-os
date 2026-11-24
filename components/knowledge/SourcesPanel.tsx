@@ -19,7 +19,7 @@ import {
 import { useToast } from "@/components/providers/ToastProvider";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/Field";
+import { Input, FieldError } from "@/components/ui/Field";
 import {
   listKnowledgeSources, browseKnowledgeContainers, addKnowledgeSources,
   removeKnowledgeSource, syncKnowledgeSources,
@@ -148,7 +148,7 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
           {kids.length > 0 ? (
             <button type="button" onClick={() => toggleExpand(folderId)}
               aria-label={open ? `Fold ${f.name}` : `Open ${f.name}`} aria-expanded={open}
-              className="p-0.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
+              className="pointer-coarse:size-11 p-0.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
               <ChevronRight className={`w-3.5 h-3.5 ui-chevron${(open) ? " rotate-90" : ""}`} />
             </button>
           ) : <span className="w-[18px]" />}
@@ -181,7 +181,7 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
 
         <ModalBody className="space-y-3">
           {browseError && (
-            <p role="alert" className="border-l-2 border-[var(--state-overdue)] pl-2 text-body font-medium text-[var(--state-overdue)]">Couldn&apos;t list what you can link: {browseError}</p>
+            <FieldError>Couldn&apos;t list what you can link: {browseError}</FieldError>
           )}
           {!browse && !browseError && (
             <SkeletonRows rows={4} cols={1} sheet={false} what="Document Control" />
@@ -190,7 +190,7 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
             <>
               <div className="relative">
                 <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]" />
-                <Input value={filter} onChange={(e) => setFilter(e.target.value)}
+                <Input type="search" aria-label="Filter libraries and folders" value={filter} onChange={(e) => setFilter(e.target.value)}
                   placeholder="Filter libraries and folders…" className="pl-8 text-body" />
               </div>
               <div className="max-h-80 overflow-y-auto rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
@@ -252,8 +252,8 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
                         <React.Fragment key={l.id}>
                           <div className={`flex items-center gap-1.5 px-3 py-2 text-body ${already ? "opacity-55" : "hover:bg-[var(--color-surface-2)]"}`}>
                             {rootFolders.length > 0 ? (
-                              <button type="button" onClick={() => toggleExpand(l.id)}
-                                className="p-0.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
+                              <button type="button" onClick={() => toggleExpand(l.id)} aria-label={open ? `Fold ${l.name}` : `Open ${l.name}`} aria-expanded={open}
+                                className="pointer-coarse:size-11 p-0.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
                                 <ChevronRight className={`w-3.5 h-3.5 ui-chevron${(open) ? " rotate-90" : ""}`} />
                               </button>
                             ) : <span className="w-[18px]" />}
@@ -344,7 +344,8 @@ export default function SourcesPanel({ orgId, libraryId, isController, onChanged
     const ok = await appConfirm({
       title: "Unlink this source?",
       message: `"${s.sourceName}" and its ${s.documentCount} mirrored document${s.documentCount === 1 ? "" : "s"} (and their search index) will be removed from this knowledge library. The controlled documents themselves are untouched.`,
-      confirmLabel: "Unlink",
+      confirmLabel: "Unlink source",
+      tone: "danger",
     });
     if (!ok) return;
     setBusy(s.id);
@@ -380,7 +381,7 @@ export default function SourcesPanel({ orgId, libraryId, isController, onChanged
               <span className="text-[var(--color-text-muted)]">· {s.documentCount}</span>
               {isController && (
                 <button onClick={() => void remove(s)} disabled={busy !== null} title="Unlink source" aria-label={`Unlink ${s.sourceName}`}
-                  className="ml-0.5 text-[var(--color-text-muted)] hover:text-[var(--state-overdue)]">
+                  className="ui-hit ml-0.5 text-[var(--color-text-muted)] hover:text-[var(--state-overdue)]">
                   {busy === s.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
                 </button>
               )}

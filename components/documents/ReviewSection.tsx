@@ -16,6 +16,7 @@ import { setOwner, effectiveOwnerForDocument, type EffectiveOwner } from "@/lib/
 import ReviewPill from "@/components/documents/ReviewPill";
 import { User2 } from "lucide-react";
 import type { DocumentRecord, ReviewPolicy } from "@/types/schema";
+import { Field } from "@/components/ui/Field";
 
 type Level = "document" | "collection" | "library";
 
@@ -196,11 +197,11 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
           </div>
           {canManage && ownerPicking && (
             <div className="space-y-1 pb-2 border-b border-[var(--color-border)]">
-              <input value={ownerQuery} onChange={(e) => setOwnerQuery(e.target.value)} placeholder="Search people…" className={`${inp} w-full`} autoFocus />
+              <input type="search" aria-label="Find an owner" value={ownerQuery} onChange={(e) => setOwnerQuery(e.target.value)} placeholder="Search people…" className={`${inp} w-full`} autoFocus />
               {ownerHits.length > 0 && (
                 <div className="rounded-lg border border-[var(--color-border)] max-h-28 overflow-y-auto">
                   {ownerHits.map((u) => (
-                    <button key={u.uid} onClick={() => void assignOwner(u)} className="w-full text-left px-2 py-1 text-body hover:bg-[var(--color-surface-2)] flex items-center gap-1.5"><Plus className="w-3 h-3" /> {u.name || u.email}</button>
+                    <button key={u.uid} onClick={() => void assignOwner(u)} className="pointer-coarse:min-h-11 w-full text-left px-2 py-1 text-body hover:bg-[var(--color-surface-2)] flex items-center gap-1.5"><Plus className="w-3 h-3" /> {u.name || u.email}</button>
                   ))}
                 </div>
               )}
@@ -233,12 +234,14 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
           {canManage && mode === "review" && (
             <div className="space-y-2 pt-1 border-t border-[var(--color-border)]">
               <div className="text-body font-medium text-[var(--color-text-muted)]">Certify this document is current &amp; accurate (resets the clock, no new revision).</div>
-              <select value={outcome} onChange={(e) => setOutcome(e.target.value as typeof outcome)} className={`${inp} w-full`}>
+              <select aria-label="Outcome" value={outcome} onChange={(e) => setOutcome(e.target.value as typeof outcome)} className={`${inp} w-full`}>
                 <option value="no_change">No change: still valid</option>
                 <option value="minor">Minor edit made</option>
                 <option value="needs_revision">Needs revision (flag for drafting)</option>
               </select>
-              <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional)" className={`${inp} w-full`} />
+              <Field label="Note (optional)">
+                <input value={note} onChange={(e) => setNote(e.target.value)} className={`${inp} w-full`} />
+              </Field>
               <div className="flex justify-end gap-2">
                 <button onClick={() => setMode("view")} className="px-2.5 py-1.5 rounded-lg text-body font-medium text-[var(--color-text-muted)]">Cancel</button>
                 <button onClick={() => void doReview()} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] text-body font-medium disabled:opacity-50">{busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Confirm review</button>
@@ -264,28 +267,28 @@ export default function ReviewSection({ doc, orgId, canManage, uid, userName, on
                 <>
                   <div className="flex items-center gap-2">
                     <span className="text-body text-[var(--color-text-muted)]">Every</span>
-                    <input type="number" min={1} value={count} onChange={(e) => setCount(Math.max(1, parseInt(e.target.value) || 1))} className={`${inp} w-16`} />
-                    <select value={unit} onChange={(e) => setUnit(e.target.value as typeof unit)} className={inp}>
+                    <input inputMode="numeric" aria-label="Review every" type="number" min={1} value={count} onChange={(e) => setCount(Math.max(1, parseInt(e.target.value) || 1))} className={`${inp} w-16`} />
+                    <select aria-label="Unit" value={unit} onChange={(e) => setUnit(e.target.value as typeof unit)} className={inp}>
                       <option value="days">days</option><option value="months">months</option><option value="years">years</option>
                     </select>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-body text-[var(--color-text-muted)]">Warn</span>
-                    <input type="number" min={0} value={lead} onChange={(e) => setLead(Math.max(0, parseInt(e.target.value) || 0))} className={`${inp} w-16`} />
+                    <input inputMode="numeric" aria-label="Warn days before due" type="number" min={0} value={lead} onChange={(e) => setLead(Math.max(0, parseInt(e.target.value) || 0))} className={`${inp} w-16`} />
                     <span className="text-body text-[var(--color-text-muted)]">days before due</span>
                   </div>
                   <div className="space-y-1">
                     <div className="text-body font-medium text-[var(--color-text-muted)]">Notify (besides Admin/DocCtrl)</div>
                     <div className="flex flex-wrap gap-1">
                       {reviewers.map((r) => (
-                        <span key={r.uid} className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-body text-[var(--color-text)]">{r.name || r.email}<button onClick={() => setReviewers((p) => p.filter((x) => x.uid !== r.uid))}><X className="w-3 h-3" /></button></span>
+                        <span key={r.uid} className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-body text-[var(--color-text)]">{r.name || r.email}<button aria-label={`Remove ${r.name || r.email}`} className="ui-hit" onClick={() => setReviewers((p) => p.filter((x) => x.uid !== r.uid))}><X className="w-3 h-3" /></button></span>
                       ))}
                     </div>
-                    <input value={userQuery} onChange={(e) => setUserQuery(e.target.value)} placeholder="Search people…" className={`${inp} w-full`} />
+                    <input type="search" aria-label="Find people to notify" value={userQuery} onChange={(e) => setUserQuery(e.target.value)} placeholder="Search people…" className={`${inp} w-full`} />
                     {userHits.length > 0 && (
                       <div className="rounded-lg border border-[var(--color-border)] max-h-28 overflow-y-auto">
                         {userHits.filter((u) => !reviewers.some((r) => r.uid === u.uid)).map((u) => (
-                          <button key={u.uid} onClick={() => { setReviewers((p) => [...p, u]); setUserQuery(""); setUserHits([]); }} className="w-full text-left px-2 py-1 text-body hover:bg-[var(--color-surface-2)] flex items-center gap-1.5"><Plus className="w-3 h-3" /> {u.name || u.email}</button>
+                          <button key={u.uid} onClick={() => { setReviewers((p) => [...p, u]); setUserQuery(""); setUserHits([]); }} className="pointer-coarse:min-h-11 w-full text-left px-2 py-1 text-body hover:bg-[var(--color-surface-2)] flex items-center gap-1.5"><Plus className="w-3 h-3" /> {u.name || u.email}</button>
                         ))}
                       </div>
                     )}

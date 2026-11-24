@@ -30,6 +30,7 @@ import { findRelatedDocuments, type RelatedDocument } from "@/lib/search";
 import { openRelationshipGraph } from "@/components/documents/RelationshipGraphHost";
 import DocumentLinkPicker from "@/components/documents/DocumentLinkPicker";
 import { publicOrigin } from "@/lib/publicOrigin";
+import { Field } from "@/components/ui/Field";
 
 export default function RelatedPanel({
   documentId, orgId, documentNumber, userId, userName, canManage,
@@ -188,7 +189,7 @@ export default function RelatedPanel({
               )}
               {canManage && (
                 <button onClick={() => void removeRelatedResource(r.id).then(refresh)}
-                  title="Unpin" className="p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] opacity-60 group-hover:opacity-100">
+                  title="Unpin" aria-label="Unpin" className="ui-hit p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] opacity-60 group-hover:opacity-100">
                   <X className="w-3 h-3" />
                 </button>
               )}
@@ -211,12 +212,15 @@ export default function RelatedPanel({
 
       {urlDraft && (
         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 p-2 space-y-1.5">
-          <input value={urlDraft.url} onChange={(e) => setUrlDraft({ ...urlDraft, url: e.target.value })}
-            placeholder="https:// … (vendor manual, datasheet, portal)"
-            className="w-full px-2 py-1.5 border border-[var(--color-border-strong)] rounded-lg text-body" />
-          <input value={urlDraft.label} onChange={(e) => setUrlDraft({ ...urlDraft, label: e.target.value })}
-            placeholder="Label (optional)"
-            className="w-full px-2 py-1.5 border border-[var(--color-border-strong)] rounded-lg text-body" />
+          <Field label="Link">
+            <input type="url" value={urlDraft.url} onChange={(e) => setUrlDraft({ ...urlDraft, url: e.target.value })}
+              placeholder="https://"
+              className="w-full px-2 py-1.5 border border-[var(--color-border-strong)] rounded-lg text-body" />
+          </Field>
+          <Field label="Label (optional)">
+            <input value={urlDraft.label} onChange={(e) => setUrlDraft({ ...urlDraft, label: e.target.value })}
+              className="w-full px-2 py-1.5 border border-[var(--color-border-strong)] rounded-lg text-body" />
+          </Field>
           <div className="flex items-center gap-1.5 justify-end">
             <button onClick={() => setUrlDraft(null)} className="text-body font-medium text-[var(--color-text-muted)] px-2 py-1">Cancel</button>
             <button onClick={() => void addUrl()} disabled={busy || !urlDraft.url.trim()}
@@ -270,7 +274,7 @@ export default function RelatedPanel({
               {canManage && (
                 <div className="flex items-center gap-1.5">
                   <button onClick={() => void decideProposal(p, true)} disabled={decidingId === p.id}
-                    className="inline-flex items-center gap-1 text-body font-medium border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] rounded px-1.5 py-0.5 disabled:opacity-50">
+                    className="pointer-coarse:min-h-11 inline-flex items-center gap-1 text-body font-medium border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] rounded px-1.5 py-0.5 disabled:opacity-50">
                     {decidingId === p.id ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Check className="w-2.5 h-2.5" />} Link
                   </button>
                   <button onClick={() => void decideProposal(p, false)} disabled={decidingId === p.id}

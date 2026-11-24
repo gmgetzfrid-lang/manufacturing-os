@@ -35,19 +35,19 @@ const VERDICT_UI: Record<VerifyTicketResult["verdict"], {
   bg: string; headline: string; sub: (r: VerifyTicketResult) => string; icon: "check" | "warn" | "stop";
 }> = {
   current: {
-    bg: "bg-[var(--state-released)]", icon: "check", headline: "Latest issue",
+    bg: "bg-[color-mix(in_srgb,var(--state-released)_78%,black)]", icon: "check", headline: "Latest issue",
     sub: () => "This copy is the latest issued revision of this deliverable.",
   },
   revision_in_progress: {
-    bg: "bg-[var(--state-held)]", icon: "warn", headline: "Revision underway",
+    bg: "bg-[color-mix(in_srgb,var(--state-held)_78%,black)]", icon: "warn", headline: "Revision underway",
     sub: (r) => `This copy (Rev ${r.printedRev}) is the latest issue, but Rev ${r.currentRev} is in drafting/review right now. Confirm with the requester before starting new work.`,
   },
   superseded: {
-    bg: "bg-[var(--state-overdue)]", icon: "stop", headline: "Do not use",
+    bg: "bg-[color-mix(in_srgb,var(--state-overdue)_78%,black)]", icon: "stop", headline: "Do not use",
     sub: (r) => `This copy is Rev ${r.printedRev}. Rev ${r.latestIssuedRev} has since been issued. Get the current deliverable before use.`,
   },
   draft_copy: {
-    bg: "bg-[var(--state-held)]", icon: "warn", headline: "Review draft",
+    bg: "bg-[color-mix(in_srgb,var(--state-held)_78%,black)]", icon: "warn", headline: "Review draft",
     sub: (r) => {
       const sameCycle = r.printedRev && r.latestIssuedRev && parseInt(r.printedRev, 10) === parseInt(r.latestIssuedRev, 10);
       return sameCycle
@@ -102,12 +102,12 @@ export default function VerifyTicketPage() {
     }`}>
       <div className="w-full max-w-sm text-center">
         {loading ? (
-          <div className="text-white/90">
+          <div className="text-[var(--color-ink-fg)]/90">
             <Loader2 className="w-14 h-14 mx-auto animate-spin mb-4" />
             <div className="text-body font-medium ">Checking revision…</div>
           </div>
         ) : error ? (
-          <div className="text-white/90">
+          <div className="text-[var(--color-ink-fg)]/90">
             <ShieldQuestion className="w-16 h-16 mx-auto mb-4 opacity-80" />
             <h1 className="text-[34px] leading-[1.05] tracking-[-0.02em] font-bold mb-3">Can&apos;t verify this code.</h1>
             <p className="text-reading opacity-90">{error}</p>
@@ -116,7 +116,7 @@ export default function VerifyTicketPage() {
             </p>
             <button
               onClick={() => void check()}
-              className="mt-6 inline-flex items-center gap-2 h-11 px-4 rounded-lg bg-white/15 hover:bg-white/25 text-reading font-medium"
+              className="mt-6 inline-flex items-center gap-2 h-11 px-4 rounded-lg bg-[var(--color-ink-fg)]/15 hover:bg-[var(--color-ink-fg)]/25 text-reading font-medium"
             >
               <RefreshCw className="w-4 h-4" /> Try again
             </button>
@@ -125,14 +125,14 @@ export default function VerifyTicketPage() {
           <>
             {/* THE VERDICT — readable at arm's length in a plant. */}
             {ui.icon === "check" ? (
-              <CheckCircle2 className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
+              <CheckCircle2 className="w-24 h-24 mx-auto text-[var(--color-ink-fg)] mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
             ) : ui.icon === "stop" ? (
-              <XCircle className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
+              <XCircle className="w-24 h-24 mx-auto text-[var(--color-ink-fg)] mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
             ) : (
-              <AlertTriangle className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
+              <AlertTriangle className="w-24 h-24 mx-auto text-[var(--color-ink-fg)] mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
             )}
-            <h1 className="text-[40px] font-bold text-white leading-[1.03] tracking-[-0.03em] mb-3">{ui.headline}</h1>
-            <p className="text-white/90 text-reading font-medium mb-6">{ui.sub(result)}</p>
+            <h1 className="text-[40px] font-bold text-[var(--color-ink-fg)] leading-[1.03] tracking-[-0.03em] mb-3">{ui.headline}</h1>
+            <p className="text-[var(--color-ink-fg)]/90 text-reading font-medium mb-6">{ui.sub(result)}</p>
 
             {/* The facts card */}
             <div className="bg-[var(--color-surface)] rounded-xl ui-float p-5 text-left space-y-3">
@@ -166,12 +166,12 @@ export default function VerifyTicketPage() {
               )}
             </div>
 
-            <div className="mt-5 text-caption text-white/70">
+            <div className="mt-5 text-caption text-[var(--color-ink-fg)]/90">
               Checked {new Date(result.checkedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} by the drafting portal.
             </div>
             <button
               onClick={() => void check()}
-              className="mt-3 inline-flex items-center gap-1.5 h-11 px-4 rounded-lg bg-white/15 hover:bg-white/25 text-white text-reading font-medium"
+              className="mt-3 inline-flex items-center gap-1.5 h-11 px-4 rounded-lg bg-[var(--color-ink-fg)]/15 hover:bg-[var(--color-ink-fg)]/25 text-[var(--color-ink-fg)] text-reading font-medium"
             >
               <RefreshCw className="w-3 h-3" /> Check again
             </button>

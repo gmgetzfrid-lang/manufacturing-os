@@ -152,6 +152,13 @@ export default function CompaniesPage() {
           </div>
         )
       ) : (
+        <>
+        {shown.length < companies.length && (
+          <div className="flex items-center gap-3 text-body">
+            <span className="text-[var(--color-text-muted)] tabular-nums">{shown.length} of {companies.length} companies</span>
+            <button type="button" onClick={() => { setSearch(""); setKindFilter("all"); }} className={heroQuiet}>Clear</button>
+          </div>
+        )}
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
           <table className="w-full text-body max-sm:hidden">
             <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left">
@@ -192,6 +199,7 @@ export default function CompaniesPage() {
             </div>
           )}
         </div>
+        </>
       )}
       </PageBody>
 

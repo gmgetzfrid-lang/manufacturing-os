@@ -18,6 +18,7 @@ import FileThumb from "@/components/ui/FileThumb";
 import PdfDrop, { formatSize } from "@/components/documents/lifecycle/PdfDrop";
 
 import { friendlyError } from "@/lib/friendlyError";
+import { Field } from "@/components/ui/Field";
 interface SetRevUpModalProps {
   setId: string;
   libraryId: string;
@@ -139,7 +140,7 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
               <div className="text-body text-[var(--color-text-muted)] mt-0.5">Every active sheet in this set, in one operation.</div>
             </div>
           </div>
-          <button aria-label="Close" onClick={onCancel} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
+          <button aria-label="Close" onClick={onCancel} className="ui-hit p-1.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -149,21 +150,28 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
           <div className="bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-3 space-y-2">
             <div className="text-body font-medium text-[var(--color-text)] ">Shared across all sheets</div>
             <div className="grid grid-cols-2 gap-2">
-              <select value={issueType ?? ""} onChange={(e) => setIssueType(e.target.value as DocumentVersion["issueType"])} className="text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5 bg-[var(--color-surface)]">
-                {ISSUE_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-              <select value={changeType ?? ""} onChange={(e) => setChangeType(e.target.value as DocumentVersion["changeType"])} className="text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5 bg-[var(--color-surface)]">
-                {CHANGE_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
+              <Field label="Issue type">
+                <select value={issueType ?? ""} onChange={(e) => setIssueType(e.target.value as DocumentVersion["issueType"])} className="w-full text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5 bg-[var(--color-surface)]">
+                  {ISSUE_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </Field>
+              <Field label="Change type">
+                <select value={changeType ?? ""} onChange={(e) => setChangeType(e.target.value as DocumentVersion["changeType"])} className="w-full text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5 bg-[var(--color-surface)]">
+                  {CHANGE_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </Field>
             </div>
-            <input value={sharedMoc} onChange={(e) => setSharedMoc(e.target.value)} placeholder="MOC reference" className="w-full text-xs border border-[var(--color-border-strong)] rounded px-2 py-1.5 font-mono" />
-            <textarea
-              value={sharedChangeLog}
-              onChange={(e) => setSharedChangeLog(e.target.value)}
-              rows={2}
-              placeholder='Shared change narrative (required) - applied to every sheet in this set.'
-              className="w-full text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5"
-            />
+            <Field label="MOC reference">
+              <input value={sharedMoc} onChange={(e) => setSharedMoc(e.target.value)} className="w-full text-caption border border-[var(--color-border-strong)] rounded px-2 py-1.5 font-mono" />
+            </Field>
+            <Field label="Shared change narrative" hint="Applied to every sheet in this set.">
+              <textarea
+                value={sharedChangeLog}
+                onChange={(e) => setSharedChangeLog(e.target.value)}
+                rows={2}
+                className="w-full text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5"
+              />
+            </Field>
           </div>
 
           {/* Sheets */}
@@ -187,7 +195,7 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
                     </div>
                     <div className="col-span-2 font-display tabular-nums text-[var(--color-text-muted)]">Rev {s.doc.rev || "-"}</div>
                     <div className="col-span-2">
-                      <input value={s.newRevLabel} onChange={(e) => updateSheet(i, { newRevLabel: e.target.value })}
+                      <input aria-label={`New revision for ${s.doc.documentNumber || s.doc.title || "this sheet"}`} value={s.newRevLabel} onChange={(e) => updateSheet(i, { newRevLabel: e.target.value })}
                         className="w-full text-body border border-[var(--color-border-strong)] rounded px-1.5 py-1 font-display tabular-nums"
                         placeholder="New rev" />
                     </div>
@@ -240,8 +248,8 @@ export default function SetRevUpModal(props: SetRevUpModalProps) {
         </div>
 
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
-          <button onClick={onCancel} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
-          <button onClick={() => void submit()} disabled={!valid || busy || loading} className="inline-flex items-center gap-1.5 text-sm font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40">
+          <button onClick={onCancel} disabled={busy} className="text-body text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
+          <button onClick={() => void submit()} disabled={!valid || busy || loading} className="inline-flex items-center gap-1.5 text-body font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
             Bump All
           </button>

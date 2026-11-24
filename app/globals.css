@@ -68,7 +68,7 @@
   --color-text-faint: #626d7e;
   --color-border: #e0e3e9;        /* hairline */
   --color-border-strong: #cdd1d9; /* rule */
-  --color-border-control: #878c96;/* a field's resting edge: 3:1 */
+  --color-border-control: #828791;/* a field's resting edge: 3:1 on the page and on sheets */
   /* The brand at full strength (charts, progress). */
   --color-main: #2262e6;
   --color-main-hover: #0a4bce;
@@ -424,8 +424,8 @@ body {
    element, like `hidden` or `max-sm:hidden`, still wins.) */
 @layer components {
   .ui-badge {
-    display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px;
-    padding: 0 5px; border-radius: 999px; font-size: 11px; font-weight: 700; line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px;
+    padding: 0 6px; border-radius: 999px; font-size: 12px; font-weight: 700; line-height: 1;
     font-variant-numeric: tabular-nums; background: var(--state-overdue); color: #ffffff;
   }
   .ui-badge.is-quiet { background: var(--color-surface-2); color: var(--color-text); box-shadow: inset 0 0 0 1px var(--color-border-strong); }
@@ -758,16 +758,26 @@ html[data-density="compact"] tbody tr {
 .ui-field-box:has(.ui-field-bare:focus-visible) { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
 /* ── Phones and touch ─────────────────────────────────────────────
-   Every field is 16 px on a phone, so iPhone Safari never zooms the page
-   on focus (fields drawn bigger keep their size). Tap targets grow to 44
+   Every field is 16 px on a phone or any touch screen (a phone turned
+   sideways, a tablet), so iPhone Safari never zooms the page on focus
+   (fields drawn bigger keep their size). Rich text boxes too. Tap targets grow to 44
    px only on touch screens, in the shared control recipes
    (the pointer-coarse variant). */
-@media (max-width: 639px) {
+@media (max-width: 639px), (pointer: coarse) {
   input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([class*="text-lg"]):not([class*="text-xl"]):not([class*="text-section"]):not([class*="text-title"]):not([class*="text-hero"]):not([class*="text-[2"]):not([class*="text-[3"]):not([class*="text-[4"]),
   select:not([class*="text-lg"]):not([class*="text-xl"]),
-  textarea:not([class*="text-lg"]):not([class*="text-xl"]):not([class*="text-section"]):not([class*="text-title"]):not([class*="text-[2"]) {
+  textarea:not([class*="text-lg"]):not([class*="text-xl"]):not([class*="text-section"]):not([class*="text-title"]):not([class*="text-[2"]),
+  [contenteditable="true"], [contenteditable=""] {
     font-size: 16px;
   }
+}
+
+/* Every field's resting edge is 3:1 against the page (design rule F4).
+   Hand-made fields that borrowed the light rule-line colors get the field
+   edge instead; an error edge (aria-invalid) is left alone. Unlayered, so
+   it wins over the utility it replaces. */
+:is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]), select, textarea, .ui-field-box):is([class*="--color-border)"], [class*="--color-border-strong)"]):not([aria-invalid="true"]):not([class*="border-transparent"]):not([class*="border-0"]) {
+  border-color: var(--color-border-control);
 }
 
 /* ── Loading: skeleton rows ───────────────────────────────────────
@@ -890,7 +900,7 @@ html.vt-on .vt-top { view-transition-name: top-bar; }
 .bp-tag:hover .bp-means, .bp-tag:active .bp-means { opacity: 1; }
 .bp-border { position: absolute; border: 1px solid color-mix(in srgb, var(--color-text) 28%, transparent); pointer-events: none; animation: bp-border 1.1s cubic-bezier(.4,0,.2,1) both; }
 .bp-zones { position: absolute; display: flex; justify-content: space-around; font: 600 12px var(--font-display), sans-serif; color: color-mix(in srgb, var(--color-text) 45%, transparent); pointer-events: none; animation: bp-fade .6s ease .9s both; }
-.bp-rise { animation: bp-rise .55s cubic-bezier(.2,.7,.2,1) .12s both; }
+.bp-rise { animation: bp-rise .3s cubic-bezier(.2,.7,.2,1) both; } /* the card with the fields: ready at once (rule M2) */
 .bp-intro { animation: bp-fade .7s ease .35s both; }
 .tb-rule { transform-origin: left center; animation: bp-rule .6s cubic-bezier(.4,0,.2,1) .45s both; }
 .tb-ink { animation: bp-ink .7s cubic-bezier(.4,0,.2,1) both; }
@@ -936,22 +946,23 @@ html.vt-on .vt-top { view-transition-name: top-bar; }
   .tab-glide-bar { transition: none; }
 }
 
-/* Sections settle in when a page opens or its data arrives (PageBody). */
-.page-body > * { animation: settle .34s var(--ease-fluid) both; }
-.page-body > :nth-child(2) { animation-delay: 45ms; }
-.page-body > :nth-child(3) { animation-delay: 90ms; }
-.page-body > :nth-child(4) { animation-delay: 135ms; }
-.page-body > :nth-child(n+5) { animation-delay: 170ms; }
+/* Sections settle in when a page opens or its data arrives (PageBody).
+   Everything has landed by 300 ms (design rule M1). */
+.page-body > * { animation: settle .24s var(--ease-fluid) both; }
+.page-body > :nth-child(2) { animation-delay: 20ms; }
+.page-body > :nth-child(3) { animation-delay: 40ms; }
+.page-body > :nth-child(n+4) { animation-delay: 60ms; }
 @keyframes settle { from { opacity: 0; transform: translateY(6px); } }
 
 /* Rows arrive one after another, the first dozen only (tables and lists
-   marked .ui-stagger). Rows added later (a filter, a new item) do too. */
-.ui-stagger > * { animation: row-in .26s var(--ease-fluid) both; }
-.ui-stagger > :nth-child(2) { animation-delay: 20ms; } .ui-stagger > :nth-child(3) { animation-delay: 40ms; }
-.ui-stagger > :nth-child(4) { animation-delay: 60ms; } .ui-stagger > :nth-child(5) { animation-delay: 80ms; }
-.ui-stagger > :nth-child(6) { animation-delay: 100ms; } .ui-stagger > :nth-child(7) { animation-delay: 120ms; }
-.ui-stagger > :nth-child(8) { animation-delay: 140ms; } .ui-stagger > :nth-child(9) { animation-delay: 160ms; }
-.ui-stagger > :nth-child(10) { animation-delay: 180ms; } .ui-stagger > :nth-child(n+11) { animation-delay: 200ms; }
+   marked .ui-stagger). Rows added later (a filter, a new item) do too.
+   The last row has landed by 300 ms. */
+.ui-stagger > * { animation: row-in .2s var(--ease-fluid) both; }
+.ui-stagger > :nth-child(2) { animation-delay: 10ms; } .ui-stagger > :nth-child(3) { animation-delay: 20ms; }
+.ui-stagger > :nth-child(4) { animation-delay: 30ms; } .ui-stagger > :nth-child(5) { animation-delay: 40ms; }
+.ui-stagger > :nth-child(6) { animation-delay: 50ms; } .ui-stagger > :nth-child(7) { animation-delay: 60ms; }
+.ui-stagger > :nth-child(8) { animation-delay: 70ms; } .ui-stagger > :nth-child(9) { animation-delay: 80ms; }
+.ui-stagger > :nth-child(10) { animation-delay: 90ms; } .ui-stagger > :nth-child(n+11) { animation-delay: 100ms; }
 @keyframes row-in { from { opacity: 0; transform: translateY(4px); } }
 
 /* Something opened in place (a section, a disclosure) slides down into
@@ -964,7 +975,7 @@ html.vt-on .vt-top { view-transition-name: top-bar; }
 .ui-press:active:not(:disabled) { transform: scale(0.98); }
 
 /* A done check draws itself (Button's done state, finished steps). */
-.ui-check-draw path, .ui-check-draw polyline { stroke-dasharray: 30; stroke-dashoffset: 0; animation: check-draw .38s var(--ease-fluid) both; }
+.ui-check-draw path, .ui-check-draw polyline { stroke-dasharray: 30; stroke-dashoffset: 0; animation: check-draw .3s var(--ease-fluid) both; }
 @keyframes check-draw { from { stroke-dashoffset: 30; } }
 
 /* A count that changes (the bell, a menu badge) gives a small pop. */
@@ -1006,8 +1017,32 @@ html.vt-on .side-marker { view-transition-name: side-marker; }
   background: color-mix(in srgb, var(--color-current) 9%, var(--color-surface));
   border-color: color-mix(in srgb, var(--color-current) 50%, transparent);
 }
-@media (pointer: coarse) { .ui-chip { height: 36px; } }
+@media (pointer: coarse) {
+  .ui-chip { height: 36px; position: relative; }
+  .ui-chip::after { content: ""; position: absolute; inset: -4px 0; } /* 44 px to tap (rule T1) */
+}
 @media (prefers-reduced-motion: reduce) { .ui-chip:active { transform: none; } }
+
+/* A small control (a 14 to 24 px icon) keeps its look but takes taps over
+   44 x 44 px on a touch screen (design rule T1). For one control on its
+   own; two small icons side by side get a real 44 px size on touch
+   instead (pointer-coarse:size-11), or their areas would overlap. */
+@layer components {
+  .ui-hit { position: relative; }
+  @media (pointer: coarse) {
+    .ui-hit::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); transform: translate(-50%, -50%); }
+  }
+}
+
+/* Text links (the ones that underline on hover) take taps over 44 px on
+   a touch screen without moving anything: 12 px of padding above and
+   below, cancelled by an equal negative margin (design rule T1). In the
+   base layer, so a link with its own padding or margin keeps it. */
+@layer base {
+  @media (pointer: coarse) {
+    :is(a, button)[class*="hover:underline"] { padding-block: 12px; margin-block: -12px; }
+  }
+}
 
 /* An empty state's icon draws itself in, like the sheet at sign-in. */
 .ui-draw-icon :is(path, line, polyline, rect, circle, ellipse) { stroke-dasharray: 120; stroke-dashoffset: 0; animation: icon-draw .9s var(--ease-fluid) .1s both; }

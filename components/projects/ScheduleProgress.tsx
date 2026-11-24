@@ -62,8 +62,8 @@ const LABEL = "text-body font-medium text-[var(--color-text-muted)] mb-2";
 
 const STATUS_META: Record<MilestoneStatus, { label: string; tone: string; bar: string; Icon: React.ComponentType<{ className?: string }> }> = {
   // The same colours as the timeline and calendar dots.
-  planned:     { label: "Planned",     tone: "text-slate-600 dark:text-slate-300",  bar: "bg-[var(--color-border-strong)]",   Icon: Circle },
-  in_progress: { label: "In progress", tone: "text-[var(--color-text)] dark:text-[var(--color-text)]",    bar: "bg-[var(--color-main)]/55",    Icon: PauseCircle },
+  planned:     { label: "Planned",     tone: "text-[var(--color-text-muted)]",  bar: "bg-[var(--color-border-strong)]",   Icon: Circle },
+  in_progress: { label: "In progress", tone: "text-[var(--color-text)]",    bar: "bg-[var(--color-main)]/55",    Icon: PauseCircle },
   completed:   { label: "Completed",   tone: "text-[var(--state-released-text)]", bar: "bg-[var(--color-main)]", Icon: CheckCircle2 },
   missed:      { label: "Missed",      tone: "text-[var(--state-overdue-text)]",    bar: "bg-[var(--state-overdue)]",    Icon: XCircle },
   blocked:     { label: "Blocked",     tone: "text-[var(--state-overdue-text)]",    bar: "bg-[var(--state-overdue)]",    Icon: MinusCircle },

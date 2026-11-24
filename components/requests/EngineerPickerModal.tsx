@@ -224,8 +224,9 @@ export default function EngineerPickerModal({
 
           {requireComment && (
             <div>
-              <label className="text-body font-medium text-[var(--color-text)]">{commentLabel.replace(/\s*\*$/, "")}</label>
+              <label htmlFor="engineer-pick-comment" className="text-body font-medium text-[var(--color-text)]">{commentLabel.replace(/\s*\*$/, "")}</label>
               <Textarea
+                id="engineer-pick-comment"
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
                 rows={3}

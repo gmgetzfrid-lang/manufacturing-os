@@ -21,6 +21,7 @@ import {
 import CollectionModal from "./CollectionModal";
 
 import { friendlyError } from "@/lib/friendlyError";
+import { FieldError } from "@/components/ui/Field";
 interface CollectionsStripProps {
   orgId: string;
   libraryId: string;
@@ -128,7 +129,7 @@ export default function CollectionsStrip({
           <Plus className="w-3.5 h-3.5" /><span className="max-sm:sr-only">New collection</span>
         </button>
       </div>
-      {error && <p role="alert" className="px-4 sm:px-5 pb-2 text-body text-[var(--state-overdue)]">{error}</p>}
+      {error && <div className="px-4 sm:px-5 pb-2"><FieldError>{error}</FieldError></div>}
 
       {(openCollectionId || creating) && (
         <CollectionModal
@@ -177,7 +178,7 @@ function CollectionCard({
       </button>
       {canManage && (
         <button type="button" onClick={onManage} aria-label={`Edit ${collection.name}`} title="Edit the book: name, add, reorder"
-          className="w-7 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] sm:opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 hover:text-[var(--color-main)] hover:bg-[var(--color-accent-soft)] transition-opacity">
+          className="ui-hit w-7 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] sm:opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 hover:text-[var(--color-main)] hover:bg-[var(--color-accent-soft)] transition-opacity">
           <Pencil className="w-3.5 h-3.5" />
         </button>
       )}

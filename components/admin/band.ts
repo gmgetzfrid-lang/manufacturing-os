@@ -23,7 +23,7 @@ export const bandSeg =
 /** One toggle in a header row. The one you're on is a white raised
  *  segment with text color. */
 export function bandSegItem(on: boolean): string {
-  return `shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-8 pointer-coarse:h-10 px-3 rounded-md text-body font-semibold transition-colors ${
+  return `shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md text-body font-semibold transition-colors ${
     on ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-border-strong)]" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
   }`;
 }

@@ -53,7 +53,7 @@ export default function TimelineFeed({ events, showScope = true, emptyMessage = 
   return (
     <div className="relative">
       {/* Left rail */}
-      <div className="absolute left-[15px] top-2 bottom-2 w-0.5 bg-slate-200" />
+      <div className="absolute left-[15px] top-2 bottom-2 w-0.5 bg-[var(--color-border)]" />
 
       <div className="space-y-3">
         {events.map((e) => (
@@ -131,7 +131,7 @@ function TimelineRow({ event, showScope, onReverseRequest }: { event: TimelineEv
   return (
     <div className="flex items-start relative">
       {/* Dot */}
-      <div className={`w-8 h-8 rounded-full ${v.bgClass} border-2 ${v.ringClass} flex items-center justify-center shrink-0 z-10 mr-3 ring-4 ring-white shadow-sm`}>
+      <div className={`w-8 h-8 rounded-full ${v.bgClass} border-2 ${v.ringClass} flex items-center justify-center shrink-0 z-10 mr-3 ring-4 ring-[var(--color-surface)] shadow-sm`}>
         <Icon className={`w-3.5 h-3.5 ${v.iconColor}`} />
       </div>
 

@@ -13,7 +13,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useDraft } from "@/hooks/useDraft";
 import { useProjectTypeCtx } from "@/components/projects/ProjectTypeContext";
 import { typeWord } from "@/lib/projectType";
-import { X, Plus, Trash2 } from "lucide-react";
+import { X, Plus, Trash2, CircleAlert } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import type { ShiftTimes } from "@/lib/shiftReport";
 import { fmtInTz, toDateTimeInput, fromDateTimeInput, dayKeyToMs } from "@/lib/scheduleTz";
@@ -190,7 +190,7 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
     if (ok) { whatDraft.clear(); onClose(); }
   };
 
-  const inp = "h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption text-[var(--color-text)] ";
+  const inp = "h-8 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption text-[var(--color-text)] ";
   const lbl = "block mb-1 text-body font-medium text-[var(--color-text-muted)]";
   // A choice: picked is dark, the rest a quiet fill.
   const chip = (on: boolean) => `h-8 px-3 rounded-lg text-caption font-medium ${on ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`;
@@ -204,7 +204,7 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
             <div className="mt-0.5 text-reading font-medium">{isNew ? `New work order: ${k.lower}` : k.word === "Discovery" ? "Discovery work" : "Added scope"}</div>
             <div className="text-caption text-[var(--color-text-muted)]">Work that wasn&apos;t in the plan, and what it does to it.</div>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close" className="-mr-1.5 w-8 h-8 shrink-0 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+          <button type="button" onClick={onClose} aria-label="Close" className="ui-hit -mr-1.5 w-8 h-8 shrink-0 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
         <div className="px-4 py-3 space-y-3">
           <div className="space-y-1">
@@ -277,7 +277,7 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
                       className={`${inp} w-14 text-right font-display tabular-nums`} />
                     <span className="text-[var(--color-text-muted)]">h</span>
                   </span>
-                  {rows.length > 1 && <button type="button" onClick={() => setRows(rows.filter((_, j) => j !== i))} aria-label="Remove this step" className="w-7 h-7 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><Trash2 className="w-3.5 h-3.5" /></button>}
+                  {rows.length > 1 && <button type="button" onClick={() => setRows(rows.filter((_, j) => j !== i))} aria-label="Remove this step" className="ui-hit w-7 h-7 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><Trash2 className="w-3.5 h-3.5" /></button>}
                 </div>
               ))}
               <button type="button" onClick={() => setRows([...rows, { name: "", crew: rows[rows.length - 1]?.crew ?? "", hours: "" }])} className="inline-flex items-center gap-1 hover:underline text-[var(--color-accent-text)]"><Plus className="w-3.5 h-3.5" /> Another step (done after the one above)</button>
@@ -338,7 +338,7 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
           </label>
 
           {/* What it does to the schedule — before it's saved. */}
-          <div className={`border-t border-[var(--color-border)] pt-3 space-y-1 ${plan?.impact.critical ? "border-l-2 border-l-rose-500 pl-3" : ""}`}>
+          <div className={`border-t border-[var(--color-border)] pt-3 space-y-1 ${plan?.impact.critical ? "border-l-2 border-l-[var(--state-overdue)] pl-3" : ""}`}>
             <div className="text-body font-medium text-[var(--color-text-muted)]">What it does to the schedule</div>
             {!plan ? <div className="text-[var(--color-text-muted)]">{timeProblem && filled.length ? timeProblem : "Add the work it needs (a step and its hours) to see."}</div> : (
               <>
@@ -353,9 +353,9 @@ export default function DiscoveryForm({ milestones, task: startTask, newWo, tz, 
               </>
             )}
           </div>
-          {msg && <div role="alert" className="font-medium text-[var(--state-overdue-text)]">{msg}</div>}
+          {msg && <div role="alert" className="font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-0.5" /><span>{msg}</span></div>}
           <div className="flex items-center justify-end gap-2 pt-1">
-            <button type="button" onClick={onClose} className="h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] font-medium hover:bg-[var(--color-surface-2)]">Cancel</button>
+            <button type="button" onClick={onClose} className="h-9 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] font-medium hover:bg-[var(--color-surface-2)]">Cancel</button>
             <button type="button" onClick={() => void save()} disabled={busy}
               className="h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
               {busy ? "Adding…" : "Add to the schedule"}

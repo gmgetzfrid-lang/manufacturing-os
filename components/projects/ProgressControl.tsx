@@ -13,7 +13,7 @@
 
 import React, { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { X } from "lucide-react";
+import { X, CircleAlert } from "lucide-react";
 import { previousShift, shiftAt, shiftWindow, DEFAULT_SHIFT_TIMES, type ShiftCredit, type ShiftTimes, type ShiftWindow } from "@/lib/shiftReport";
 import { clockForWork } from "@/components/projects/ShiftRecordParts";
 import { dayKey, toDateTimeInput } from "@/lib/scheduleTz";
@@ -129,7 +129,7 @@ export function ProgressSlider({ percent, onPick, disabled, busy, commitSame, co
     <div className="w-full">
       <div className="flex items-center justify-between mb-1.5">
         <span className="text-body font-medium text-[var(--color-text-muted)]">Progress</span>
-        <span className="text-sm font-medium text-[var(--color-text)] tabular-nums">{val}%</span>
+        <span className="text-body font-medium text-[var(--color-text)] tabular-nums">{val}%</span>
       </div>
       <input
         type="range"
@@ -246,20 +246,20 @@ export function ProgressNoteForm({ percent, start, onSave, onCancel, busy }: {
             ? <span className="text-caption text-[var(--color-text-muted)]">(required)</span>
             : <span className="text-caption text-[var(--color-text-faint)]">(optional)</span>}
         </div>
-        <input ref={noteRef} value={note} onChange={(e) => { setNote(e.target.value); setMsg(null); }}
+        <input ref={noteRef} value={note} aria-label="Comment" onChange={(e) => { setNote(e.target.value); setMsg(null); }}
           onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void save(); } if (e.key === "Escape" && onCancel) { e.stopPropagation(); onCancel(); } }}
           placeholder={wantsNote ? "e.g. bundle half out · or why it's corrected" : "Comment"}
           aria-required={wantsNote}
-          className={`w-full h-9 px-2.5 rounded-lg border bg-[var(--color-surface)] text-body pointer-coarse:h-10   ${missing ? (msg ? "border-2 border-[var(--state-overdue)]" : "border-2 border-[var(--state-held)] bg-transparent") : "border-[var(--color-border-strong)]"}`} />
+          className={`w-full h-9 px-2.5 rounded-lg border bg-[var(--color-surface)] text-body pointer-coarse:h-11   ${missing ? (msg ? "border-2 border-[var(--state-overdue)]" : "border-2 border-[var(--state-held)] bg-transparent") : "border-[var(--color-border-strong)]"}`} />
       </div>
       {/* When it happened: the shift and the time — it goes on that
           shift's report at that time. */}
       {choices.length > 0 && <WhenFields choices={choices} idx={whenIdx} setIdx={(i) => { setWhenIdx(i); setMsg(null); }} clock={when} setClock={(v) => { setWhen(v); setMsg(null); }} tz={clockCtx!.tz} times={clockCtx!.times} other={otherDay} setOther={(d) => { setOtherDay(d); setMsg(null); }} disabled={busy || saving} />}
-      {msg && <div className="text-[var(--state-overdue-text)] font-medium">{msg}</div>}
+      {msg && <div role="alert" className="text-[var(--state-overdue-text)] font-medium flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-0.5" /><span>{msg}</span></div>}
       <div className="flex items-center gap-2">
-        {onCancel && <button type="button" onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>}
+        {onCancel && <button type="button" onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>}
         <button type="button" disabled={!ready} onClick={() => void save()}
-          className={`ml-auto h-9 px-3.5 rounded-lg text-body font-medium bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40 pointer-coarse:h-10 ${missing ? "opacity-70" : ""}`}>
+          className={`ml-auto h-9 px-3.5 rounded-lg text-body font-medium bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] disabled:opacity-40 pointer-coarse:h-11 ${missing ? "opacity-70" : ""}`}>
           {saving ? "Saving…" : missing ? "Add a comment to save" : `${pick === 100 ? "Mark done" : pick != null ? `Save ${pick}%` : "Save"}${when && pick != null ? ` at ${when}` : ""}`}
         </button>
       </div>
@@ -338,7 +338,7 @@ export default function ProgressControl({ percent, onPick, disabled, onDisabledC
             {onSaveWithNote && (
               <div className="-mt-1 mb-1 flex items-center justify-between gap-2">
                 <span className="text-body font-medium text-[var(--color-text-muted)]">Progress</span>
-                <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="-mr-1.5 w-8 h-8 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+                <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="ui-hit -mr-1.5 w-8 h-8 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
               </div>
             )}
             {onSaveWithNote ? (

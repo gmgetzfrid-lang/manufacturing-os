@@ -414,13 +414,12 @@ export default function StorageBackupPage() {
   const purgeOrphanFiles = async () => {
     if (!activeOrgId || !orphanScan || orphanScan.orphans.length === 0) return;
     const ok = await appConfirm({
-      title: "Delete orphaned files?",
+      title: `Delete ${fmtNum(orphanScan.orphans.length)} unused file(s)?`,
       message:
-        `Permanently delete ${fmtNum(orphanScan.orphans.length)} file(s) (≈${fmtBytes(orphanScan.orphanBytes)}) that nothing in the ` +
-        "database uses, like old knowledge uploads you deleted. The server checks each file again before deleting, and " +
-        "files newer than 7 days are never touched. This cannot be undone.",
+        `Nothing in the database uses them (≈${fmtBytes(orphanScan.orphanBytes)}), like old knowledge uploads you deleted. ` +
+        "The server checks each file again before deleting, and files newer than 7 days are never touched. You can't undo this.",
       tone: "danger",
-      confirmLabel: "Delete orphans",
+      confirmLabel: "Delete files",
     });
     if (!ok) return;
     setOrphanBusy("delete"); setOrphanMsg(null);
@@ -447,10 +446,10 @@ export default function StorageBackupPage() {
   const runPurge = async () => {
     if (!activeOrgId || !preview || preview.totalRows === 0) return;
     const ok = await appConfirm({
-      title: "Free up space",
-      message: `Permanently delete ${fmtNum(preview.totalRows)} disposable row(s) older than ${preview.cutoffDays} days (≈${fmtBytes(preview.totalEstBytes)})? Records are never touched. This cannot be undone.`,
+      title: `Delete ${fmtNum(preview.totalRows)} disposable row(s)?`,
+      message: `They're older than ${preview.cutoffDays} days (≈${fmtBytes(preview.totalEstBytes)}). Records are never touched. You can't undo this.`,
       tone: "danger",
-      confirmLabel: "Purge now",
+      confirmLabel: "Delete rows",
     });
     if (!ok) return;
     setPurging(true); setError(null);
@@ -474,8 +473,8 @@ export default function StorageBackupPage() {
   const produceArchive = async () => {
     if (!activeOrgId || !shedPreview || shedPreview.selectedCount === 0) return;
     const ok = await appConfirm({
-      title: "Archive superseded revisions",
-      message: `Bundle ${fmtNum(shedPreview.selectedCount)} superseded revision file(s) (≈${fmtBytes(shedPreview.reclaimableBytes)}) into one offline archive zip? Nothing is deleted yet. You confirm the reclaim after saving it.`,
+      title: `Archive ${fmtNum(shedPreview.selectedCount)} superseded revision file(s)?`,
+      message: `They go into one offline archive zip (≈${fmtBytes(shedPreview.reclaimableBytes)}). Nothing is deleted yet. You confirm the reclaim after saving it.`,
       confirmLabel: "Build & download",
     });
     if (!ok) return;
@@ -513,8 +512,8 @@ export default function StorageBackupPage() {
       return;
     }
     const ok = await appConfirm({
-      title: "Reclaim space",
-      message: `Permanently delete ${pendingArchive.files} binary file(s) from live storage now that ${pendingArchive.archiveId}.zip is saved offline? Frees ≈${fmtBytes(pendingArchive.bytes)}. Those revisions will then need the archive to view. This cannot be undone.`,
+      title: `Delete ${pendingArchive.files} archived file(s) from live storage?`,
+      message: `${pendingArchive.archiveId}.zip is saved offline. This frees ≈${fmtBytes(pendingArchive.bytes)}. Those revisions will then need the archive to view. You can't undo this.`,
       tone: "danger",
       confirmLabel: "Reclaim space",
     });
@@ -550,8 +549,8 @@ export default function StorageBackupPage() {
   const produceTicketArchive = async () => {
     if (!activeOrgId || !ticketPreview || ticketPreview.selectedCount === 0) return;
     const ok = await appConfirm({
-      title: "Archive closed tickets",
-      message: `Bundle ${fmtNum(ticketPreview.selectedCount)} closed ticket(s) with their comments, history and attachments (≈${fmtBytes(ticketPreview.reclaimableBytes)}) into one offline archive zip? Each leaves a small stub in the list. Nothing is deleted yet. You confirm the reclaim after saving it.`,
+      title: `Archive ${fmtNum(ticketPreview.selectedCount)} closed ticket(s)?`,
+      message: `They go into one offline archive zip with their comments, history and attachments (≈${fmtBytes(ticketPreview.reclaimableBytes)}). Each leaves a small stub in the list. Nothing is deleted yet. You confirm the reclaim after saving it.`,
       confirmLabel: "Build & download",
     });
     if (!ok) return;
@@ -590,8 +589,8 @@ export default function StorageBackupPage() {
       return;
     }
     const ok = await appConfirm({
-      title: "Reclaim space",
-      message: `Permanently move ${pendingTicketArchive.tickets} closed ticket(s) to the archive now that ${pendingTicketArchive.archiveId}.zip is saved offline? Their comments, history and ${pendingTicketArchive.files} attachment file(s) leave live storage (≈${fmtBytes(pendingTicketArchive.bytes)} freed); a stub stays in the list. Viewing them then needs the archive. This cannot be undone.`,
+      title: `Move ${pendingTicketArchive.tickets} closed ticket(s) out of live storage?`,
+      message: `${pendingTicketArchive.archiveId}.zip is saved offline. Their comments, history and ${pendingTicketArchive.files} attachment file(s) leave live storage (≈${fmtBytes(pendingTicketArchive.bytes)} freed); a stub stays in the list. Viewing them then needs the archive. You can't undo this.`,
       tone: "danger",
       confirmLabel: "Reclaim space",
     });
@@ -620,9 +619,9 @@ export default function StorageBackupPage() {
   const cancelPending = async (archiveId: string, which: "doc" | "ticket") => {
     if (!activeOrgId) return;
     const ok = await appConfirm({
-      title: "Discard pending archive",
-      message: `Discard ${archiveId}? The ${which === "ticket" ? "ticket(s)" : "revision(s)"} it bundled stay live and can be archived again later. The ${archiveId}.zip you downloaded won't be used, so delete it. Nothing in live storage is removed.`,
-      confirmLabel: "Discard",
+      title: `Discard ${archiveId}?`,
+      message: `The ${which === "ticket" ? "ticket(s)" : "revision(s)"} it bundled stay live and can be archived again later. The ${archiveId}.zip you downloaded won't be used, so delete it. Nothing in live storage is removed.`,
+      confirmLabel: "Discard archive",
     });
     if (!ok) return;
     const setBusy = which === "ticket" ? setTicketCommitting : setCommitting;
@@ -655,8 +654,8 @@ export default function StorageBackupPage() {
       ? `${fmtNum(row.docPending)} superseded revision file(s)`
       : `${fmtNum(row.ticketPending)} closed ticket(s)`;
     const ok = await appConfirm({
-      title: "Reclaim space",
-      message: `Permanently remove ${what} from live storage now that ${row.archiveId}.zip is saved offline (≈${fmtBytes(row.totalBytes)})? Only do this if you saved the zip when it was made. It becomes the only copy. This cannot be undone.`,
+      title: `Remove ${what} from live storage?`,
+      message: `${row.archiveId}.zip is saved offline (≈${fmtBytes(row.totalBytes)}). Only do this if you saved the zip when it was made. It becomes the only copy. You can't undo this.`,
       tone: "danger",
       confirmLabel: "I saved it, reclaim",
     });

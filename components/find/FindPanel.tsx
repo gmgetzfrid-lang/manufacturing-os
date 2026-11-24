@@ -76,7 +76,7 @@ function Snippet({ text }: { text: string }) {
   return (
     <>
       {parts.map((p, i) => p.startsWith("<b>")
-        ? <mark key={i} className="bg-yellow-100 dark:bg-yellow-900/40 text-inherit rounded px-0.5">{p.replace(/<\/?b>/g, "")}</mark>
+        ? <mark key={i} className="bg-[color-mix(in_srgb,var(--state-held)_20%,transparent)] text-inherit rounded px-0.5">{p.replace(/<\/?b>/g, "")}</mark>
         : <React.Fragment key={i}>{p.replace(/<\/?b>/g, "")}</React.Fragment>)}
     </>
   );
@@ -209,7 +209,7 @@ export default function FindPanel({ orgId, f, unit, compact, onOpenFolder, onOpe
               ) : pickedDocs.map((d) => {
                 const also = f.detail?.onSheet[d.id] ?? [];
                 return <DocRow key={d.id} d={d} compact={compact} onOpen={() => setOpenId(d.id)} line={<>
-                  <span className="block truncate">Has <mark className="bg-yellow-100 dark:bg-yellow-900/40 text-inherit rounded px-0.5">{equipLabel(picked)}</mark>{also.length ? `, plus ${also.slice(0, 6).join(", ")}${also.length > 6 ? ` and ${also.length - 6} more` : ""}` : ""}</span>
+                  <span className="block truncate">Has <mark className="bg-[color-mix(in_srgb,var(--state-held)_20%,transparent)] text-inherit rounded px-0.5">{equipLabel(picked)}</mark>{also.length ? `, plus ${also.slice(0, 6).join(", ")}${also.length > 6 ? ` and ${also.length - 6} more` : ""}` : ""}</span>
                   {d.hit && <span className="block text-[var(--color-text-muted)] line-clamp-2 whitespace-normal">Page {d.hit.page}: <Snippet text={d.hit.text} /></span>}
                 </>} />;
               })}

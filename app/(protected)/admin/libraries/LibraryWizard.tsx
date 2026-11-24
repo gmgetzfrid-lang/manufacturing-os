@@ -6,7 +6,7 @@
 // kept on this device until the library is made.
 
 import React, { useState, useEffect } from "react";
-import { ArrowLeft, Check, ChevronDown, ChevronUp, Plus, Trash2, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, ChevronUp, Plus, Trash2, X, CircleAlert } from "lucide-react";
 import type { AccessRule, LibraryConfig, LibraryType, MetadataFieldDefinition, Role } from "@/types/schema";
 import { ALL_ROLES } from "@/types/schema";
 import StepPath from "@/components/ui/StepPath";
@@ -84,7 +84,7 @@ function RolePicker({ selected, onChange, label }: { selected: Role[]; onChange:
               const active = selected.includes(role);
               return (
                 <button key={role} type="button" role="checkbox" aria-checked={active} onClick={() => toggle(role)}
-                  className={`inline-flex items-center gap-1 h-8 pointer-coarse:h-10 px-2.5 rounded-md text-body font-semibold border transition-colors ${
+                  className={`inline-flex items-center gap-1 h-8 pointer-coarse:h-11 px-2.5 rounded-md text-body font-semibold border transition-colors ${
                     active
                       ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-text)]"
                       : "bg-[var(--color-surface)] border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-control)]"
@@ -405,7 +405,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
         )}
 
         {error && !(step === 3 && viewError) && !(step === 1 && nameTouched && nameError) && (
-          <p role="alert" className="mt-4 text-body font-medium text-[var(--state-overdue-text)]">{error}</p>
+          <p role="alert" className="mt-4 text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" /><span>{error}</span></p>
         )}
       </ModalBody>
 
@@ -418,7 +418,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
             <Button onClick={handleNext}>Next</Button>
           ) : (
             <Button onClick={() => void handleSubmit()} loading={isLoading}>
-              {initialData ? "Save library" : "Make the library"}
+              {isLoading ? (initialData ? "Saving" : "Making the library") : initialData ? "Save library" : "Make the library"}
             </Button>
           )}
         </div>

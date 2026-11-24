@@ -209,10 +209,10 @@ export default function CsvImportModal({
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
           <div className="p-2 rounded-lg bg-[var(--color-surface-2)] text-[var(--color-text)]"><FileText className="w-5 h-5" /></div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-[var(--color-text)]">Import documents from CSV</div>
+            <div className="text-body font-medium text-[var(--color-text)]">Import documents from CSV</div>
             <div className="text-body text-[var(--color-text-muted)]">Bulk-create records (no files attached yet). Use this for backfilling legacy registers.</div>
           </div>
-          <button aria-label="Close" onClick={onClose} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
+          <button aria-label="Close" onClick={onClose} className="ui-hit p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -227,12 +227,12 @@ export default function CsvImportModal({
           {step === "paste" && (
             <div className="space-y-2">
               <label className="text-body font-medium text-[var(--color-text)] ">Paste CSV</label>
-              <textarea
+              <textarea aria-label="Paste CSV"
                 value={raw}
                 onChange={(e) => setRaw(e.target.value)}
                 placeholder={`documentNumber,title,rev,status\n100-PID-001,Crude Cold Side,3,Issued\n100-PID-002,Crude Hot Side,0,Draft`}
                 rows={10}
-                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-xs font-mono"
+                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-caption font-mono"
               />
               <div className="text-body text-[var(--color-text-muted)]">First row = column headers. Commas separate values; wrap a value in &quot;double quotes&quot; if it contains commas. The next step maps your columns to library fields.</div>
             </div>
@@ -246,7 +246,7 @@ export default function CsvImportModal({
                 {allFields.map((f) => (
                   <div key={f.key} className="flex items-center gap-2">
                     <div className="w-44 text-body font-medium text-[var(--color-text)]">{f.label}</div>
-                    <select
+                    <select aria-label={f.label}
                       value={mapping[f.key] ?? ""}
                       onChange={(e) => setMapping({ ...mapping, [f.key]: e.target.value })}
                       className="flex-1 px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-surface)] text-body"

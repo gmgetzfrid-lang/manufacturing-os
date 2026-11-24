@@ -94,8 +94,8 @@ export default function UploadIndicator() {
       {grouped && (
         <div className="bg-[var(--color-surface)] rounded-xl shadow-lg border border-[var(--color-border)] px-3 py-2.5">
           <div className="flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
-            <span className="text-xs font-medium text-[var(--color-text)] flex-1">{failed.length} files didn&apos;t upload</span>
+            <AlertCircle className="w-4 h-4 text-[var(--state-overdue-text)] shrink-0" />
+            <span className="text-caption font-medium text-[var(--color-text)] flex-1">{failed.length} files didn&apos;t upload</span>
             <button onClick={() => failed.forEach((u) => dismiss(u.id))} className="p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] shrink-0" aria-label="Close">
               <X className="w-3.5 h-3.5" />
             </button>
@@ -104,7 +104,7 @@ export default function UploadIndicator() {
             <summary className="text-caption text-[var(--color-text-muted)] cursor-pointer">Show them</summary>
             <ul className="mt-1 max-h-40 overflow-y-auto space-y-0.5">
               {failed.map((u) => (
-                <li key={u.id} className="text-caption text-[var(--color-text)] truncate" title={u.error}>{u.name}{u.error ? <span className="text-rose-700 dark:text-rose-400">: {u.error}</span> : null}</li>
+                <li key={u.id} className="text-caption text-[var(--color-text)] truncate" title={u.error}>{u.name}{u.error ? <span className="text-[var(--state-overdue-text)]">: {u.error}</span> : null}</li>
               ))}
             </ul>
           </details>
@@ -120,14 +120,14 @@ export default function UploadIndicator() {
         <div key={u.id} className="bg-[var(--color-surface)] rounded-xl shadow-lg border border-[var(--color-border)] px-3 py-2.5 animate-in slide-in-from-bottom-2 fade-in">
           <div className="flex items-center gap-2">
             {u.status === "uploading" && <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />}
-            {u.status === "done" && <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />}
-            {u.status === "error" && <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />}
-            <span className="text-xs font-medium text-[var(--color-text)] truncate flex-1" title={u.name}>{u.name}</span>
-            <span className={`text-caption font-semibold shrink-0 ${u.status === "error" ? "text-rose-500" : u.status === "done" ? "text-emerald-600" : "text-[var(--color-text-faint)]"}`}>
+            {u.status === "done" && <CheckCircle2 className="w-4 h-4 text-[var(--state-released-text)] shrink-0" />}
+            {u.status === "error" && <AlertCircle className="w-4 h-4 text-[var(--state-overdue-text)] shrink-0" />}
+            <span className="text-caption font-medium text-[var(--color-text)] truncate flex-1" title={u.name}>{u.name}</span>
+            <span className={`text-caption font-semibold shrink-0 ${u.status === "error" ? "text-[var(--state-overdue-text)]" : u.status === "done" ? "text-[var(--state-released-text)]" : "text-[var(--color-text-faint)]"}`}>
               {u.status === "uploading" ? (u.retrying && u.percent === 0 ? "Trying again" : `${Math.round(u.percent)}%`) : u.status === "done" ? "Done" : "Didn't upload"}
             </span>
             {u.status !== "uploading" && (
-              <button onClick={() => dismiss(u.id)} className="p-0.5 rounded text-slate-300 hover:text-[var(--color-text-muted)] shrink-0" aria-label="Dismiss">
+              <button onClick={() => dismiss(u.id)} className="ui-hit p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] shrink-0" aria-label="Dismiss">
                 <X className="w-3.5 h-3.5" />
               </button>
             )}
@@ -139,7 +139,7 @@ export default function UploadIndicator() {
           )}
           {u.status === "uploading" && (() => { const left = timeLeft(u, Date.now()); return left || u.retrying ? <div className="text-caption text-[var(--color-text-muted)] mt-1">{u.retrying ? "Trying again with the same file." : left}</div> : null; })()}
           {u.status === "error" && u.error && (
-            <div className="text-caption text-rose-700 dark:text-rose-400 mt-1 line-clamp-3">{u.error}</div>
+            <div className="text-caption text-[var(--state-overdue-text)] mt-1 line-clamp-3">{u.error}</div>
           )}
           {u.status === "error" && u.retry && (
             <button type="button" onClick={u.retry}

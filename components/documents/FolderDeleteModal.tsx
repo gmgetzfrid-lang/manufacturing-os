@@ -104,7 +104,7 @@ export default function FolderDeleteModal({
         onChange={() => setMode(value)} />
       <Icon className={`w-5 h-5 shrink-0 mt-0.5 ${value === "all" ? "text-[var(--state-overdue)]" : "text-[var(--color-text-muted)]"}`} />
       <span className="min-w-0">
-        <span className="block text-sm font-medium text-[var(--color-text)]">{t}</span>
+        <span className="block text-body font-medium text-[var(--color-text)]">{t}</span>
         <span className="block text-body text-[var(--color-text-muted)] mt-0.5">{children}</span>
       </span>
     </label>
@@ -117,7 +117,7 @@ export default function FolderDeleteModal({
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-start gap-3">
           <div className="p-2 rounded-lg bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)]"><Trash2 className="w-5 h-5 text-[var(--state-overdue)]" /></div>
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-medium text-[var(--color-text)] truncate">{title}</div>
+            <div className="text-body font-medium text-[var(--color-text)] truncate">{title}</div>
             <div className="text-body text-[var(--color-text-muted)] mt-0.5">
               {loadError ? <span className="text-[var(--state-overdue)]">{loadError}</span>
                 : previews === null ? <span className="inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Counting what&apos;s inside…</span>
@@ -126,7 +126,7 @@ export default function FolderDeleteModal({
                     {subfolders > 0 && <> in <b className="text-[var(--color-text)]">{subfolders.toLocaleString()} subfolder{subfolders === 1 ? "" : "s"}</b></>}.</>}
             </div>
           </div>
-          <button aria-label="Close" onClick={onClose} disabled={!!running} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] disabled:opacity-40">
+          <button aria-label="Close" onClick={onClose} disabled={!!running} className="ui-hit p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] disabled:opacity-40">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -149,8 +149,8 @@ export default function FolderDeleteModal({
                 <label className="block text-body font-medium text-[var(--color-text-muted)] mb-1">
                   Type <span className="font-medium text-[var(--state-overdue)]">DELETE</span> to permanently delete {docs.toLocaleString()} documents
                 </label>
-                <input value={typed} onChange={(e) => setTyped(e.target.value)} autoFocus disabled={!!running}
-                  className="w-full h-9 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm" />
+                <input aria-label="Type DELETE to confirm" value={typed} onChange={(e) => setTyped(e.target.value)} autoFocus disabled={!!running}
+                  className="w-full h-9 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-body" />
               </div>
             )}
           </div>
@@ -176,8 +176,7 @@ export default function FolderDeleteModal({
               Cancel
             </button>
             <button onClick={() => void go()} disabled={!canGo}
-              className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-body font-semibold text-white disabled:opacity-40 ${
-                mode === "all" || empty ? "bg-[var(--state-overdue)] hover:bg-[var(--state-overdue)]" : "bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]"}`}>
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-body font-medium border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--state-overdue-text)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_6%,var(--color-surface))] disabled:opacity-40">
               {running ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
               {running ? "Deleting…"
                 : empty ? (one ? "Delete folder" : `Delete ${folders.length} folders`)

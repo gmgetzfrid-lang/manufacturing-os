@@ -277,6 +277,8 @@ export default function LibraryAdminPage() {
           <div className="relative flex-1 min-w-[220px]">
             <Search className={bandInputIcon} />
             <input
+              type="search"
+              enterKeyHint="search"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               aria-label="Search libraries"
@@ -290,9 +292,15 @@ export default function LibraryAdminPage() {
             aria-label="Sort"
             className={bandSelect}
           >
-            <option value="recent">Recent</option>
-            <option value="name">Name</option>
+            <option value="recent">Newest first</option>
+            <option value="name">Name, A to Z</option>
           </select>
+          {searchTerm && filteredLibraries.length > 0 && (
+            <p className="text-body text-[var(--color-text-muted)] tabular-nums whitespace-nowrap">
+              {filteredLibraries.length} of {libraries.length}{" "}
+              <button type="button" onClick={() => setSearchTerm("")} className={`ui-hit ${link} font-medium`}>Clear</button>
+            </p>
+          )}
         </div>
       </PageHero>
 

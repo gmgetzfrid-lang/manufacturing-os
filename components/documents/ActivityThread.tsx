@@ -24,6 +24,7 @@ import {
 } from "@/lib/activityThread";
 
 import { friendlyError } from "@/lib/friendlyError";
+import { Field } from "@/components/ui/Field";
 interface ActivityThreadProps {
   orgId: string;
   documentId: string;
@@ -234,7 +235,7 @@ export default function ActivityThread({
   return (
     <div className="w-full md:w-96 bg-[var(--color-surface)] flex flex-col h-[400px] md:h-auto">
       <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] sticky top-0 z-10">
-        <h3 className="text-sm font-medium text-[var(--color-text)] flex items-center">
+        <h3 className="text-body font-medium text-[var(--color-text)] flex items-center">
           <MessageSquare className="w-4 h-4 mr-2 text-[var(--color-text-muted)]" />
           {typeof episodeId === "string" && episodeSeq ? `Checkout #${episodeSeq} - Activity` : "Activity"}
           {messages.length > 0 && (
@@ -323,15 +324,16 @@ export default function ActivityThread({
           </div>
         )}
         {!composingDisabled && composerKind === "proposal" && (
-          <input
-            value={proposalTitle}
-            onChange={(e) => setProposalTitle(e.target.value)}
-            placeholder="Proposal title (optional)"
-            className="w-full px-3 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-body focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
-          />
+          <Field label="Proposal title (optional)">
+            <input
+              value={proposalTitle}
+              onChange={(e) => setProposalTitle(e.target.value)}
+              className="w-full px-3 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-body focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+            />
+          </Field>
         )}
         <div className="relative">
-          <textarea
+          <textarea aria-label="Message"
             value={composer}
             onChange={(e) => setComposer(e.target.value)}
             onKeyDown={(e) => {
@@ -359,7 +361,7 @@ export default function ActivityThread({
             onClick={send}
             disabled={!composer.trim() || busy || composingDisabled}
             aria-label={composerKind === "proposal" ? "Post proposal" : "Send message"}
-            className={`absolute right-1.5 ${composerKind === "proposal" ? "bottom-1.5" : "top-1/2 -translate-y-1/2"} p-1.5 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50`}
+            className={`ui-hit absolute right-1.5 ${composerKind === "proposal" ? "bottom-1.5" : "top-1/2 -translate-y-1/2"} p-1.5 rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50`}
             title={composerKind === "proposal" ? "Post proposal" : "Send message"}
           >
             {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
@@ -451,7 +453,7 @@ function MessageRow({ msg, meIsAuthor, replies, onReply, onMarkResolved, isReply
         {!msg.resolvedAt && (
           isReplying ? (
             <div className="mt-2 flex gap-1.5">
-              <input
+              <input aria-label="Reply"
                 value={replyText}
                 onChange={(e) => onReplyText(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") onSendReply(); }}

@@ -218,7 +218,7 @@ function CoordinationInner() {
         <CoordinationRadar analysis={snap.coordination} sessionById={sessionById} notes={<>
           {setupNeeded && (
             <p className="mb-3 text-body text-[var(--color-text)]">
-              <span className="font-medium text-[var(--state-held)]">Not set up yet.</span> Equipment state and plot plans are off for this workspace. <HelpTooltip>Ask your Admin to finish setup: Admin › Settings › Database updates.</HelpTooltip>
+              <span className="font-medium text-[var(--state-held-text)]">Not set up yet.</span> Equipment state and plot plans are off for this workspace. <HelpTooltip>Ask your Admin to finish setup: Admin › Settings › Database updates.</HelpTooltip>
             </p>
           )}
           {snap.failed.length > 0 && (
@@ -291,7 +291,7 @@ function CoordinationInner() {
                     <MapIcon aria-hidden className="w-3.5 h-3.5 text-[var(--color-text-faint)]" /> {p.name} <span className="font-normal tabular-nums text-[var(--color-text-muted)]">{p.markers.length}</span>
                   </Link>
                 ))}
-                {snap.plotPlans.length > 8 && <Link href="/plot-plans" className="inline-flex items-center h-10 px-2 text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Show {snap.plotPlans.length - 8} more</Link>}
+                {snap.plotPlans.length > 8 && <Link href="/plot-plans" className="inline-flex items-center h-10 pointer-coarse:h-11 px-2 text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Show {snap.plotPlans.length - 8} more</Link>}
               </div>
             )}
           </Panel>
@@ -371,7 +371,7 @@ function CoordinationRadar({
               <div key={i} onClick={(e) => { if ((e.target as HTMLElement).closest("a,button")) return; router.push(href); }}
                 className="relative flex items-center gap-3 px-4 sm:px-5 py-3 cursor-pointer hover:bg-[var(--color-surface-2)] transition-colors">
                 <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />
-                <AlertTriangle aria-hidden className="w-4 h-4 shrink-0 text-[var(--state-overdue)]" />
+                <AlertTriangle aria-hidden className="w-4 h-4 shrink-0 text-[var(--state-overdue-text)]" />
                 <div className="min-w-0 flex-1 sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_auto] sm:items-center sm:gap-4">
                   <div className="flex items-center gap-1.5 min-w-0 text-reading">
                     <span className="text-body text-[var(--color-text-muted)]">{scope.kind}</span>
@@ -403,7 +403,7 @@ function CoordinationRadar({
       <Card label={RADAR_LABEL}>
         {notes}{Header}
         <div className="flex items-start gap-3">
-          <ShieldCheck className="w-5 h-5 mt-0.5 shrink-0 text-[var(--state-released)]" />
+          <ShieldCheck className="w-5 h-5 mt-0.5 shrink-0 text-[var(--state-released-text)]" />
           <div>
             <div className="text-reading font-medium text-[var(--color-text)]">All clear: no scope collisions</div>
             <div className="text-body text-[var(--color-text-muted)] mt-0.5">No two crews hold documents on the same equipment, unit or system.</div>

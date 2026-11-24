@@ -19,7 +19,7 @@ const SWATCH = [
   "bg-[#2a78d6] dark:bg-[#3987e5]", "bg-[#eb6834] dark:bg-[#d95926]", "bg-[#1baf7a] dark:bg-[#199e70]", "bg-[#eda100] dark:bg-[#c98500]",
   "bg-[#e87ba4] dark:bg-[#d55181]", "bg-[#008300] dark:bg-[#008300]", "bg-[#6250d6] dark:bg-[#9085e9]",
 ];
-const OTHER = "bg-slate-400 dark:bg-slate-500";
+const OTHER = "bg-[var(--viz-neutral)]";
 const OTHER_NAME = "Other";
 
 const n0 = (x: number) => Math.round(x).toLocaleString("en-US");

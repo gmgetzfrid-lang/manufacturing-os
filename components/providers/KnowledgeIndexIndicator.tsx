@@ -162,7 +162,7 @@ export default function KnowledgeIndexIndicator() {
         >
           {working
             ? <><Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-muted)]" /> Indexing {pctLabel}</>
-            : <><CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Indexed</>}
+            : <><CheckCircle2 className="w-3.5 h-3.5 text-[var(--state-released-text)]" /> Indexed</>}
         </button>
       </CornerPortal>
     );
@@ -174,8 +174,8 @@ export default function KnowledgeIndexIndicator() {
       <div className="flex items-center gap-2">
         {working
           ? <BookOpenText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-          : <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />}
-        <span className="text-xs font-semibold text-[var(--color-text)] flex-1 truncate">
+          : <CheckCircle2 className="w-4 h-4 text-[var(--state-released-text)] shrink-0" />}
+        <span className="text-caption font-semibold text-[var(--color-text)] flex-1 truncate">
           {working ? "Indexing knowledge in the background" : state.heldBack ? "Knowledge indexing paused for some files" : "Knowledge indexing caught up"}
         </span>
         <button onClick={() => setMinimized(true)} className="p-1 rounded hover:bg-[var(--color-surface-2)] shrink-0" title="Minimize - indexing keeps running">
@@ -210,10 +210,10 @@ export default function KnowledgeIndexIndicator() {
             </div>
           )}
           {state.visionSkipReason && (
-            <div className="text-caption text-amber-700">{state.visionSkipReason}</div>
+            <div className="text-caption text-[var(--state-held-text)]">{state.visionSkipReason}</div>
           )}
           {state.waiting && (
-            <div role="status" className="text-caption text-amber-700 dark:text-amber-300">{state.waiting}</div>
+            <div role="status" className="text-caption text-[var(--state-held-text)]">{state.waiting}</div>
           )}
           <div className="text-caption text-[var(--color-text-faint)]">
             Keeps going anywhere in the app - only closing the tab pauses it.
@@ -223,7 +223,7 @@ export default function KnowledgeIndexIndicator() {
         <div className="mt-1 text-caption text-[var(--color-text-muted)]">
           {state.finished} document{state.finished === 1 ? "" : "s"} indexed.
           {state.heldBack > 0 && (
-            <span className="block text-amber-700 dark:text-amber-300">
+            <span className="block text-[var(--state-held-text)]">
               {state.heldBack} couldn&apos;t finish and will be tried again in 30 minutes. Library health, at the top of that library&apos;s page, shows why.
             </span>
           )}

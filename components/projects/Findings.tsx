@@ -5,7 +5,7 @@
 // past jobs" on the next project's plan. lib/findings has the rules.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, ChevronRight, History, Lightbulb, Loader2, Pencil, Plus, RotateCcw, X } from "lucide-react";
+import { Check, ChevronRight, History, Lightbulb, Loader2, Pencil, Plus, RotateCcw, X, CircleAlert } from "lucide-react";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
@@ -40,18 +40,18 @@ export const newFinding = (detail: { milestoneId?: string | null; at?: number } 
 export const OPEN_REVIEW_EVENT = "findings:review";
 export const openFindingsReview = () => window.dispatchEvent(new CustomEvent(OPEN_REVIEW_EVENT));
 
-const btn = "inline-flex items-center justify-center gap-1.5 h-10 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-body font-medium px-3.5 disabled:opacity-50 transition-colors";
+const btn = "inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 rounded-md bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-body font-medium px-3.5 disabled:opacity-50 transition-colors";
 // A decision repeated on every row: a secondary button, not the accent.
 const dark = "inline-flex items-center justify-center gap-1.5 h-10 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-body font-medium text-[var(--color-text)] px-3.5 disabled:opacity-50 transition-colors";
-const quiet = "inline-flex items-center justify-center gap-1.5 h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-body font-medium text-[var(--color-text)] px-3 disabled:opacity-50 transition-colors";
+const quiet = "inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-body font-medium text-[var(--color-text)] px-3 disabled:opacity-50 transition-colors";
 const field = "w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1.5 text-body text-[var(--color-text)]";
 const label = "block text-caption font-medium text-[var(--color-text-muted)] mb-1";
 
 const KIND_TONE: Record<FindingFields["kind"], string> = {
-  problem: "bg-[var(--state-overdue)] text-[var(--state-overdue-text)] border-[var(--state-overdue)]",
-  lesson: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)] dark:border-[var(--color-border)]",
-  material: "bg-[var(--state-held)] text-[var(--state-held-text)] border-[var(--state-held)]",
-  missed_scope: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)] dark:bg-[var(--color-surface-2)] dark:text-[var(--color-text)] dark:border-[var(--color-border)]",
+  problem: "bg-transparent text-[var(--state-overdue-text)] border-[var(--state-overdue)]",
+  lesson: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
+  material: "bg-transparent text-[var(--state-held-text)] border-[var(--state-held)]",
+  missed_scope: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",
 };
 export function KindChip({ kind }: { kind: FindingFields["kind"] }) {
   return <span className={`inline-block shrink-0 rounded border px-1.5 py-px text-caption font-medium ${KIND_TONE[kind]}`}>{KIND_WORD[kind]}</span>;
@@ -368,7 +368,7 @@ function FindingDialog({ orgId, projectId, projectType, milestones, canEdit, mil
             <p className="mt-3 text-caption text-[var(--color-text-faint)]">{draft.restored ? "What you were writing is back. " : ""}Saved with who and when. It goes into the post-event review as written.</p>
           </>
         )}
-        {err && <div className="mt-2 text-caption text-[var(--state-overdue-text)]">{err}</div>}
+        {err && <div role="alert" className="mt-2 text-caption text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{err}</span></div>}
         {note && <div role="status" className="mt-2 text-caption font-medium text-[var(--state-released-text)]">{note}</div>}
       </ModalBody>
       <ModalFooter>
@@ -448,7 +448,7 @@ export function AddFindingButton({ milestoneId, at, compact, className = "" }: {
   return (
     <button type="button" onClick={(e) => { e.stopPropagation(); newFinding({ milestoneId, at }); }}
       title="A problem, a lesson, a material shortfall or missed scope, kept for the next job"
-      className={`inline-flex items-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] font-medium text-[var(--color-text)] ${compact ? "text-caption px-2 py-1" : "text-caption px-2.5 py-1.5"} ${className}`}>
+      className={`inline-flex items-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] font-medium text-[var(--color-text)] ${compact ? "text-caption px-2 py-1 pointer-coarse:min-h-11" : "text-caption px-2.5 py-1.5"} ${className}`}>
       <Plus className="w-3.5 h-3.5" /> Finding
     </button>
   );
@@ -596,7 +596,7 @@ function ReviewRow({ draft, tz, canEdit, editing, busy, error, equipment, unitLa
           <div className="mt-1 text-caption text-[var(--color-text-muted)]">Applies to <b className="text-[var(--color-text)]">{applies}</b> · {d.topic}</div>
           {canEdit && (
             <div className="mt-2 flex flex-wrap gap-1.5">
-              {!kept && <button type="button" disabled={busy} onClick={() => onKeep(draft)} className={dark}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Keep</button>}
+              {!kept && <button type="button" disabled={busy} onClick={() => onKeep(draft)} className={dark}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {busy ? "Keeping" : "Keep"}</button>}
               <button type="button" disabled={busy} onClick={onEdit} className={quiet}><Pencil className="w-3.5 h-3.5" /> Edit</button>
               {!kept && <button type="button" disabled={busy} onClick={() => onDrop(draft)} className={quiet}><X className="w-3.5 h-3.5" /> Drop</button>}
               {kept && onUndo && <button type="button" disabled={busy} onClick={onUndo} className={quiet}><RotateCcw className="w-3.5 h-3.5" /> Back to review</button>}
@@ -606,7 +606,7 @@ function ReviewRow({ draft, tz, canEdit, editing, busy, error, equipment, unitLa
       ) : (
         <RowEditor draft={draft} busy={busy} kept={kept} equipment={equipment} unitLabel={unitLabel} onKeep={onKeep} onDrop={onDrop} onCancel={onCancel} />
       )}
-      {error && <div className="mt-1.5 text-caption text-[var(--state-overdue-text)]">{error}</div>}
+      {error && <div role="alert" className="mt-1.5 text-caption text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{error}</span></div>}
     </li>
   );
 }
@@ -653,10 +653,10 @@ function AddRow({ orgId, projectId, projectType, equipment, unit, actor, onDone,
       <div className="text-caption font-medium text-[var(--color-text)]">New finding</div>
       <FindingEditor value={v} onChange={setV} equipment={equipment} unitLabel={unit?.label ?? null} autoGuess />
       <div className="flex flex-wrap gap-1.5">
-        <button type="button" disabled={busy || !v.body.trim()} onClick={keep} className={btn}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Keep</button>
+        <button type="button" disabled={busy || !v.body.trim()} onClick={keep} className={btn}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {busy ? "Keeping" : "Keep"}</button>
         <button type="button" disabled={busy} onClick={onDone} className="text-caption text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-1">Cancel</button>
       </div>
-      {err && <div className="text-caption text-[var(--state-overdue-text)]">{err}</div>}
+      {err && <div role="alert" className="text-caption text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{err}</span></div>}
     </div>
   );
 }
@@ -683,16 +683,16 @@ export function FindingsGate({ orgId, projectId, onCount, onOpen }: { orgId: str
     <div className="px-6 pt-4">
       <div className="text-caption font-medium text-[var(--color-text-muted)] mb-1.5">Lessons &amp; findings</div>
       {r.ready && r.missing ? (
-        <div className="text-xs text-[var(--state-held-text)]">{missingMsg} Nothing from this job reaches the next one until then.</div>
+        <div className="text-caption text-[var(--state-held-text)]">{missingMsg} Nothing from this job reaches the next one until then.</div>
       ) : left == null ? (
-        <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Reading the record…</div>
+        <div className="flex items-center gap-2 text-caption text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Reading the record…</div>
       ) : left > 0 ? (
-        <div className="border-l-2 border-[var(--state-held)] pl-3 text-xs text-[var(--state-held-text)]">
+        <div className="border-l-2 border-[var(--state-held)] pl-3 text-caption text-[var(--state-held-text)]">
           <b>Finish the review first: {left} left.</b> What this job taught reaches the next one only once it&apos;s kept.
           <button type="button" onClick={onOpen} className="ml-1 underline">Open the review</button>
         </div>
       ) : (
-        <div className="flex items-center gap-2 text-xs font-medium text-[var(--state-released-text)]"><Check className="w-3.5 h-3.5" /> Reviewed · {r.state.kept.length} kept</div>
+        <div className="flex items-center gap-2 text-caption font-medium text-[var(--state-released-text)]"><Check className="w-3.5 h-3.5" /> Reviewed · {r.state.kept.length} kept</div>
       )}
     </div>
   );
@@ -797,8 +797,8 @@ export function PastJobsPanel({ orgId, projectId, projectType: given, milestones
         <div className="mt-1.5 flex flex-wrap gap-1.5 pl-0 sm:pl-[5.5rem]">
           {(["planned", "not_relevant"] as AckStatus[]).map((s) => (
             <button key={s} type="button" aria-pressed={x.ack?.status === s} onClick={() => void answer(x, x.ack?.status === s ? null : s)}
-              className={`min-h-[30px] rounded-lg border px-2.5 text-caption font-semibold ${x.ack?.status === s
-                ? s === "planned" ? "border-[var(--state-released)] bg-[var(--state-released)] text-[var(--state-released-text)]" : "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]"
+              className={`min-h-[30px] pointer-coarse:min-h-11 rounded-lg border px-2.5 text-caption font-semibold ${x.ack?.status === s
+                ? s === "planned" ? "border-[var(--state-released)] bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released-text)]" : "border-[var(--color-text)] bg-[var(--color-surface-2)] text-[var(--color-text)]"
                 : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
               {x.ack?.status === s && <Check className="inline w-3.5 h-3.5 mr-0.5 -mt-0.5" />}{ACK_WORD[s]}
             </button>
@@ -826,7 +826,7 @@ export function PastJobsPanel({ orgId, projectId, projectType: given, milestones
             </div>
           )}
           {showAnswered && <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">{answered.map(row)}</ul>}
-          {err && <div className="px-3 py-1.5 text-caption text-[var(--state-overdue-text)]">{err}</div>}
+          {err && <div role="alert" className="px-3 py-1.5 text-caption text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{err}</span></div>}
         </div>
       )}
     </section>

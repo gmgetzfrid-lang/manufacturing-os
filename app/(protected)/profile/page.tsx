@@ -7,7 +7,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Bell, LogOut, Camera, Loader2 } from "lucide-react";
+import { Bell, LogOut, Camera, Loader2, CircleAlert } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase, setPreferMicrosoft } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
@@ -200,7 +200,7 @@ export default function ProfilePage() {
                     ) : (
                       <p className="text-body text-[var(--color-text-muted)]">Without a photo, your initials show. Under 5 MB.</p>
                     )}
-                    {avatarError && <p role="alert" className="text-body font-medium text-[var(--state-overdue-text)]">{avatarError}</p>}
+                    {avatarError && <p role="alert" className="text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" /><span>{avatarError}</span></p>}
                   </div>
                 </div>
                 <input
@@ -235,10 +235,10 @@ export default function ProfilePage() {
                   <div className="h-10 flex items-center text-reading text-[var(--color-text)] truncate">{userEmail ?? "None"}</div>
                 </div>
               </div>
-              {saveError && <p role="alert" className="text-body font-medium text-[var(--state-overdue-text)]">{saveError}</p>}
+              {saveError && <p role="alert" className="text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" /><span>{saveError}</span></p>}
             </div>
             <div className="flex items-center justify-end gap-3 px-5 sm:px-6 py-3 border-t border-[var(--color-border)]">
-              <Button type="submit" loading={saving} done={saved} doneLabel="Saved" disabled={!!loadError}>Save</Button>
+              <Button type="submit" loading={saving} done={saved} doneLabel="Saved" disabled={!!loadError}>{saving ? "Saving" : "Save"}</Button>
             </div>
           </form>
         </Card>

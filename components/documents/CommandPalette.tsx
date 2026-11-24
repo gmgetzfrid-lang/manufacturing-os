@@ -226,18 +226,18 @@ export default function CommandPalette({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-xl bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-lg shadow-xl overflow-hidden animate-in fade-in zoom-in-95 slide-in-from-top-2 duration-200"
+        className="w-full max-w-xl bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-[var(--color-ink)]/5 rounded-lg shadow-xl overflow-hidden animate-in fade-in zoom-in-95 slide-in-from-top-2 duration-200"
       >
         {/* Search input */}
         <div className="flex items-center gap-3 px-4 py-3.5 border-b border-[var(--color-border)]">
           <Search className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-          <input
+          <input aria-label="Search documents, folders, or actions"
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKey}
             placeholder="Search documents, folders, or actions…"
-            className="flex-1 bg-transparent text-[var(--color-text)] text-sm placeholder-[var(--color-text-faint)]"
+            className="flex-1 bg-transparent text-[var(--color-text)] text-body placeholder-[var(--color-text-faint)]"
           />
           <kbd className="text-body font-mono text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded">ESC</kbd>
         </div>
@@ -245,7 +245,7 @@ export default function CommandPalette({
         {/* Results */}
         <div className="max-h-[50vh] overflow-y-auto py-2 custom-scrollbar">
           {items.length === 0 ? (
-            <div className="px-4 py-8 text-center text-[var(--color-text-muted)] text-sm">No results</div>
+            <div className="px-4 py-8 text-center text-[var(--color-text-muted)] text-body">Nothing matches. Try a document number, a title or a folder name.</div>
           ) : (
             items.map((item, idx) => {
               const active = activeIdx === idx;
@@ -298,7 +298,7 @@ export default function CommandPalette({
                     <Icon className="w-3.5 h-3.5" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className={`text-sm font-medium truncate ${active ? "text-[var(--color-text)]" : "text-[var(--color-text)]"}`}>
+                    <div className={`text-body font-medium truncate ${active ? "text-[var(--color-text)]" : "text-[var(--color-text)]"}`}>
                       {primary}
                     </div>
                     {secondary && (

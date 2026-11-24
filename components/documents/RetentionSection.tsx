@@ -181,13 +181,13 @@ export default function RetentionSection({ doc, orgId, canManage }: {
               {enabled && (
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-body text-[var(--color-text-muted)]">Retain</span>
-                  <input type="number" min={1} value={years} onChange={(e) => setYears(Math.max(1, parseInt(e.target.value) || 1))} className={`${inp} w-16`} />
+                  <input inputMode="numeric" aria-label="Retain for years" type="number" min={1} value={years} onChange={(e) => setYears(Math.max(1, parseInt(e.target.value) || 1))} className={`${inp} w-16`} />
                   <span className="text-body text-[var(--color-text-muted)]">yrs from</span>
-                  <select value={basis} onChange={(e) => setBasis(e.target.value as Basis)} className={inp}>
+                  <select aria-label="Counted from" value={basis} onChange={(e) => setBasis(e.target.value as Basis)} className={inp}>
                     <option value="created">created</option><option value="issued">issued</option><option value="effective">effective</option><option value="superseded">superseded</option>
                   </select>
                   <span className="text-body text-[var(--color-text-muted)]">then</span>
-                  <select value={action} onChange={(e) => setAction(e.target.value as Action)} className={inp}>
+                  <select aria-label="Then" value={action} onChange={(e) => setAction(e.target.value as Action)} className={inp}>
                     <option value="review">review</option><option value="archive">archive</option><option value="destroy">destroy</option>
                   </select>
                 </div>

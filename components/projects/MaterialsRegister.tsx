@@ -8,9 +8,8 @@
 
 import { Card } from "@/components/ui/PageHero";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import HelpTooltip from "@/components/ui/HelpTooltip";
 import { SubTabs } from "@/components/projects/SubTabs";
-import { Loader2, Plus, Trash2 } from "lucide-react";
+import { Loader2, Plus, Trash2, CircleAlert } from "lucide-react";
 import type { ProjectPhase } from "@/lib/projectPhases";
 import { supabase } from "@/lib/supabase";
 import { fetchAllRows } from "@/lib/fetchAllRows";
@@ -24,7 +23,7 @@ import { useDraft, clearDraft } from "@/hooks/useDraft";
 import { sayError } from "@/components/projects/sayError";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 
-const btn = "inline-flex items-center gap-1.5 h-10 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
+const btn = "inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] whitespace-nowrap disabled:opacity-50";
 const pri = "inline-flex items-center justify-center gap-1.5 h-10 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium whitespace-nowrap disabled:opacity-50";
 const field = "w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 py-1.5 text-body text-[var(--color-text)]";
 const label = "text-caption font-medium text-[var(--color-text-muted)]";
@@ -87,7 +86,7 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
     finally { setBusy(false); }
   };
   const remove = async () => {
-    if (!open?.row || !(await appConfirm({ message: `Remove "${open.row.item}" from the register?`, tone: "danger", confirmLabel: "Remove" }))) return;
+    if (!open?.row || !(await appConfirm({ title: `Remove "${open.row.item}" from the register?`, tone: "danger", confirmLabel: "Remove item" }))) return;
     setBusy(true); setErr(null);
     try { await deleteMaterial(open.row.id, projectId); setOpen(null); load(); }
     catch (e) { setErr(sayError(e)); }
@@ -117,7 +116,7 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
     <div className="space-y-4" data-materials-register>
       <Card label="Materials register" action={canManage ? <button type="button" onClick={() => setOpen({ row: null, fields: blankMaterial(phaseId) })} className={pri}><Plus className="w-4 h-4" /> Add item</button> : undefined}>
       <p className="text-body font-medium text-[var(--color-text)]">{sum.lines === 0 ? "Nothing on it yet. Open it at scope freeze." : sum.needAttention ? `${sum.needAttention} line${sum.needAttention === 1 ? " needs" : "s need"} someone.` : "Every line is on track."}</p>
-      {err && <div role="alert" className="mt-1 text-body font-medium text-[var(--state-overdue-text)]">{err}</div>}
+      {err && <div role="alert" className="mt-1 text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-0.5" /><span>{err}</span></div>}
 
       <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-body">
         <Kpi name="Lines" value={sum.lines} detail={`${sum.materials} material${sum.materials === 1 ? "" : "s"} · ${sum.offsite} off-site repair${sum.offsite === 1 ? "" : "s"}`} />
@@ -139,7 +138,7 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
       </Card>
 
       {shown.length === 0 ? (
-        <Card><p className="text-reading text-[var(--color-text-muted)]">{scoped.length ? "Nothing under this filter." : <>No lines yet. <HelpTooltip>Add each material and each item sent out for repair, with who owns it and when it&apos;s needed.</HelpTooltip></>}</p></Card>
+        <Card><p className="text-reading text-[var(--color-text-muted)]">{scoped.length ? <>Nothing under this filter. <button type="button" onClick={() => setFilter("all")} className="font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Show all {scoped.length}</button></> : <>No lines yet. Each material and each item sent out for repair shows here, with who owns it and when it&apos;s needed.</>}</p></Card>
       ) : <Card pad={false} className="overflow-hidden">
         <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-caption border-collapse">
@@ -148,7 +147,7 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
               {shown.map((r) => {
                 const why = attention(r, now);
                 return (
-                  <tr key={r.id} onClick={() => canManage && setOpen({ row: r, fields: { ...r } })} title={why.join(" · ")} className={`border-b last:border-b-0 border-[var(--color-border)] align-top ${canManage ? "cursor-pointer hover:bg-[var(--color-surface-2)]" : ""} ${why.length ? "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]" : ""}`}>
+                  <tr key={r.id} onClick={() => canManage && setOpen({ row: r, fields: { ...r } })} title={why.join(" · ")} className={`border-b last:border-b-0 border-[var(--color-border)] align-top ${canManage ? "cursor-pointer hover:bg-[var(--color-surface-2)]" : ""} ${why.length ? "bg-[var(--color-surface-2)]" : ""}`}>
                     <td className="px-2.5 py-2"><b className="text-[var(--color-text)]">{r.item}</b>{(r.kind === "offsite" || r.vendor) && <div className="text-caption text-[var(--color-text-muted)]">{r.kind === "offsite" ? "Off-site repair" : ""}{r.kind === "offsite" && r.vendor ? " · " : ""}{r.vendor}</div>}</td>
                     <td className="px-2.5 py-2 text-[var(--color-text)]">{specCell(r)}</td>
                     <td className="px-2.5 py-2 text-[var(--color-text)]">{r.workOrder}</td>
@@ -193,7 +192,7 @@ export default function MaterialsRegister({ orgId, projectId, phases, canManage,
           <ModalFooter>
             {open.row && <button type="button" disabled={busy} onClick={() => void remove()} className={`${btn} mr-auto`}><Trash2 className="w-4 h-4" /> Remove</button>}
             <button type="button" disabled={busy} onClick={() => setOpen(null)} className={btn}>Cancel</button>
-            <button type="button" disabled={busy || !open.fields.item.trim()} onClick={() => void save()} className={pri}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Save</button>
+            <button type="button" disabled={busy || !open.fields.item.trim()} onClick={() => void save()} className={pri}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : null} {busy ? "Saving" : "Save"}</button>
           </ModalFooter>
         </Modal>
       )}
@@ -215,7 +214,7 @@ function MaterialForm({ f, set, phases, workOrders }: { f: MaterialFields; set: 
     <div className="space-y-3">
       <div className="flex gap-1.5">
         {(["material", "offsite"] as const).map((k) => (
-          <button key={k} type="button" aria-pressed={f.kind === k} onClick={() => set({ kind: k })} className={`h-9 px-3 rounded-lg border text-caption font-medium ${f.kind === k ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border-strong)]"}`}>{k === "material" ? "Material to order" : "Off-site repair or calibration"}</button>
+          <button key={k} type="button" aria-pressed={f.kind === k} onClick={() => set({ kind: k })} className={`h-9 pointer-coarse:h-11 px-3 rounded-lg border text-caption font-medium ${f.kind === k ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30 border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text)] border-[var(--color-border-strong)]"}`}>{k === "material" ? "Material to order" : "Off-site repair or calibration"}</button>
         ))}
       </div>
       {text("item", "Item", f.kind === "material" ? "Long weld neck flange" : "FV-008B control valve")}

@@ -152,7 +152,7 @@ export default function ImpactPanel({ documentId, orgId }: ImpactPanelProps) {
                     href={d.libraryId ? `/documents/${d.libraryId}?doc=${d.id}` : "#"}
                     className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-[var(--color-surface-2)] group"
                   >
-                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${d.checkedOutByName ? "bg-[var(--state-held)]" : "bg-slate-300"}`} />
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${d.checkedOutByName ? "bg-[var(--state-held)]" : "bg-[var(--color-border-strong)]"}`} />
                     <span className="text-body font-medium text-[var(--color-text)] group-hover:text-[var(--color-text)] truncate">{d.label}</span>
                     <span className="text-body text-[var(--color-text-faint)] shrink-0">Rev {d.rev ?? "-"}</span>
                     <span className="text-body text-[var(--color-text-faint)] truncate">({d.sharedTags.slice(0, 3).join(", ")})</span>

@@ -224,9 +224,10 @@ export default function CheckoutsPage() {
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              type="search"
               placeholder="Search by document, person or project"
               aria-label="Search checkouts"
-              className={`${bandInput} max-sm:text-base`}
+              className={`${bandInput} max-sm:text-reading`}
             />
           </div>
           <select value={libraryFilter} onChange={(e) => setLibraryFilter(e.target.value)} aria-label="Library" className={`${bandSelect} w-full min-w-0`}>
@@ -238,6 +239,13 @@ export default function CheckoutsPage() {
             {uniqueUsers.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
           </select>
         </div>
+        {(search.trim() || libraryFilter || userFilter) && rows.length > 0 && (
+          <div className="mt-2 flex items-center gap-2 text-body text-[var(--color-text-muted)]">
+            <span className="tabular-nums">{filtered.length.toLocaleString()} of {rows.length.toLocaleString()} checkouts</span>
+            <button type="button" onClick={() => { setSearch(""); setLibraryFilter(""); setUserFilter(""); }}
+              className="font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2 pointer-coarse:min-h-11">Clear</button>
+          </div>
+        )}
       </PageHero>
 
       <PageBody>

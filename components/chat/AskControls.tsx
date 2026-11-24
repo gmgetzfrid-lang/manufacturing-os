@@ -59,7 +59,7 @@ function useOutside(open: boolean, close: () => void) {
 }
 
 /** A menu button under the question box: a white, ruled secondary button. */
-const pill = "h-8 inline-flex items-center gap-1.5 px-2.5 rounded-md text-body font-medium whitespace-nowrap border transition-colors";
+const pill = "ui-hit h-8 inline-flex items-center gap-1.5 px-2.5 rounded-md text-body font-medium whitespace-nowrap border transition-colors";
 
 // ─── Sources ─────────────────────────────────────────────────────────
 
@@ -164,7 +164,7 @@ export function AnswerMenu({ answerMode, onAnswerMode, skills, picked, onPick, q
           {[{ id: null as AnswerMode | null, label: "Auto", hint: AUTO_MODE_HINT }, ...ANSWER_MODES].map((m) => (
             <button key={m.id ?? "auto"} type="button" role="menuitemradio" aria-checked={answerMode === m.id}
               onClick={() => onAnswerMode(m.id)}
-              className={`w-full text-left px-2 py-1.5 rounded-md flex items-start gap-2 hover:bg-[var(--color-surface-2)] ${answerMode === m.id ? "bg-[var(--color-surface-2)]" : ""}`}>
+              className={`w-full text-left px-2 py-1.5 pointer-coarse:min-h-11 rounded-md flex items-start gap-2 hover:bg-[var(--color-surface-2)] ${answerMode === m.id ? "bg-[var(--color-surface-2)]" : ""}`}>
               <span className="w-3.5 mt-0.5 shrink-0">{answerMode === m.id && <Check className="w-3.5 h-3.5 text-[var(--color-text)]" />}</span>
               <span className="min-w-0"><span className="block text-body font-medium text-[var(--color-text)]">{m.label}</span>
                 <span className="block text-caption text-[var(--color-text-muted)]">{m.hint}</span></span>
@@ -173,7 +173,7 @@ export function AnswerMenu({ answerMode, onAnswerMode, skills, picked, onPick, q
           <div className="my-1.5 h-px bg-[var(--color-border)]" />
           <div className="flex items-center justify-between pr-1">
             <Head>Skills for this question</Head>
-            {picked && <button type="button" onClick={() => onPick(null)} className="text-body text-[var(--color-accent-text)] hover:underline">Back to workspace defaults</button>}
+            {picked && <button type="button" onClick={() => onPick(null)} className="inline-flex items-center pointer-coarse:min-h-11 text-body text-[var(--color-accent-text)] hover:underline">Back to workspace defaults</button>}
           </div>
           <div className="px-2 pb-1 text-caption text-[var(--color-text-muted)]">A skill applies itself when the question fits what you typed.</div>
           {skills === null && <div className="px-2 py-1.5 text-caption text-[var(--color-text-muted)]">Loading skills…</div>}
@@ -196,9 +196,9 @@ export function AnswerMenu({ answerMode, onAnswerMode, skills, picked, onPick, q
           })}
           <div className="my-1.5 h-px bg-[var(--color-border)]" />
           <div className="flex items-center justify-between gap-2 px-2 py-1 text-body">
-            <Link href="/intelligence/skills" className="inline-flex items-center gap-1 text-[var(--color-accent-text)] hover:underline"><Wand2 className="w-3.5 h-3.5" /> Write your own skill</Link>
+            <Link href="/intelligence/skills" className="inline-flex items-center gap-1 pointer-coarse:min-h-11 text-[var(--color-accent-text)] hover:underline"><Wand2 className="w-3.5 h-3.5" /> Write your own skill</Link>
             {onOpenInstructions && (
-              <button type="button" onClick={() => { setOpen(false); onOpenInstructions(); }} className="inline-flex items-center gap-1 text-[var(--color-accent-text)] hover:underline">
+              <button type="button" onClick={() => { setOpen(false); onOpenInstructions(); }} className="inline-flex items-center gap-1 pointer-coarse:min-h-11 text-[var(--color-accent-text)] hover:underline">
                 <SlidersHorizontal className="w-3.5 h-3.5" /> Instructions{instructionCount ? ` (${instructionCount})` : ""}
               </button>
             )}

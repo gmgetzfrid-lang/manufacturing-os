@@ -58,7 +58,7 @@ export function RoleTreeSelector({ selected, onChange, disabled }: RoleTreeSelec
           <div key={group.name}>
             <div className="flex items-center gap-2 px-2 min-h-10 pointer-coarse:min-h-11">
               <button type="button" onClick={() => toggleExpand(group.name)} aria-expanded={isExpanded} aria-label={`${isExpanded ? "Close" : "Open"} ${group.name}`}
-                className="w-7 h-7 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]">
+                className="ui-hit w-7 h-7 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]">
                 <ChevronRight aria-hidden className={`ui-chevron w-4 h-4 ${isExpanded ? "rotate-90" : ""}`} />
               </button>
               <label className="flex-1 flex items-center gap-2 cursor-pointer text-body font-medium text-[var(--color-text)]">

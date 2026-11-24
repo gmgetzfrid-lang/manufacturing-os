@@ -81,7 +81,7 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
     const ok = list.filter((a) => canDeleteLine(a.id, entries));
     const kept = list.filter((a) => !canDeleteLine(a.id, entries));
     if (!ok.length) { setErr(`${kept.map((a) => a.name).join(", ")}: spending is booked on ${kept.length === 1 ? "it" : "them"}. Move it to another line (the line's menu), then close the line: the record stays, out of the totals.`); return; }
-    if (!(await appConfirm({ message: ok.length === 1 ? `Delete the budget line "${ok[0].name}" (${fmtMoney(ok[0].budget, cur)})? Undo is offered for 10 seconds.` : `Delete ${ok.length} budget lines (${fmtMoney(ok.reduce((s, a) => s + a.budget, 0), cur)})?${kept.length ? ` ${kept.length} with spending booked stay; close those instead.` : ""}`, tone: "danger", confirmLabel: "Delete" }))) return;
+    if (!(await appConfirm({ title: ok.length === 1 ? `Delete the budget line "${ok[0].name}"?` : `Delete ${ok.length} budget lines?`, message: ok.length === 1 ? `${fmtMoney(ok[0].budget, cur)} budget. Undo is offered for 10 seconds.` : `${fmtMoney(ok.reduce((s, a) => s + a.budget, 0), cur)} budget in all.${kept.length ? ` ${kept.length} with spending booked stay; close those instead.` : ""}`, tone: "danger", confirmLabel: ok.length === 1 ? "Delete line" : `Delete ${ok.length} lines` }))) return;
     setBusy(true); setErr(null);
     try {
       let last: { row: Record<string, unknown>; name: string } | null = null, done = 0, failed: string | null = null;
@@ -153,9 +153,9 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
               <option value="">Set phase…</option><option value="split">Split by the phases</option>{phases.map((p) => <option key={p.id} value={p.id}>{p.name} only</option>)}
             </select>
           )}
-          <button type="button" disabled={busy} onClick={() => void close(pickedAccounts.filter((a) => a.status !== "closed"), true)} className="h-8 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] font-medium">Close</button>
-          <button type="button" disabled={busy} onClick={() => void remove(pickedAccounts)} className="h-8 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] font-medium text-[var(--state-overdue-text)]">Delete</button>
-          <button type="button" onClick={() => setSel(new Set())} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Clear</button>
+          <button type="button" disabled={busy} onClick={() => void close(pickedAccounts.filter((a) => a.status !== "closed"), true)} className="h-8 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] font-medium">Close</button>
+          <button type="button" disabled={busy} onClick={() => void remove(pickedAccounts)} className="h-8 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] font-medium text-[var(--state-overdue-text)]">Delete</button>
+          <button type="button" onClick={() => setSel(new Set())} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Clear</button>
         </div>
       )}
 
@@ -175,7 +175,7 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
           </select>
           <button type="button" disabled={!moving.to || busy} onClick={() => { const to = accounts.find((a) => a.id === moving.to); if (!to) return; void run(async () => { const r = await moveSpend({ orgId, projectId, fromId: moving.from.id, toId: to.id, toName: to.name, actor }); return { ok: r.ok, error: r.error }; }, `Spending on ${moving.from.name} moved to ${to.name}. Close ${moving.from.name} if it's no longer needed.`).then((ok) => { if (ok) setMoving(null); }); }}
             className="h-8 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-medium disabled:opacity-50">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Move"}</button>
-          <button type="button" onClick={() => setMoving(null)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+          <button type="button" onClick={() => setMoving(null)} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
         </div>
       )}
 
@@ -215,7 +215,7 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
                         {canManage && <td className={td}><input type="checkbox" aria-label={`Pick ${a.name}`} checked={sel.has(a.id)} onChange={() => setSel((s) => { const n = new Set(s); if (n.has(a.id)) n.delete(a.id); else n.add(a.id); return n; })} className="w-4 h-4 accent-[var(--color-text)]" /></td>}
                         <td className={`${td} min-w-[200px]`}>
                           <div className="flex items-center gap-1">
-                            <button type="button" onClick={() => setOpen(open === a.id ? null : a.id)} aria-label={`${open === a.id ? "Close" : "Open"} ${a.name}'s entries`} className="shrink-0 text-[var(--color-text-faint)]"><ChevronRight className={`w-4 h-4 ui-chevron${(open === a.id) ? " rotate-90" : ""}`} /></button>
+                            <button type="button" onClick={() => setOpen(open === a.id ? null : a.id)} aria-label={`${open === a.id ? "Close" : "Open"} ${a.name}'s entries`} className="ui-hit shrink-0 text-[var(--color-text-faint)]"><ChevronRight className={`w-4 h-4 ui-chevron${(open === a.id) ? " rotate-90" : ""}`} /></button>
                             {a.code && <span className="font-display tabular-nums text-caption text-[var(--color-text-faint)]">{a.code}</span>}
                             <Cell value={a.name} disabled={!canManage || closed} aria={`${a.name} name`} onSave={(v) => (v.trim() && v.trim() !== a.name ? savePatch(a, { name: v.trim() }) : undefined)} className="font-medium" />
                             {closed && <span className="text-body font-medium text-[var(--color-text-muted)]">closed</span>}
@@ -244,12 +244,12 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
                         </td>
                         {sharePhase && <td className={`${td} text-right tabular-nums text-[var(--color-text-muted)]`}>{fmtMoney(share, cur)}</td>}
                         <td className={`${td} text-right tabular-nums`}>{fmtMoney(committed, cur)}</td>
-                        <td className={`${td} text-right tabular-nums ${spent > a.budget && a.budget > 0 ? "text-[var(--state-overdue)] font-medium" : ""}`}>{fmtMoney(spent, cur)}</td>
-                        <td className={`${td} text-right tabular-nums ${left < 0 ? "text-[var(--state-overdue)] font-medium" : ""}`}>{fmtMoney(left, cur)}</td>
+                        <td className={`${td} text-right tabular-nums ${spent > a.budget && a.budget > 0 ? "text-[var(--state-overdue-text)] font-medium" : ""}`}>{fmtMoney(spent, cur)}</td>
+                        <td className={`${td} text-right tabular-nums ${left < 0 ? "text-[var(--state-overdue-text)] font-medium" : ""}`}>{fmtMoney(left, cur)}</td>
                         <td className={td}><div className="h-2 rounded-full bg-[var(--color-accent-soft)] overflow-hidden"><div className={`h-full rounded-full ${spent > a.budget && a.budget > 0 ? "bg-[var(--state-overdue)]" : "bg-[var(--color-main)]"}`} style={{ width: `${used}%` }} /></div></td>
                         <td className={`${td} relative`}>
                           {canManage && (
-                            <button type="button" onClick={() => setMenu(menu === a.id ? null : a.id)} aria-label={`${a.name} actions`} className="w-8 h-8 rounded-lg hover:bg-[var(--color-surface-2)] flex items-center justify-center"><MoreHorizontal className="w-4 h-4" /></button>
+                            <button type="button" onClick={() => setMenu(menu === a.id ? null : a.id)} aria-label={`${a.name} actions`} className="ui-hit w-8 h-8 rounded-lg hover:bg-[var(--color-surface-2)] flex items-center justify-center"><MoreHorizontal className="w-4 h-4" /></button>
                           )}
                           {menu === a.id && (
                             <div role="menu" className="absolute right-2 top-9 z-20 w-56 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl p-1 text-caption" onMouseLeave={() => setMenu(null)}>
@@ -344,7 +344,7 @@ export function LinesChart({ rows, cur, bare }: { rows: Array<{ name: string; bu
               <div className="h-1.5 rounded-sm bg-[var(--color-main)]/55" style={{ width: `${(r.committed / max) * 100}%` }} />
               <div className={`h-2 rounded-sm ${r.spent > r.budget && r.budget > 0 ? "bg-[var(--state-overdue)]" : "bg-[var(--color-main)]"}`} style={{ width: `${(r.spent / max) * 100}%` }} />
             </div>
-            <span className={`font-display tabular-nums text-right ${r.spent > r.budget && r.budget > 0 ? "text-[var(--state-overdue)] font-semibold" : "text-[var(--color-text-muted)]"}`}>{fmtMoney(r.spent, cur)} / {fmtMoney(r.budget, cur)}</span>
+            <span className={`font-display tabular-nums text-right ${r.spent > r.budget && r.budget > 0 ? "text-[var(--state-overdue-text)] font-semibold" : "text-[var(--color-text-muted)]"}`}>{fmtMoney(r.spent, cur)} / {fmtMoney(r.budget, cur)}</span>
           </div>
         ))}
       </div>

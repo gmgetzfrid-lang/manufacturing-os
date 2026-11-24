@@ -97,7 +97,7 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
     finally { setBusy(false); }
   };
 
-  const inp = "text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
+  const inp = "text-body rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 outline-none focus:border-[var(--color-border-strong)]";
   const nobody = enabled && people.length === 0 && roles.length === 0 && teamIds.length === 0;
 
   return (
@@ -106,17 +106,17 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-3">
           <ClipboardCheck className="w-5 h-5 text-[var(--color-text-muted)]" />
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-[var(--color-text)]">Read &amp; understood</div>
+            <div className="text-body font-medium text-[var(--color-text)]">Read &amp; understood</div>
             <div className="text-body text-[var(--color-text-muted)] truncate">Every issued revision in this {scopeLabel}{name ? ` · ${name}` : ""} must be acknowledged</div>
           </div>
-          <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
+          <button aria-label="Close" onClick={onClose} className="ui-hit p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"><X className="w-4 h-4" /></button>
         </div>
 
         {loading ? (
           <div className="p-8 flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-text-muted)]" /></div>
         ) : (
           <div className="p-5 space-y-3">
-            <label className="flex items-center gap-2 text-sm text-[var(--color-text)]">
+            <label className="flex items-center gap-2 text-body text-[var(--color-text)]">
               <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Require acknowledgment
             </label>
 
@@ -126,14 +126,14 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
                   <div className="text-body font-medium text-[var(--color-text-muted)]">Named people</div>
                   <div className="flex flex-wrap gap-1">
                     {people.map((p) => (
-                      <span key={p.uid} className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-body text-[var(--color-text)]">{p.name || p.email}<button aria-label="Remove" onClick={() => setPeople((prev) => prev.filter((x) => x.uid !== p.uid))}><X className="w-3 h-3" /></button></span>
+                      <span key={p.uid} className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-body text-[var(--color-text)]">{p.name || p.email}<button aria-label={`Remove ${p.name || p.email}`} className="ui-hit" onClick={() => setPeople((prev) => prev.filter((x) => x.uid !== p.uid))}><X className="w-3 h-3" /></button></span>
                     ))}
                   </div>
-                  <input value={userQuery} onChange={(e) => setUserQuery(e.target.value)} placeholder="Search people…" className={`${inp} w-full`} />
+                  <input type="search" aria-label="Search people" value={userQuery} onChange={(e) => setUserQuery(e.target.value)} placeholder="Search people…" className={`${inp} w-full`} />
                   {userHits.length > 0 && (
                     <div className="rounded-lg border border-[var(--color-border)] max-h-32 overflow-y-auto">
                       {userHits.filter((u) => !people.some((p) => p.uid === u.uid)).map((u) => (
-                        <button key={u.uid} onClick={() => { setPeople((prev) => [...prev, u]); setUserQuery(""); setUserHits([]); }} className="w-full text-left px-2.5 py-1.5 text-xs hover:bg-[var(--color-surface-2)] flex items-center gap-1.5"><Plus className="w-3 h-3" /> {u.name || u.email}</button>
+                        <button key={u.uid} onClick={() => { setPeople((prev) => [...prev, u]); setUserQuery(""); setUserHits([]); }} className="pointer-coarse:min-h-11 w-full text-left px-2.5 py-1.5 text-caption hover:bg-[var(--color-surface-2)] flex items-center gap-1.5"><Plus className="w-3 h-3" /> {u.name || u.email}</button>
                       ))}
                     </div>
                   )}
@@ -143,7 +143,7 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
                   <div className="text-body font-medium text-[var(--color-text-muted)]">Whole roles</div>
                   <div className="flex flex-wrap gap-1">
                     {ALL_ROLES.map((r) => (
-                      <button key={r} onClick={() => toggleRole(r)} className={`px-2 py-0.5 rounded-full text-body font-medium border transition-colors ${roles.includes(r) ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{r}</button>
+                      <button key={r} onClick={() => toggleRole(r)} className={`pointer-coarse:min-h-11 px-2 py-0.5 rounded-full text-body font-medium border transition-colors ${roles.includes(r) ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{r}</button>
                     ))}
                   </div>
                   <div className="text-body text-[var(--color-text-muted)]">Role members are resolved to individuals each time a revision is issued.</div>
@@ -154,7 +154,7 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
                     <div className="text-body font-medium text-[var(--color-text-muted)]">Departments (teams)</div>
                     <div className="flex flex-wrap gap-1">
                       {allTeams.map((t) => (
-                        <button key={t.id} onClick={() => toggleTeam(t.id)} className={`px-2 py-0.5 rounded-full text-body font-medium border transition-colors ${teamIds.includes(t.id) ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{t.name}</button>
+                        <button key={t.id} onClick={() => toggleTeam(t.id)} className={`pointer-coarse:min-h-11 px-2 py-0.5 rounded-full text-body font-medium border transition-colors ${teamIds.includes(t.id) ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm border-transparent" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:border-[var(--color-border-strong)]"}`}>{t.name}</button>
                       ))}
                     </div>
                     <div className="text-body text-[var(--color-text-muted)]">Department members are resolved to individuals each time a revision is issued.</div>
@@ -174,7 +174,7 @@ export default function AckPolicyModal({ level, id, orgId, name, uid, userName, 
               <button onClick={() => void remove()} disabled={busy || !existing} className="px-3 py-2 rounded-lg text-body font-medium text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-40">Remove</button>
               <div className="flex gap-2">
                 <button onClick={onClose} className="px-3 py-2 rounded-lg text-body font-medium text-[var(--color-text-muted)]">Cancel</button>
-                <button onClick={() => void save()} disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--color-accent)] text-white text-xs font-medium disabled:opacity-50">{busy && <Loader2 className="w-4 h-4 animate-spin" />} Save</button>
+                <button onClick={() => void save()} disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium disabled:opacity-50">{busy && <Loader2 className="w-4 h-4 animate-spin" />} Save</button>
               </div>
             </div>
           </div>

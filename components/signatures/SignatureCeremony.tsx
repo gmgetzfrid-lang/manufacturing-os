@@ -13,6 +13,7 @@ import {
   type SignatureIntent, type SigningReauth,
 } from "@/lib/eSignatures";
 import SignaturePad from "@/components/signatures/SignaturePad";
+import { PasswordInput, FieldError } from "@/components/ui/Field";
 import { heroPrimary as primaryBtn, heroQuiet as secondaryBtn } from "@/components/ui/PageHero";
 
 import { friendlyError } from "@/lib/friendlyError";
@@ -39,6 +40,9 @@ export default function SignatureCeremony({
   const [intent, setIntent] = React.useState<SignatureIntent>(defaultIntent);
   const [mode, setMode] = React.useState<"draw" | "type">(allowDrawn ? defaultMode : "type");
   const [typed, setTyped] = React.useState("");
+  // The name is checked once the signer leaves the box (rule V1), then
+  // live, so the message clears the moment it matches.
+  const [typedLeft, setTypedLeft] = React.useState(false);
   const [drawn, setDrawn] = React.useState<string | null>(null);
   const [agreed, setAgreed] = React.useState(false);
 
@@ -59,6 +63,7 @@ export default function SignatureCeremony({
 
   const statement = defaultStatement ?? `I, ${signerName}, ${intent.toLowerCase()} ${resourceLabel ?? "this document"} and affirm this as my electronic signature.`;
   const nameMatches = typed.trim().toLowerCase() === signerName.trim().toLowerCase() && signerName.trim().length > 0;
+  const nameWrong = typedLeft && typed.length > 0 && !nameMatches;
   const signed = mode === "draw" ? !!drawn : nameMatches;
   const identityReady =
     reauth === "loading" ? false
@@ -96,7 +101,7 @@ export default function SignatureCeremony({
   // One choice out of a few: a segmented control, the picked one ruled
   // in graphite.
   const seg = (on: boolean) =>
-    `inline-flex items-center gap-1.5 h-9 px-3 rounded-md border text-body font-semibold transition-colors ${on
+    `inline-flex items-center gap-1.5 h-9 pointer-coarse:h-11 px-3 rounded-md border text-body font-semibold transition-colors ${on
       ? "border-[var(--color-text)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-[inset_0_0_0_1px_var(--color-text)]"
       : "border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"}`;
   const label = "block text-body font-medium text-[var(--color-text-muted)] mb-1.5";
@@ -108,7 +113,7 @@ export default function SignatureCeremony({
         <div className="flex items-center gap-2 px-5 h-14 border-b border-[var(--color-border)]">
           <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
           <h2 id="sig-ceremony-title" className="font-display text-section font-semibold text-[var(--color-text)] flex-1">Sign {resourceLabel ?? "this document"}</h2>
-          <button type="button" onClick={() => !busy && onCancel()} aria-label="Close" className="w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+          <button type="button" onClick={() => !busy && onCancel()} aria-label="Close" className="ui-hit w-8 h-8 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
 
         <div className="p-5 space-y-5">
@@ -149,12 +154,15 @@ export default function SignatureCeremony({
                 id="sig-typed"
                 value={typed}
                 onChange={(e) => setTyped(e.target.value)}
+                onBlur={() => setTypedLeft(true)}
                 placeholder={signerName}
-                className={`${input} ${typed.length > 0 && !nameMatches ? "border-[var(--state-overdue)] focus:ring-[var(--state-overdue)]/30" : "border-[var(--color-border-strong)] focus:ring-[var(--color-accent-ring)]"}`}
+                aria-invalid={nameWrong ? true : undefined}
+                aria-describedby={nameWrong ? "sig-typed-error" : undefined}
+                className={`${input} ${nameWrong ? "border-[var(--state-overdue)] focus:ring-[var(--state-overdue)]/30" : "border-[var(--color-border-strong)] focus:ring-[var(--color-accent-ring)]"}`}
                 style={{ fontFamily: "cursive", fontSize: "1.15rem" }}
                 autoFocus
               />
-              {typed.length > 0 && !nameMatches && <p className="text-body text-[var(--state-overdue)] mt-1">Must match your account name: {signerName}</p>}
+              {nameWrong && <FieldError id="sig-typed-error">Type your name as it is on your account: {signerName}</FieldError>}
             </div>
           )}
 
@@ -166,18 +174,19 @@ export default function SignatureCeremony({
               <label htmlFor="sig-password" className={label}>
                 <span className="inline-flex items-center gap-1"><KeyRound className="w-3.5 h-3.5" /> Confirm your password</span>
               </label>
-              <input
+              <PasswordInput
                 id="sig-password"
-                type="password"
                 value={password}
                 onChange={(e) => { setPassword(e.target.value); setReauthError(null); }}
                 placeholder="Your account password"
                 autoComplete="current-password"
-                className={`${input} ${reauthError ? "border-[var(--state-overdue)] focus:ring-[var(--state-overdue)]/30" : "border-[var(--color-border-strong)] focus:ring-[var(--color-accent-ring)]"}`}
+                aria-invalid={reauthError ? true : undefined}
+                aria-describedby="sig-password-note"
+                fieldClassName={`${input} ${reauthError ? "border-[var(--state-overdue)] focus:ring-[var(--state-overdue)]/30" : "border-[var(--color-border-strong)] focus:ring-[var(--color-accent-ring)]"}`}
               />
               {reauthError
-                ? <p className="text-body text-[var(--state-overdue)] mt-1">{reauthError}</p>
-                : <p className="text-body text-[var(--color-text-muted)] mt-1">Asked each time, so nobody can sign from your unlocked screen.</p>}
+                ? <FieldError id="sig-password-note">{reauthError}</FieldError>
+                : <p id="sig-password-note" className="text-body text-[var(--color-text-muted)] mt-1">Asked each time, so nobody can sign from your unlocked screen.</p>}
             </div>
           )}
           {reauth !== "loading" && reauth?.method === "sso" && !reauth.fresh && (
@@ -197,10 +206,18 @@ export default function SignatureCeremony({
           </label>
         </div>
 
-        <div className="flex justify-end gap-2 px-5 py-4 border-t border-[var(--color-border)]">
+        <div className="flex flex-wrap items-center justify-end gap-2 px-5 py-4 border-t border-[var(--color-border)]">
+          {/* Sign stays off until everything is in; say what's missing (rule V2). */}
+          {!canSign && !busy && !verifying && (
+            <p className="mr-auto text-body text-[var(--color-text-muted)]">
+              {!signed ? (mode === "draw" ? "Draw your signature to sign." : "Type your name as it is on your account to sign.")
+                : !identityReady ? "Confirm it's you above to sign."
+                : "Tick the box above to sign."}
+            </p>
+          )}
           <button type="button" onClick={() => !busy && onCancel()} className={secondaryBtn}>Cancel</button>
           <button type="button" onClick={submit} disabled={!canSign} className={primaryBtn}>
-            {busy || verifying ? <Loader2 className="w-4 h-4 animate-spin" /> : <PenLine className="w-4 h-4" />} Sign
+            {busy || verifying ? <Loader2 aria-hidden className="w-4 h-4 animate-spin" /> : <PenLine aria-hidden className="w-4 h-4" />} {busy || verifying ? "Signing" : "Sign"}
           </button>
         </div>
       </div>

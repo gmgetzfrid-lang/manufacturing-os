@@ -340,7 +340,7 @@ export default function DocAsk(p: Props) {
         >
           <Button loading={busy === "sign"} onClick={() => setSigning("signoff")}>Sign off</Button>
           <Button variant="secondary" loading={busy === "back"} onClick={() => void run("back", async () => {
-            const why = await appPrompt({ title: "Send it back", message: `What needs to change in draft ${draftLabel ?? ""}?`, placeholder: "e.g. Valve tag V-301 should be V-310 on sheet 2" });
+            const why = await appPrompt({ title: "Send it back", message: `What needs to change in draft ${draftLabel ?? ""}?`, placeholder: "e.g. Valve tag V-301 should be V-310 on sheet 2", confirmLabel: "Send back" });
             if (!why?.trim() || !uid) return;
             const n = await sendBackDraft({ orgId, documentId: doc.id!, libraryId: doc.libraryId, versionId: draft.versionId!, draftLabel, docLabel: label, reviewerId: uid, reviewerName: me, note: why });
             return <>Sent back{n ? `: ${n === 1 ? "1 person was" : `${n} people were`} told what to change` : ""}. Your sign-off stays open until a corrected draft is up.</>;
@@ -443,7 +443,7 @@ export default function DocAsk(p: Props) {
           return <>Marked shared. {m.by ? m.by.split("@")[0] : "They"} can see your markups were sent.</>;
         })}>Mark shared</Button>
         <Button variant="tertiary" loading={busy === "decline"} onClick={() => void run("decline", async () => {
-          const ok = await appConfirm({ message: `Decline the markup request on ${label}?`, confirmLabel: "Decline", tone: "danger" });
+          const ok = await appConfirm({ title: `Decline the markup request on ${label}?`, confirmLabel: "Decline request", tone: "danger" });
           if (!ok) return;
           await resolveMarkupRequest({ markupRequestId: m.id, status: "declined", orgId, projectId: m.projectId ?? undefined, actorUserId: uid!, actorEmail: userEmail ?? undefined, actorRole: p.activeRole });
           return <>Declined the markup request on {label}.</>;

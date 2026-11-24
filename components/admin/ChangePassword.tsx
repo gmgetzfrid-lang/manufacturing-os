@@ -8,7 +8,7 @@ import React, { useEffect, useState } from "react";
 import { Check } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { Card } from "@/components/ui/PageHero";
-import { Field, Input } from "@/components/ui/Field";
+import { Field, PasswordInput } from "@/components/ui/Field";
 import { Button } from "@/components/ui/Button";
 import { said, responseError } from "@/components/admin/said";
 import { MIN_PASSWORD, passwordProblem } from "@/lib/signinPolicy";
@@ -18,8 +18,6 @@ export default function ChangePassword() {
   const [email, setEmail] = useState<string | null>(null);
   const [current, setCurrent] = useState("");
   const [pw, setPw] = useState("");
-  const [again, setAgain] = useState("");
-  const [againTouched, setAgainTouched] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -33,13 +31,11 @@ export default function ChangePassword() {
   }, []);
 
   const problem = pw ? passwordProblem(pw, email) : null;
-  const mismatch = againTouched && again.length > 0 && pw !== again;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setMsg(null);
     if (problem) { setMsg({ ok: false, text: problem }); return; }
-    if (pw !== again) { setAgainTouched(true); return; }
     setBusy(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -49,7 +45,7 @@ export default function ChangePassword() {
         body: JSON.stringify({ password: pw, current }),
       });
       if (!res.ok) throw await responseError(res);
-      setCurrent(""); setPw(""); setAgain(""); setAgainTouched(false);
+      setCurrent(""); setPw("");
       setMsg({ ok: true, text: "Password changed." });
     } catch (err) {
       setMsg({ ok: false, text: said(err, "Couldn't change the password.") });
@@ -68,20 +64,17 @@ export default function ChangePassword() {
     <Card label="Password">
       <form onSubmit={submit} className="space-y-4 max-w-md">
         <Field label="Current password">
-          <Input type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} required />
+          <PasswordInput autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} required />
         </Field>
         <Field label="New password" hint={problem ? undefined : `At least ${MIN_PASSWORD} characters, with numbers or symbols.`} error={problem ?? undefined}>
-          <Input type="password" autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} required />
-        </Field>
-        <Field label="New password again" error={mismatch ? "The two new passwords don't match. Type it once more." : undefined}>
-          <Input type="password" autoComplete="new-password" value={again} onChange={(e) => setAgain(e.target.value)} onBlur={() => setAgainTouched(true)} required />
+          <PasswordInput autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} required />
         </Field>
         {msg && (
           <p role={msg.ok ? "status" : "alert"} className={`flex items-center gap-2 text-body font-medium ${msg.ok ? "text-[var(--color-text)]" : "text-[var(--state-overdue-text)]"}`}>
             {msg.ok && <Check aria-hidden className="w-4 h-4 text-[var(--state-released)]" />} {msg.text}
           </p>
         )}
-        <Button type="submit" loading={busy} disabled={!current || !pw || !!problem || pw !== again}>Change password</Button>
+        <Button type="submit" loading={busy} disabled={!current || !pw || !!problem}>Change password</Button>
       </form>
     </Card>
   );

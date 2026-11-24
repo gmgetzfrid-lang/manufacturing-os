@@ -104,39 +104,39 @@ export default function DuplicateUploadsModal({
         <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-start gap-3">
           <div className="p-2 rounded-lg bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)]"><Copy className="w-5 h-5 text-[var(--state-held)]" /></div>
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-medium text-[var(--color-text)]">Clean up uploads</div>
+            <div className="text-body font-medium text-[var(--color-text)]">Clean up uploads</div>
             <div className="text-body text-[var(--color-text-muted)] mt-0.5">
               Files uploaded more than once into the same folder, and entries whose file never attached.
             </div>
           </div>
-          <button aria-label="Close" onClick={onClose} disabled={!!running} className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] disabled:opacity-40">
+          <button aria-label="Close" onClick={onClose} disabled={!!running} className="ui-hit p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] disabled:opacity-40">
             <X className="w-4 h-4" />
           </button>
         </div>
 
         <div className="p-5 overflow-auto">
           {loadError ? (
-            <p className="text-sm text-[var(--state-overdue)]">{loadError}</p>
+            <p className="text-body text-[var(--state-overdue)]">{loadError}</p>
           ) : result ? (
-            <p className="text-sm font-medium text-[var(--state-released)] flex items-start gap-2"><CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" /> {result}</p>
+            <p className="text-body font-medium text-[var(--state-released)] flex items-start gap-2"><CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" /> {result}</p>
           ) : groups === null ? (
-            <p className="text-sm text-[var(--color-text-muted)] flex items-center gap-2">
+            <p className="text-body text-[var(--color-text-muted)] flex items-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin" /> Checking {scanned.toLocaleString()} documents…
             </p>
           ) : nothing ? (
-            <p className="text-sm font-medium text-[var(--state-released)] flex items-center gap-2">
+            <p className="text-body font-medium text-[var(--state-released)] flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4" /> All clean - no duplicate uploads and no entries missing their file.
             </p>
           ) : (
             <>
               {empty.length > 0 && (
-                <p className="text-sm text-[var(--color-text)] mb-2">
+                <p className="text-body text-[var(--color-text)] mb-2">
                   <b className="text-[var(--state-overdue)]">{empty.length.toLocaleString()} entr{empty.length === 1 ? "y has" : "ies have"} no file</b> - an
                   upload created the entry but its file never attached. There&apos;s nothing to open in them.
                 </p>
               )}
               {files > 0 && (
-              <p className="text-sm text-[var(--color-text)]">
+              <p className="text-body text-[var(--color-text)]">
                 <b>{files.toLocaleString()} file{files === 1 ? " was" : "s were"}</b> uploaded more than once, making{" "}
                 <b className="text-[var(--state-held)]">{dupIds.length.toLocaleString()} extra cop{dupIds.length === 1 ? "y" : "ies"}</b>.
               </p>
@@ -172,7 +172,7 @@ export default function DuplicateUploadsModal({
           </button>
           {!result && !nothing && (
             <button onClick={() => void removeExtras()} disabled={!!running}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-body font-medium text-white bg-[var(--state-overdue)] hover:bg-[var(--state-overdue)] disabled:opacity-50">
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-body font-medium border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--state-overdue-text)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_6%,var(--color-surface))] disabled:opacity-50">
               {running ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
               Clean up {extras.length.toLocaleString()} entr{extras.length === 1 ? "y" : "ies"}
             </button>

@@ -232,7 +232,7 @@ export default function DistributionAcks({
                     <span className="text-body font-medium text-[var(--color-text-faint)]">
                       Who must confirm Rev {currentRev ?? "?"}?
                     </span>
-                    <button onClick={() => setShowPicker(false)} className="p-0.5 rounded hover:bg-[var(--color-surface-2)]">
+                    <button onClick={() => setShowPicker(false)} aria-label="Close" className="ui-hit p-0.5 rounded hover:bg-[var(--color-surface-2)]">
                       <X className="w-3 h-3 text-[var(--color-text-faint)]" />
                     </button>
                   </div>

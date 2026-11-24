@@ -6,7 +6,7 @@
 // someone else? Hand it over and stay on as co-owner.
 
 import React, { useState } from "react";
-import { Crown, Loader2 } from "lucide-react";
+import { Crown, Loader2, CircleAlert } from "lucide-react";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { supabase } from "@/lib/supabase";
 import { transferOwnership } from "@/lib/projects";
@@ -83,7 +83,7 @@ export function TransferOwnershipModal({ project, members, preselect, actorUserI
                 <span className="text-body font-medium text-[var(--color-text)]">Someone else in the organization</span>
               </button>
               {pick === "__email__" && (
-                <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="their.email@company.com" aria-label="New owner's email" autoFocus
+                <input type="email" autoComplete="email" inputMode="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="their.email@company.com" aria-label="New owner's email" autoFocus
                   className="w-full h-9 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-body" />
               )}
             </div>
@@ -99,14 +99,14 @@ export function TransferOwnershipModal({ project, members, preselect, actorUserI
               ))}
             </div>
           </div>
-          {err && <div role="alert" className="text-caption text-[var(--state-overdue-text)]">{err}</div>}
+          {err && <div role="alert" className="text-caption text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{err}</span></div>}
         </div>
       </ModalBody>
       <ModalFooter>
         <div className="flex w-full justify-end gap-2">
-          <button type="button" onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-xs font-medium border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Cancel</button>
+          <button type="button" onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-caption font-medium border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Cancel</button>
           <button type="button" onClick={() => void go()} disabled={busy || (pick === "__email__" && !email.trim())}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-caption font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Transfer ownership
           </button>
         </div>

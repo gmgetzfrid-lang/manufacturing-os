@@ -18,6 +18,7 @@ import { appConfirm } from "@/components/providers/DialogProvider";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 import { friendlyError } from "@/lib/friendlyError";
+import { FieldError } from "@/components/ui/Field";
 interface ViewSelectorProps {
   orgId: string;
   libraryId: string;
@@ -68,7 +69,7 @@ export default function ViewSelector({
   };
 
   const remove = async (id: string) => {
-    if (!(await appConfirm({ title: "Delete view", message: "Delete this view?", tone: "danger" }))) return;
+    if (!(await appConfirm({ title: "Delete this view?", confirmLabel: "Delete view", tone: "danger" }))) return;
     try { await deleteView(id); void refresh(); } catch (e) { showToast({ type: "error", title: "Couldn't delete view", message: friendlyError(e) }); }
   };
 
@@ -90,7 +91,7 @@ export default function ViewSelector({
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 mt-1 w-64 origin-top-right bg-[var(--color-surface)] text-[var(--color-text)] rounded-xl border border-[var(--color-border)] ring-1 ring-black/5 shadow-lg z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+          <div className="absolute right-0 mt-1 w-64 origin-top-right bg-[var(--color-surface)] text-[var(--color-text)] rounded-xl border border-[var(--color-border)] ring-1 ring-[var(--color-ink)]/5 shadow-lg z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
             <div className="px-3 py-2 border-b border-[var(--color-border)]">
               <div className="text-body font-medium text-[var(--color-text-muted)]">Views</div>
             </div>
@@ -168,7 +169,7 @@ function ViewRow({ v, active, onApply, onDelete }: {
         {v.description && <div className="text-body text-[var(--color-text-muted)] truncate">{v.description}</div>}
       </div>
       {onDelete && (
-        <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="p-1 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] rounded">
+        <button aria-label={`Delete the ${v.name} view`} onClick={(e) => { e.stopPropagation(); onDelete(); }} className="ui-hit p-1 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] rounded">
           <Trash2 className="w-3 h-3" />
         </button>
       )}
@@ -213,21 +214,21 @@ function SaveViewModal({
     <div className="fixed inset-0 z-[400] bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in flex items-start sm:items-center justify-center overflow-y-auto p-4">
       <div className="w-full max-w-md bg-[var(--color-surface)] rounded-lg shadow-2xl border border-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95">
         <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center justify-between">
-          <div className="text-sm font-medium text-[var(--color-text)] flex items-center gap-2">
+          <div className="text-body font-medium text-[var(--color-text)] flex items-center gap-2">
             <Save className="w-4 h-4 text-[var(--color-text-muted)]" /> Save current view
           </div>
-          <button aria-label="Close" onClick={onClose} disabled={busy} className="p-1.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+          <button aria-label="Close" onClick={onClose} disabled={busy} className="ui-hit p-1.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
         <div className="px-5 py-4 space-y-3">
           <div>
             <label className="text-body font-medium text-[var(--color-text)] ">Name *</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Past Due P&IDs" autoFocus className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
+            <input aria-label="Name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Past Due P&IDs" autoFocus className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-body" />
           </div>
           <div>
             <label className="text-body font-medium text-[var(--color-text)] ">Description</label>
-            <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm" />
+            <input aria-label="Description" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional" className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-body" />
           </div>
           <div>
             <label className="text-body font-medium text-[var(--color-text)] ">Visibility</label>
@@ -246,12 +247,12 @@ function SaveViewModal({
             <input type="checkbox" checked={isDefault} onChange={(e) => setIsDefault(e.target.checked)} />
             Set as default {scope === "org" ? "for the team" : "for me"}
           </label>
-          {error && <div className="text-body border-l-2 border-[var(--state-overdue)] pl-3 text-[var(--state-overdue)]">{error}</div>}
+          {error && <FieldError>{error}</FieldError>}
         </div>
         <div className="px-5 py-3 bg-[var(--color-surface-2)] border-t border-[var(--color-border)] flex items-center justify-end gap-2">
           <button onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg text-body font-medium text-[var(--color-text)] bg-[var(--color-surface)] border border-[var(--color-border)]">Cancel</button>
           <button onClick={save} disabled={busy || !name.trim()} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-body font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50 shadow">
-            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Save view
+            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}{" "}{busy ? "Saving" : "Save view"}
           </button>
         </div>
       </div>

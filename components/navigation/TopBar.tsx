@@ -97,7 +97,7 @@ export default function TopBar({ onOpenMobileNav }: { onOpenMobileNav?: () => vo
           href="/inbox"
           aria-label="Inbox"
           title="Inbox"
-          className="relative w-9 h-9 inline-flex items-center justify-center rounded-full text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
+          className="relative w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 inline-flex items-center justify-center rounded-full text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
         >
           <Inbox className="w-4 h-4" />
         </Link>

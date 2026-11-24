@@ -69,18 +69,18 @@ export default function RevertConfirmModal({
             <RotateCcw className="w-5 h-5 text-[var(--color-text-muted)]" />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-[var(--color-text)]">Revert to Rev {targetVersion.revisionLabel}</div>
+            <div className="text-body font-medium text-[var(--color-text)]">Revert to Rev {targetVersion.revisionLabel}</div>
             <div className="text-body text-[var(--color-text-muted)] truncate">
               {doc.documentNumber || doc.title || doc.name} - current is Rev {doc.rev}
             </div>
           </div>
-          <button aria-label="Close" onClick={onClose} disabled={busy} className="p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg">
+          <button aria-label="Close" onClick={onClose} disabled={busy} className="ui-hit p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg">
             <X className="w-4 h-4" />
           </button>
         </div>
 
         <div className="px-6 py-5 space-y-4">
-          <div className="text-sm text-[var(--color-text)] space-y-2">
+          <div className="text-body text-[var(--color-text)] space-y-2">
             <p>
               This will create a <b>new revision</b> on the document that copies the file payload from <b>Rev {targetVersion.revisionLabel}</b>.
               The current revision will be marked superseded but remain in the history.
@@ -92,21 +92,21 @@ export default function RevertConfirmModal({
 
           <div>
             <label className="text-body font-medium text-[var(--color-text)] ">Reason *</label>
-            <textarea
+            <textarea aria-label="Reason"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               rows={3}
-              className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm resize-y"
+              className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-body resize-y"
               placeholder="e.g. Rev 4 introduced incorrect orifice plate sizing on FE-201. Rolling back to Rev 3 per ops request."
             />
           </div>
 
           <div>
             <label className="text-body font-medium text-[var(--color-text)] ">MOC Reference</label>
-            <input
+            <input aria-label="MOC reference"
               value={mocRef}
               onChange={(e) => setMocRef(e.target.value)}
-              className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm"
+              className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-body"
               placeholder="MOC-2026-0142 (optional)"
             />
           </div>

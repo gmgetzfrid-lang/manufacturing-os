@@ -21,7 +21,7 @@ import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
 import ViewTabs, { INTELLIGENCE_VIEWS } from "@/components/navigation/ViewTabs";
 import { Button } from "@/components/ui/Button";
-import { Input, Textarea } from "@/components/ui/Field";
+import { Input, Textarea, FieldError } from "@/components/ui/Field";
 import AiSettingsModal from "@/components/knowledge/AiSettingsModal";
 import {
   listKnowledgeLibraries, createKnowledgeLibrary, getAiConnections,
@@ -209,7 +209,7 @@ export default function KnowledgePage() {
                 <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2}
                   placeholder="e.g. API and company standards for piping and vessels" />
               </label>
-              {createError && <p role="alert" className="text-body font-medium text-[var(--state-overdue-text)]">Not made. {createError}</p>}
+              {createError && <FieldError>Not made. {createError}</FieldError>}
             </ModalBody>
             <ModalFooter>
                 <Button variant="secondary" onClick={() => setShowCreate(false)} disabled={creating}>Cancel</Button>

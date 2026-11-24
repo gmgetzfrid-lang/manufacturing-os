@@ -13,7 +13,7 @@ import { isFilterActive, EMPTY_FILTER } from "@/lib/scheduleFilter";
 import { ADDED } from "@/lib/discovery";
 
 const STATUS_CHIPS: Array<{ s: MilestoneStatus; label: string; dot: string }> = [
-  { s: "planned", label: "Planned", dot: "bg-slate-400" },
+  { s: "planned", label: "Planned", dot: "bg-[var(--color-border-control)]" },
   { s: "in_progress", label: "In progress", dot: "bg-[var(--color-text-muted)]" },
   { s: "completed", label: "Done", dot: "bg-[var(--state-released)]" },
   { s: "on_hold", label: "On hold", dot: "bg-[var(--state-held)]" },
@@ -67,10 +67,10 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
             onChange={(e) => onChange({ ...filter, query: e.target.value })}
             placeholder="Search tasks, work-order number, area, person…"
             aria-label="Search tasks"
-            className="w-full h-9 pl-8 pr-8 text-body rounded-lg bg-[var(--color-surface-2)] border border-transparent placeholder:text-[var(--color-text-faint)] focus:bg-[var(--color-surface)]"
+            className="w-full h-9 pointer-coarse:h-11 pl-8 pr-8 text-body rounded-lg bg-[var(--color-surface-2)] border border-transparent placeholder:text-[var(--color-text-faint)] focus:bg-[var(--color-surface)]"
           />
           {filter.query && (
-            <button onClick={() => onChange({ ...filter, query: "" })} className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] transition-colors" title="Clear search">
+            <button onClick={() => onChange({ ...filter, query: "" })} aria-label="Clear search" className="ui-hit absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] transition-colors" title="Clear search">
               <XIcon className="w-3.5 h-3.5" />
             </button>
           )}
@@ -90,7 +90,7 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
           {active ? <><b className="text-[var(--color-text)]">{matchCount}</b> of {totalCount}</> : <>{totalCount} tasks</>}
         </span>
         {active && (
-          <button onClick={() => onChange(EMPTY_FILTER)} className="inline-flex items-center gap-1 h-10 text-body font-medium text-[var(--color-text)] px-2 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
+          <button onClick={() => onChange(EMPTY_FILTER)} className="inline-flex items-center gap-1 h-10 pointer-coarse:h-11 text-body font-medium text-[var(--color-text)] px-2 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors">
             <XIcon className="w-3 h-3" /> Clear
           </button>
         )}

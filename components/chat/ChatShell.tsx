@@ -323,7 +323,7 @@ export default function ChatShell() {
   const onSettle = (t: ChatThread, settled: boolean) => saveThread(t, { settledAt: settled ? new Date().toISOString() : null }, settled ? "settle it" : "reopen it");
   const onRename = (t: ChatThread, title: string) => saveThread(t, { title }, "rename it");
   const onDelete = async (t: ChatThread) => {
-    const ok = await appConfirm({ title: "Delete this conversation?", message: `"${t.title || "Untitled"}" and its turns will be removed for everyone. Attachments stay in storage.`, confirmLabel: "Delete" });
+    const ok = await appConfirm({ title: "Delete this conversation?", message: `"${t.title || "Untitled"}" and its turns will be removed for everyone. Attachments stay in storage.`, confirmLabel: "Delete conversation", tone: "danger" });
     if (!ok) return;
     try {
       await deleteThread(t.id);
@@ -734,12 +734,12 @@ export default function ChatShell() {
         <div className="page-head border-b border-[var(--color-border)] px-3 sm:px-5 py-2.5 min-h-[60px] flex items-center gap-2 shrink-0">
           {!railOpen && (
             <button onClick={() => setRailOpen(true)} title="Conversations" aria-label="Show conversations"
-              className="h-9 w-9 -ml-1 shrink-0 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+              className="ui-hit h-9 w-9 -ml-1 shrink-0 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
               <PanelLeftOpen className="w-4 h-4" />
             </button>
           )}
           <div className="min-w-0 flex-1">
-            <h1 className="font-display text-section sm:text-[21px] leading-tight font-semibold text-[var(--color-text)] truncate">{active?.title || "New conversation"}</h1>
+            <h1 className="font-display text-section leading-tight font-semibold text-[var(--color-text)] truncate">{active?.title || "New conversation"}</h1>
             <div className="mt-0.5 flex items-center gap-1.5 text-body text-[var(--color-text-muted)] min-w-0">
               <ScopeIcon className="w-3.5 h-3.5 shrink-0" aria-hidden />
               <span className="truncate">{contextLine}</span>

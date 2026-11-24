@@ -140,7 +140,7 @@ export default function EditOverlapBanner({
               )}
               <button
                 onClick={() => setDismissed((prev) => new Set(prev).add(row.documentId))}
-                className="p-1 rounded-md text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                className="ui-hit p-1 rounded-md text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                 title="Dismiss for now"
                 aria-label="Dismiss"
               >

@@ -12,7 +12,7 @@ import { friendlyError } from "@/lib/friendlyError";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import {
-  X, AlertTriangle, Redo2, Save, ArrowUpToLine, Loader2,
+  X, AlertTriangle, Redo2, Save, ArrowUpToLine, Loader2, CircleAlert,
 } from "lucide-react";
 import type { ChatThread, PastAnswer, ChatProfile, ChatAttachment } from "@/lib/chatClient";
 import { attachmentUrl } from "@/lib/chatClient";
@@ -69,11 +69,11 @@ export default function RightPanel({
     <div className="px-5 pt-4 pb-4 border-b border-[var(--color-border)] shrink-0">
       <div className="flex items-center gap-2 min-h-9">
         <div className="min-w-0 flex-1 truncate text-body font-medium text-[var(--color-text-muted)]">{kicker}</div>
-        <button onClick={onClose} title="Close panel" aria-label="Close panel" className="w-9 h-9 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+        <button onClick={onClose} title="Close panel" aria-label="Close panel" className="ui-hit w-9 h-9 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
           <X className="w-4 h-4" />
         </button>
       </div>
-      <h2 className="mt-1 font-display text-[26px] leading-[1.1] font-semibold text-[var(--color-text)] line-clamp-2 break-words">{title}</h2>
+      <h2 className="mt-1 font-display text-title leading-[1.1] font-semibold text-[var(--color-text)] line-clamp-2 break-words">{title}</h2>
       {sub && <div className="mt-1.5 text-body text-[var(--color-text-muted)]">{sub}</div>}
     </div>
   );
@@ -184,7 +184,7 @@ function AttachmentPane({ att, header }: {
         ) : url ? (
           <iframe src={url} title={att.name} className="w-full h-[70vh] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]" />
         ) : failed ? (
-          <p role="alert" className="flex items-start gap-2 text-body font-medium text-[var(--state-overdue)]"><AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> Couldn&apos;t open the file: {failed}</p>
+          <p role="alert" className="flex items-start gap-2 text-body font-medium text-[var(--state-overdue-text)]"><AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> Couldn&apos;t open the file: {failed}</p>
         ) : (
           <div className="flex items-center gap-2 text-body text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Loading the file…</div>
         )}
@@ -263,7 +263,7 @@ function InstructionsPane({
             )}
             {saved && saved !== "profile" && savedTag}
           </div>
-          {saveError && saveError.what !== "profile" && <p role="alert" className="mt-1.5 text-body font-medium text-[var(--state-overdue)]">Not saved: {saveError.msg}</p>}
+          {saveError && saveError.what !== "profile" && <p role="alert" className="mt-1.5 text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" /><span>Not saved: {saveError.msg}</span></p>}
         </section>
 
         <section className="py-4">
@@ -304,7 +304,7 @@ function InstructionsPane({
             </button>
             {saved === "profile" && savedTag}
           </div>
-          {saveError?.what === "profile" && <p role="alert" className="mt-1.5 text-body font-medium text-[var(--state-overdue)]">Not saved: {saveError.msg}</p>}
+          {saveError?.what === "profile" && <p role="alert" className="mt-1.5 text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" /><span>Not saved: {saveError.msg}</span></p>}
         </section>
       </div>
     </div>

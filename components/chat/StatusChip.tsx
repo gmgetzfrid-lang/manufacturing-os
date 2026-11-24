@@ -77,7 +77,7 @@ export default function StatusChip({ orgId, bump }: { orgId: string; /** Change 
     <div title={title} className="min-w-0 flex items-center gap-2 text-body max-sm:hidden">
       {problem || nearCap ? (
         <>
-          <span className={`inline-flex items-center gap-1.5 font-medium whitespace-nowrap ${snap.failed ? "text-[var(--color-text-muted)]" : nearCap ? "text-[var(--state-overdue)]" : "text-[var(--state-held)]"}`}>
+          <span className={`inline-flex items-center gap-1.5 font-medium whitespace-nowrap ${snap.failed ? "text-[var(--color-text-muted)]" : nearCap ? "text-[var(--state-overdue-text)]" : "text-[var(--state-held-text)]"}`}>
             <span aria-hidden className={`w-2 h-2 rounded-full ${snap.failed ? "bg-[var(--color-text-faint)]" : nearCap ? "bg-[var(--state-overdue)]" : "bg-[var(--state-held)]"}`} />
             {snap.failed ? "AI status unknown" : nearCap ? `${money(snap.spentUsd)} of ${cap(snap.capUsd)} used this month` : "No AI key"}
           </span>

@@ -149,7 +149,7 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
       <div className="flex items-start gap-2">
         <span className="pt-0.5 text-body leading-snug font-medium text-[var(--color-text-muted)] flex-1 min-w-0">{dayLabel}{all.length > 1 ? ` · ${onDay.length} of ${all.length} steps ${band ? "this shift" : "this day"}` : ""}</span>
         {wos.length > 0 && <span className="pt-0.5 font-display tabular-nums text-body font-semibold text-[var(--color-text-muted)] shrink-0">WO {wos.join(", ")}</span>}
-        {onClose && <button type="button" onClick={onClose} aria-label="Close" className="-mr-1.5 w-8 h-8 shrink-0 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>}
+        {onClose && <button type="button" onClick={onClose} aria-label="Close" className="ui-hit -mr-1.5 w-8 h-8 shrink-0 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>}
       </div>
       <div className="mt-1 flex items-start gap-2">
         <Layers className="w-4 h-4 mt-0.5 text-[var(--color-text-muted)] shrink-0" aria-hidden />
@@ -178,7 +178,7 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
     return (
       <li key={id} className={`border-b border-[var(--color-border)] last:border-b-0 ${isOpen ? "border-l-[3px] border-l-[var(--color-text)]" : ""} ${muted ? "opacity-70" : ""}`}>
         <button type="button" onClick={() => setOpen(isOpen ? null : id)} aria-expanded={isOpen} aria-label={`${isOpen ? "Close" : "Open"} step: ${m.name}`}
-          className={`w-full flex items-start gap-2 px-3 py-2 text-left hover:bg-[var(--color-surface-2)] ${isOpen ? "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]" : ""}`}>
+          className={`w-full flex items-start gap-2 px-3 py-2 text-left hover:bg-[var(--color-surface-2)] ${isOpen ? "bg-[var(--color-surface-2)]" : ""}`}>
           <span className={`mt-1 w-2.5 h-2.5 rounded-full shrink-0 ${DOT[m.status] ?? DOT.planned}`} aria-label={WORD[m.status]} />
           <span className="flex-1 min-w-0">
             <span className={`block text-body font-medium break-words ${m.status === "completed" ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>{m.name} <PathTag id={m.id} marks={marks} /> <DiscoveryTag m={m} tz={tz} /></span>
@@ -205,19 +205,19 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
                 return planned;
               })()}{m.status !== "completed" ? ` · plan ${plan}% by now` : ""}{m.workOrderRef && wos.length > 1 ? ` · WO ${m.workOrderRef}` : ""}
               {/* Who it's on: a blank one stands out (a name taken off by mistake). */}
-              {m.responsibleParty?.trim() ? <> · {m.responsibleParty.trim()}</> : <> · <span className="font-medium text-[var(--state-held)]">no crew named</span></>}
+              {m.responsibleParty?.trim() ? <> · {m.responsibleParty.trim()}</> : <> · <span className="font-medium text-[var(--state-held-text)]">no crew named</span></>}
             </span>
             {held && (
-              <span className="block text-body font-medium text-[var(--state-held)]">
+              <span className="block text-body font-medium text-[var(--state-held-text)]">
                 {WORD[m.status]}{Number.isFinite(info.since) ? ` since ${fmt(info.since)}` : ""}{m.statusReason ? `: “${m.statusReason}”` : ", no reason given"}
               </span>
             )}
             {info.comment && <span className="block text-body italic text-[var(--color-text-muted)] break-words">“{info.comment.body}” · {fmt(ms(info.comment.happenedAt ?? info.comment.createdAt))}</span>}
-            {info.why && h < 0 && <span className="block text-body italic font-medium text-[var(--state-held)] break-words">Why behind: {info.why.body}</span>}</>}
+            {info.why && h < 0 && <span className="block text-body italic font-medium text-[var(--state-held-text)] break-words">Why behind: {info.why.body}</span>}</>}
           </span>
           <span className="shrink-0 flex flex-col items-end gap-0.5">
-            <span className={`rounded-full px-2 py-px font-display text-body font-semibold tabular-nums ${pct >= 100 ? "bg-[color-mix(in_srgb,var(--state-released)_14%,transparent)] text-[var(--state-released)]" : "bg-[var(--color-surface-2)] text-[var(--color-text)] ring-1 ring-inset ring-[var(--color-border)]"}`}>{pct}%</span>
-            {Math.abs(h) >= 0.1 && m.status !== "completed" && <span className={`font-display tabular-nums text-body font-semibold ${h < 0 ? "text-[var(--state-overdue)]" : "text-[var(--state-released)]"}`}>{h > 0 ? "+" : "−"}{Math.abs(h)} h</span>}
+            <span className={`rounded-full px-2 py-px font-display text-body font-semibold tabular-nums ${pct >= 100 ? "bg-[color-mix(in_srgb,var(--state-released)_14%,transparent)] text-[var(--state-released-text)]" : "bg-[var(--color-surface-2)] text-[var(--color-text)] ring-1 ring-inset ring-[var(--color-border)]"}`}>{pct}%</span>
+            {Math.abs(h) >= 0.1 && m.status !== "completed" && <span className={`font-display tabular-nums text-body font-semibold ${h < 0 ? "text-[var(--state-overdue-text)]" : "text-[var(--state-released-text)]"}`}>{h > 0 ? "+" : "−"}{Math.abs(h)} h</span>}
           </span>
           {/* A step opens to its card: start, %, finish, history. */}
           <ChevronRight className={`w-3.5 h-3.5 mt-1 shrink-0 text-[var(--color-text-faint)] transition-transform ${isOpen ? "rotate-90" : ""}`} aria-hidden />

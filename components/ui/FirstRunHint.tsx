@@ -51,7 +51,7 @@ export default function FirstRunHint({ storageKey, children, tone = "info" }: Fi
 
   // A quiet line in the content, not a box that reads like an ad.
   return (
-    <div className={`flex items-start gap-2 py-1 text-[12.5px] ${tone === "warning" ? "text-amber-800 dark:text-amber-300" : "text-[var(--color-text-muted)]"}`}>
+    <div className={`flex items-start gap-2 py-1 text-body ${tone === "warning" ? "text-[var(--state-held-text)]" : "text-[var(--color-text-muted)]"}`}>
       <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
       <div className="flex-1">{children}</div>
       <button

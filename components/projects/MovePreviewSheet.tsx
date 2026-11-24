@@ -94,14 +94,14 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
 
   return (
     <div className="fixed inset-0 z-[260] flex items-end sm:items-start sm:items-center justify-center overflow-y-auto p-4" onClick={onCancel}>
-      <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-in fade-in" />
-      <div className="relative w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl ring-1 ring-slate-900/10 overflow-hidden animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
+      <div className="absolute inset-0 bg-[var(--color-ink)]/55 backdrop-blur-sm animate-in fade-in" />
+      <div className="relative w-full max-w-md bg-[var(--color-surface)] rounded-2xl shadow-2xl ring-1 ring-[var(--color-border)] overflow-hidden animate-in fade-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex items-center gap-2">
           <CalendarRange className="w-4 h-4 text-[var(--color-text-muted)]" />
           <h2 className="font-medium text-[var(--color-text)] text-reading flex-1 min-w-0 truncate">
             Move {multi ? `${targets.length} tasks` : `“${primary.name}”`} {absDays} day{absDays === 1 ? "" : "s"} {dir}
           </h2>
-          <button onClick={onCancel} aria-label="Close" className="p-1 rounded hover:bg-[var(--color-surface)] text-[var(--color-text-muted)] transition-colors"><XIcon className="w-4 h-4" /></button>
+          <button onClick={onCancel} aria-label="Close" className="ui-hit p-1 rounded hover:bg-[var(--color-surface)] text-[var(--color-text-muted)] transition-colors"><XIcon className="w-4 h-4" /></button>
         </div>
 
         <div className="p-5 space-y-3">
@@ -123,7 +123,7 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
           </div>
 
           {/* Impact line — the confidence-builder */}
-          <div className="rounded-lg border p-3 text-sm border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]">
+          <div className="rounded-lg border p-3 text-body border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]">
             {mode === "defer" ? (
               <div className="flex items-center gap-2">
                 <ArrowRight className="w-4 h-4 shrink-0" />
@@ -164,9 +164,9 @@ export default function MovePreviewSheet({ targets, allTasks, deltaDays, onCance
           )}
         </div>
 
-        <div className="px-5 py-3 border-t border-[var(--color-border)] bg-slate-50/60 dark:bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
-          <button onClick={onCancel} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Cancel</button>
-          <button autoFocus onClick={() => onConfirm(mode)} disabled={busy} className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg disabled:opacity-40 transition-colors">
+        <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2">
+          <button onClick={onCancel} disabled={busy} className="text-body text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 transition-colors">Cancel</button>
+          <button autoFocus onClick={() => onConfirm(mode)} disabled={busy} className="inline-flex items-center gap-1.5 text-body font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 py-2 rounded-lg disabled:opacity-40 transition-colors">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarRange className="w-4 h-4" />}
             {mode === "extend" ? "Extend" : "Shift"} {multi ? `${targets.length} tasks` : "task"}
           </button>

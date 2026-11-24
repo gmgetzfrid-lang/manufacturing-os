@@ -12,7 +12,7 @@
 // is; each phase has its own PSSR.
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Check, UploadCloud, ArrowRight, Loader2, Plus, FileText, ChevronDown, ChevronUp } from "lucide-react";
+import { Check, UploadCloud, ArrowRight, Loader2, Plus, FileText, ChevronDown, ChevronUp, CircleAlert } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import { listMilestones } from "@/lib/milestones";
 import { loadProgressLog, type ProgressLogRow } from "@/lib/progressHistory";
@@ -377,7 +377,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
   // A secondary button, the one main (filled) button, and a link-style action.
   const btn = `${heroQuiet} whitespace-nowrap`;
   const pri = `${heroPrimary} !h-9 whitespace-nowrap`;
-  const quiet = "inline-flex items-center h-9 text-body text-[var(--color-accent-text)] hover:underline whitespace-nowrap disabled:opacity-50";
+  const quiet = "inline-flex items-center h-9 pointer-coarse:h-11 text-body text-[var(--color-accent-text)] hover:underline whitespace-nowrap disabled:opacity-50";
   // One main next step, the only orange button: schedule a phase that has
   // none, else upload the PSSR that's missing, else Mark complete once
   // everything is clear.
@@ -420,7 +420,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
         return (
           <div key={p.id} className="flex items-center gap-x-3 gap-y-1 flex-wrap text-body min-h-11 py-1">
             <span className="w-24 shrink-0 font-medium text-[var(--color-text)]">
-              {ok && <Check className="inline w-3.5 h-3.5 mr-1 -mt-0.5 text-[var(--state-released)]" />}
+              {ok && <Check className="inline w-3.5 h-3.5 mr-1 -mt-0.5 text-[var(--state-released-text)]" />}
               {p.name}
             </span>
             <span className="min-w-0 flex-1 basis-32 text-[var(--color-text-muted)]">
@@ -454,10 +454,10 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
       {phaseWork.map(({ p, w }) => (
         <li key={p.id} className="flex items-center gap-x-3 gap-y-0.5 flex-wrap min-h-11 py-1">
           <span className="w-24 shrink-0 font-medium">{p.name}</span>
-          {w.total === 0 ? <span className="min-w-0 flex-1 basis-40 text-[var(--state-held)] font-medium">{upper(noScheduleWords(p, now, tz).replace(`${p.name}: `, ""))}</span>
+          {w.total === 0 ? <span className="min-w-0 flex-1 basis-40 text-[var(--state-held-text)] font-medium">{upper(noScheduleWords(p, now, tz).replace(`${p.name}: `, ""))}</span>
             : w.allDone ? <>
               <span className="min-w-0 flex-1 basis-44">Done {w.finishedAt != null ? when(w.finishedAt) : ""}</span>
-              {w.finishedAt != null && w.plannedFinish != null && <span className={`sm:w-40 ${w.hoursAfterPlan != null && w.hoursAfterPlan >= 0.5 ? "text-[var(--state-overdue)] font-medium" : "text-[var(--color-text-muted)]"}`}>{vsPlanWords(w.hoursAfterPlan)}</span>}
+              {w.finishedAt != null && w.plannedFinish != null && <span className={`sm:w-40 ${w.hoursAfterPlan != null && w.hoursAfterPlan >= 0.5 ? "text-[var(--state-overdue-text)] font-medium" : "text-[var(--color-text-muted)]"}`}>{vsPlanWords(w.hoursAfterPlan)}</span>}
               <span className="sm:w-28 sm:text-right font-display tabular-nums text-[var(--color-text-muted)]">{w.done}/{w.total} steps</span>
             </>
               : <span className="min-w-0 flex-1 basis-40 text-[var(--color-text-muted)]"><span className="font-display tabular-nums">{w.done}/{w.total}</span> steps done</span>}
@@ -550,7 +550,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
     ...(projectStatus !== "completed" ? [{
       state: (left === 0 && allWorkDone ? "next" : "todo") as PathRow["state"], title: "Mark the project complete",
       detail: !canManage ? "The project owner marks it complete."
-        : unscheduled.length > 0 ? <span className="font-medium text-[var(--state-held)]">{joinNames(unscheduled.map((p) => p.name))} {unscheduled.length === 1 ? "has" : "have"} no schedule. Complete only if {unscheduled.length === 1 ? "it isn't" : "they aren't"} going ahead.</span>
+        : unscheduled.length > 0 ? <span className="font-medium text-[var(--state-held-text)]">{joinNames(unscheduled.map((p) => p.name))} {unscheduled.length === 1 ? "has" : "have"} no schedule. Complete only if {unscheduled.length === 1 ? "it isn't" : "they aren't"} going ahead.</span>
           : left > 0 ? `${left} step${left === 1 ? "" : "s"} still open. You can complete anyway.` : "Everything above is clear.",
       action: canManage ? <button type="button" onClick={onComplete} className={main === "complete" ? pri : btn}><Check className="w-4 h-4" /> Mark project complete</button> : null,
     }] : [{ state: "done" as const, title: "Project complete", detail: "The project is marked complete." }]),
@@ -586,13 +586,13 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
             {pickedPhase && <div className="text-body text-[var(--color-text-muted)]">{phaseDates(pickedPhase).replace(" – ", " to ")}, {pickedPhase.share}% of the {money0?.afe != null ? "AFE" : "budget"}</div>}
             {stats.noSchedule && pickedPhase ? (
               <p className="text-reading text-[var(--color-text)]">
-                <span className="font-medium text-[var(--state-held)]">{upper(noScheduleWords(pickedPhase, now, tz))}.</span> Nothing to measure until its schedule is imported.
+                <span className="font-medium text-[var(--state-held-text)]">{upper(noScheduleWords(pickedPhase, now, tz))}.</span> Nothing to measure until its schedule is imported.
               </p>
             ) : (
               <>
                 {stats.missing.length > 0 && (
                   <p className="text-body text-[var(--color-text)]">
-                    <span className="font-medium text-[var(--state-held)]">{stats.missing.map((p) => upper(noScheduleWords(p, now, tz))).join("; ")}.</span> These figures cover only {phases.filter((p) => !stats.missing.some((x) => x.id === p.id)).map((p) => p.name).join(", ")}.
+                    <span className="font-medium text-[var(--state-held-text)]">{stats.missing.map((p) => upper(noScheduleWords(p, now, tz))).join("; ")}.</span> These figures cover only {phases.filter((p) => !stats.missing.some((x) => x.id === p.id)).map((p) => p.name).join(", ")}.
                   </p>
                 )}
                 <table className="w-full text-body">
@@ -633,11 +633,11 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
                                 <td className="py-2.5 pr-4 hidden md:table-cell text-[var(--color-text-muted)] whitespace-nowrap">{phaseDates(p).replace(" – ", " to ")}</td>
                                 <td className="py-2.5 pr-4 hidden sm:table-cell text-[var(--color-text)] whitespace-nowrap">{ps.plannedFinish != null ? short(ps.plannedFinish) : "-"}</td>
                                 <td className="py-2.5 pr-4 text-[var(--color-text)]">
-                                  {ps.noSchedule ? <span className="text-[var(--state-held)] font-medium">No schedule yet</span>
+                                  {ps.noSchedule ? <span className="text-[var(--state-held-text)] font-medium">No schedule yet</span>
                                     : ps.finishedAt != null ? short(ps.finishedAt)
                                       : <span className="text-[var(--color-text-muted)]"><span className="font-display tabular-nums text-[var(--color-text)]">{ps.actualPct}%</span> done, plan by now {ps.plannedPct}%</span>}
                                 </td>
-                                <td className={`py-2.5 text-right whitespace-nowrap font-display tabular-nums font-semibold ${lateH != null && lateH >= 0.5 ? "text-[var(--state-overdue)]" : "text-[var(--color-text)]"}`}>
+                                <td className={`py-2.5 text-right whitespace-nowrap font-display tabular-nums font-semibold ${lateH != null && lateH >= 0.5 ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>
                                   {lateH == null ? "-" : Math.abs(lateH) < 0.5 ? "On plan" : `${Math.abs(lateH)} h ${lateH > 0 ? "late" : "early"}`}
                                 </td>
                               </tr>
@@ -664,7 +664,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
         <Modal onClose={() => setUploading(null)} size="lg">
           <ModalHeader icon={UploadCloud} title={uploading === "all" ? "Upload the PSSR" : `Upload ${phases.find((p) => p.id === uploading)?.name ?? "the phase"}'s PSSR`} subtitle="Filed where you pick, then read into checklist items. You check them before anything is kept." onClose={() => setUploading(null)} />
           <ModalBody className="!p-0">
-            {err && <div role="alert" className="px-4 pt-3 text-caption font-medium text-[var(--state-overdue-text)]">{err}</div>}
+            {err && <div role="alert" className="px-4 pt-3 text-caption font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{err}</span></div>}
             <NewChecklistFlow orgId={orgId} projectId={projectId} projectName={projectName} actor={actor}
               part={uploading === "all" ? null : phases.find((p) => p.id === uploading)?.name ?? null}
               onDone={() => { const forPhase = uploading; setUploading(null); void tieNewPssr(forPhase); void projectFileHome(orgId, projectId).then(setHome).catch(() => undefined); }} onCancel={() => setUploading(null)} setErr={setErr} kindDefault="pssr" />
@@ -888,7 +888,7 @@ function WholeManpower({ shifts, records, mp }: { shifts: ReturnType<typeof phas
         {cells.map((c, i) => (
           <div key={c.k} className={`py-2.5 pr-4 border-[var(--color-border)] ${i % 2 ? "pl-4 border-l" : ""} ${i >= 2 ? "max-lg:border-t lg:pl-4 lg:border-l" : ""}`}>
             <dt className="text-body text-[var(--color-text-muted)]">{c.k}</dt>
-            <dd className="font-display text-[22px] leading-tight font-semibold tabular-nums text-[var(--color-text)]">{c.v}</dd>
+            <dd className="font-display text-section leading-tight font-semibold tabular-nums text-[var(--color-text)]">{c.v}</dd>
             {c.s && <dd className="text-body text-[var(--color-text-muted)]">{c.s}</dd>}
           </div>
         ))}
@@ -901,7 +901,7 @@ function WholeManpower({ shifts, records, mp }: { shifts: ReturnType<typeof phas
 function Fact({ k, v, s, tone, bar }: { k: string; v: string; s: string; tone?: "good" | "bad" | "warn";
   /** A share of a whole, drawn as a bar in the brand color (over: red). */
   bar?: { pct: number; over?: boolean } }) {
-  const color = tone === "good" ? "text-[var(--state-released)]" : tone === "bad" ? "text-[var(--state-overdue)]" : tone === "warn" ? "text-[var(--state-held)]" : "text-[var(--color-text)]";
+  const color = tone === "good" ? "text-[var(--state-released-text)]" : tone === "bad" ? "text-[var(--state-overdue-text)]" : tone === "warn" ? "text-[var(--state-held-text)]" : "text-[var(--color-text)]";
   const meter = bar && (
     <span className="relative block h-2 w-full max-w-[220px] rounded-full bg-[var(--color-accent-soft)] overflow-hidden" role="progressbar" aria-valuenow={Math.round(bar.pct)} aria-valuemin={0} aria-valuemax={100} aria-label={k}>
       <span className={`absolute inset-y-0 left-0 rounded-full ${bar.over ? "bg-[var(--state-overdue)]" : "bg-[var(--color-main)]"}`} style={{ width: `${Math.max(0, Math.min(100, bar.pct))}%` }} />
@@ -952,7 +952,7 @@ function TurnoverRow({ it, canManage, busy, onRequired, onAccept, onFile }: { it
     <div {...drag.bind} className={`${drag.ring}`}>
     <div className={`py-2 flex items-center gap-3 text-body ${it.required ? "" : "opacity-60"}`}>
       <button type="button" role="switch" aria-checked={it.required} aria-label={`${it.name} needed for this job`} disabled={!canManage || busy} onClick={onRequired}
-        className={`relative w-9 h-5 rounded-full shrink-0 transition-colors ${it.required ? "bg-[var(--color-main)]" : "bg-[var(--color-border-strong)]"} disabled:opacity-60`}>
+        className={`ui-hit relative w-9 h-5 rounded-full shrink-0 transition-colors ${it.required ? "bg-[var(--color-main)]" : "bg-[var(--color-border-strong)]"} disabled:opacity-60`}>
         <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-[var(--color-surface)] shadow transition-all ${it.required ? "left-[18px]" : "left-0.5"}`} />
       </button>
       <span className="min-w-0 flex-1 break-words leading-snug text-[var(--color-text)]" title={it.description ?? undefined}>{it.name}</span>

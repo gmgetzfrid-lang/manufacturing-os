@@ -18,6 +18,8 @@ import type { ConnectStatus } from "@/lib/estate/connectServer";
 import type { ConnectPlan } from "@/lib/estate/connectPlan";
 
 import { friendlyError } from "@/lib/friendlyError";
+import { appConfirm } from "@/components/providers/DialogProvider";
+import { FieldError } from "@/components/ui/Field";
 const MAX_PASSES = 40;
 
 type Bulk = { done: number; total: number; equipment: number; removed: number; added: number; created: number; failed: number; current: string | null; finished: boolean; lastError: string | null };
@@ -119,7 +121,11 @@ export function useConnectEverything(orgId: string | null, onDone?: () => void) 
     if (!todo.length) { setBulk({ done: 0, total: 0, equipment: 0, removed: 0, added: 0, created: 0, failed: 0, current: null, finished: true, lastError: null }); return; }
     if (!opts.consented) {
       const pagesDue = list.pagesDue ?? todo.length;
-      const ok = window.confirm(`Read ${pagesDue} sheet${pagesDue === 1 ? "" : "s"} in ${todo.length} drawing${todo.length === 1 ? "" : "s"} with your AI model?\n\nOnly sheets not yet read in full are read: sheets already read are left as they are. Each sheet is read zoomed-in, region by region, and its equipment tags are corrected. Billed to your key under your monthly cap. You can stop at any time, and undo the run afterwards.`);
+      const ok = await appConfirm({
+        title: `Read ${pagesDue} sheet${pagesDue === 1 ? "" : "s"} in ${todo.length} drawing${todo.length === 1 ? "" : "s"} with your AI model?`,
+        message: "Only sheets not yet read in full are read: sheets already read are left as they are. Each sheet is read zoomed-in, region by region, and its equipment tags are corrected. Billed to your key under your monthly cap. You can stop at any time, and undo the run afterwards.",
+        confirmLabel: `Read ${pagesDue} sheet${pagesDue === 1 ? "" : "s"}`,
+      });
       if (!ok) return;
     }
     const rid = opts.runId ?? newRunId();
@@ -156,7 +162,7 @@ export function useConnectEverything(orgId: string | null, onDone?: () => void) 
 
   const undoLast = async () => {
     if (!orgId || !runId) return;
-    if (!window.confirm("Undo this run?\n\nEquipment columns, links and readings go back to how they were before it. Registry items it created are removed unless someone has since added photos, files, notes or edits to them. Anything a person changed after the run is left alone.")) return;
+    if (!(await appConfirm({ title: "Undo this run?", message: "Equipment columns, links and readings go back to how they were before it. Registry items it created are removed unless someone has since added photos, files, notes or edits to them. Anything a person changed after the run is left alone.", confirmLabel: "Undo run" }))) return;
     setUndo({ busy: true, result: null, error: null });
     try { setUndo({ busy: false, result: await undoRunCall(orgId, runId), error: null }); onDoneRef.current?.(); }
     catch (e) { setUndo({ busy: false, result: null, error: (e as Error).message }); }
@@ -201,9 +207,9 @@ export function ConnectProgress({ status, running, error, reading, onCancel, onC
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]/95 px-3 py-2 text-body shadow-md space-y-1.5 max-w-md">
       <div className="flex items-center justify-between gap-2">
         <div className="font-medium inline-flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {running ? "Connecting the estate" : error ? "Stopped" : status?.more ? "Paused - press again to continue" : "Connected"}</div>
-        {running ? <button onClick={onCancel} className="text-body opacity-70 hover:opacity-100">stop</button> : <button onClick={onClose} className="opacity-60 hover:opacity-100"><X className="w-3.5 h-3.5" /></button>}
+        {running ? <button onClick={onCancel} className="ui-hit text-body opacity-70 hover:opacity-100">stop</button> : <button onClick={onClose} aria-label="Close" className="ui-hit opacity-60 hover:opacity-100"><X className="w-3.5 h-3.5" /></button>}
       </div>
-      {error && <div className="text-[var(--state-overdue)]">{error}</div>}
+      {error && <FieldError>{error}</FieldError>}
       {!status && running && <div className="text-[var(--color-text-muted)] inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Looking at units, libraries and drawings…</div>}
       {status && (
         <ol className="space-y-1">
@@ -226,7 +232,7 @@ export function ConnectProgress({ status, running, error, reading, onCancel, onC
           <div className="font-medium inline-flex items-center gap-1">{!bulk.finished ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3 text-[var(--state-released)]" />} Drawings read with your AI model: {bulk.done} of {bulk.total}</div>
           {bulk.current && <div className="text-[var(--color-text-muted)] truncate">Now: {bulk.current}</div>}
           <div className="text-[var(--color-text-muted)]">{bulk.equipment} equipment callouts found · {bulk.added} tags put on drawings · {bulk.removed} wrong tags taken off · {bulk.created} new in the registry{bulk.failed ? ` · ${bulk.failed} failed` : ""}</div>
-          {bulk.lastError && <div className="text-[var(--state-overdue)]">{bulk.lastError}</div>}
+          {bulk.lastError && <FieldError>{bulk.lastError}</FieldError>}
           {bulk.finished && bulk.total === 0 && <div>Every drawing is already read this way.</div>}
         </div>
       )}
@@ -244,7 +250,7 @@ export function ConnectProgress({ status, running, error, reading, onCancel, onC
                 <input type="checkbox" checked={status.ai.visionAllPages} disabled={!status.ai.hasKey} onChange={(e) => onRun({ visionAllPages: e.target.checked })} className="w-3.5 h-3.5 accent-[var(--color-text)]" />
                 Read every page with AI vision
               </label>
-              {onReadAll && <button onClick={onReadAll} disabled={!status.ai.hasKey} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-0.5 font-medium hover:bg-[var(--color-surface-2)] disabled:opacity-50">Read all drawings with AI</button>}
+              {onReadAll && <button onClick={onReadAll} disabled={!status.ai.hasKey} className="pointer-coarse:min-h-11 rounded-full border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-0.5 font-medium hover:bg-[var(--color-surface-2)] disabled:opacity-50">Read all drawings with AI</button>}
             </div>
           )}
           {!running && onAutoRead && <AutoReadSwitch auto={status.ai.autoRead} hasKey={status.ai.hasKey} onChange={onAutoRead} />}
@@ -266,7 +272,7 @@ export function UndoRunBox({ runId, journaled, undo, onUndo }: {
   const r = undo?.result;
   return (
     <div className="text-body space-y-0.5">
-      {!r && <button onClick={onUndo} disabled={undo?.busy} className="rounded-full border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)] px-2 py-0.5 font-medium hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-50 inline-flex items-center gap-1">{undo?.busy ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Undo this run</button>}
+      {!r && <button onClick={onUndo} disabled={undo?.busy} className="pointer-coarse:min-h-11 rounded-full border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)] px-2 py-0.5 font-medium hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-50 inline-flex items-center gap-1">{undo?.busy ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Undo this run</button>}
       {undo?.error && <div className="text-[var(--state-overdue)]">{undo.error}</div>}
       {r && <div className="text-[var(--state-released)]">Undone: {r.drawings} drawing{r.drawings === 1 ? "" : "s"} put back · {r.columnsRestored} equipment columns · {r.edgesRestored + r.edgesRemoved} links · {r.readingsRestored} readings · {r.assetsRemoved} registry items removed{r.assetsKept.length ? ` · kept ${r.assetsKept.join(", ")} (someone added to them)` : ""}{r.skipped.length ? ` · ${r.skipped.length} left as a person changed them since` : ""}.</div>}
     </div>
@@ -286,7 +292,7 @@ function AutoReadSwitch({ auto, hasKey, onChange }: { auto: ConnectStatus["ai"][
       </label>
       <div className="flex flex-wrap items-center gap-1">
         up to
-        <input value={cap} onChange={(e) => setCap(e.target.value.replace(/[^0-9]/g, ""))} onBlur={() => { if (auto.on && capNum !== auto.monthlyPages) onChange(true, capNum); }} inputMode="numeric" className="w-14 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-body" />
+        <input aria-label="Pages a month" value={cap} onChange={(e) => setCap(e.target.value.replace(/[^0-9]/g, ""))} onBlur={() => { if (auto.on && capNum !== auto.monthlyPages) onChange(true, capNum); }} inputMode="numeric" className="w-14 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-body" />
         pages a month · {auto.used} used this month
       </div>
       <div>

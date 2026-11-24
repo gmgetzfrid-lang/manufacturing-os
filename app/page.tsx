@@ -13,9 +13,12 @@ import { rememberWorkspaceName } from "@/lib/deviceWorkspace";
 import { prefersReducedMotion } from "@/lib/viewTransition";
 import { checkSignin, type SigninVerdict } from "@/lib/signinCheck";
 import { fetchMemberships, pickMembership, SignedOut } from "@/lib/membershipClient";
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { User } from '@supabase/supabase-js';
-import { supabase, setRememberSession, setPreferMicrosoft, prefersMicrosoft } from '@/lib/supabase';
+import { supabase, setRememberSession, setPreferMicrosoft, prefersMicrosoft, rememberDefault } from '@/lib/supabase';
+import { PasswordInput } from '@/components/ui/Field';
+
+const noStore = () => () => {};
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { label as fieldLabel, link } from '@/components/admin/kit';
@@ -64,7 +67,12 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState(false);
-  const [keepSignedIn, setKeepSignedIn] = useState(true);
+  // Starts as this device's last choice (first time: on for a phone, off
+  // for a computer, which may be shared); the box changes it.
+  const deviceKeep = useSyncExternalStore(noStore, rememberDefault, () => true);
+  const [keepChoice, setKeepChoice] = useState<boolean | null>(null);
+  const [forgot, setForgot] = useState(false);
+  const keepSignedIn = keepChoice ?? deviceKeep;
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<View>("checking");
   const [authedEmail, setAuthedEmail] = useState<string | null>(null);
@@ -360,7 +368,7 @@ export default function LoginPage() {
           </p>
           <Link href="/about" className={link}>About Manufacturing OS</Link>
         </div>
-        <p className="text-body text-[var(--color-text-muted)]">Your workspace admin adds your account. Forgot your password? Ask them to reset it. Company accounts reset through Microsoft.</p>
+        <p className="text-body text-[var(--color-text-muted)]">Your workspace admin adds your account.</p>
         <p className="text-body text-[var(--color-text-muted)]">Authorized use only.</p>
       </>}
     >
@@ -403,17 +411,25 @@ export default function LoginPage() {
               </div>
 
               <div className="mt-4">
-                <label htmlFor="si-password" className={fieldLabel}>Password</label>
-                <input
+                <div className="flex items-baseline justify-between gap-3">
+                  <label htmlFor="si-password" className={fieldLabel}>Password</label>
+                  <button type="button" onClick={() => setForgot((v) => !v)} aria-expanded={forgot} aria-controls="si-forgot"
+                    className={`${link} text-body -my-2 py-2 pointer-coarse:py-3`}>Forgot it?</button>
+                </div>
+                <PasswordInput
                   id="si-password"
-                  type="password"
                   autoComplete="current-password"
                   enterKeyHint="go"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className={authField}
+                  fieldClassName={authField}
                   required
                 />
+                {forgot && (
+                  <p id="si-forgot" className="mt-1.5 text-body text-[var(--color-text-muted)]">
+                    Your workspace admin resets it. Company accounts reset through Microsoft.
+                  </p>
+                )}
               </div>
 
               <Button type="submit" variant={typed ? "primary" : "secondary"} disabled={oauthLoading} loading={loading} done={opened} doneLabel="Signed in"
@@ -424,11 +440,11 @@ export default function LoginPage() {
             </form>
 
             {/* For both doors: kept on this device only. */}
-            <label className="mt-5 pt-4 border-t border-[var(--color-border)] flex items-center gap-2.5 min-h-8 cursor-pointer select-none">
+            <label className="mt-5 pt-4 border-t border-[var(--color-border)] flex items-center gap-2.5 min-h-8 pointer-coarse:min-h-11 cursor-pointer select-none">
               <input
                 type="checkbox"
                 checked={keepSignedIn}
-                onChange={(e) => setKeepSignedIn(e.target.checked)}
+                onChange={(e) => setKeepChoice(e.target.checked)}
                 className="w-4 h-4 rounded cursor-pointer accent-[var(--color-text)]"
               />
               <span className="text-body text-[var(--color-text-muted)]">Keep me signed in on this device</span>

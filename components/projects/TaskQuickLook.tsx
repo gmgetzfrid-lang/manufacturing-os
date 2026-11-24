@@ -28,7 +28,7 @@ export interface QuickLookFmt {
 
 function Tile({ label, sub, big, small, tone }: { label: string; sub?: string; big: React.ReactNode; small?: React.ReactNode; tone?: "accent" }) {
   return (
-    <div className={`min-w-0 rounded-lg border px-2 py-1.5 sm:px-3 sm:py-2 ${tone === "accent" ? "border-[var(--color-border-strong)] bg-[var(--color-surface-2)] dark:border-[var(--color-border)] dark:bg-[var(--color-surface-2)]" : "border-[var(--color-border)] bg-[var(--color-surface-2)]"}`}>
+    <div className={`min-w-0 rounded-lg border px-2 py-1.5 sm:px-3 sm:py-2 ${tone === "accent" ? "border-[var(--color-border-strong)] bg-[var(--color-surface-2)]" : "border-[var(--color-border)] bg-[var(--color-surface-2)]"}`}>
       <div className="text-caption font-medium text-[var(--color-text-muted)]">{label}{sub && <span className="hidden sm:inline normal-case font-medium tracking-normal"> · {sub}</span>}</div>
       <div className="text-body font-medium leading-tight text-[var(--color-text)] tabular-nums">{big}</div>
       {small && <div className="text-caption leading-snug text-[var(--color-text-muted)]">{small}</div>}
@@ -107,13 +107,13 @@ export function QuickLookCard({ look, goalAt, noteOf, fmt, onOpen, onClose }: {
                   {look.order.map((s) => {
                     const fin = s.percent >= 100;
                     return (
-                      <tr key={s.id} className={`border-t border-[var(--color-border)] align-top ${s.isThis ? "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]" : ""}`}>
+                      <tr key={s.id} className={`border-t border-[var(--color-border)] align-top ${s.isThis ? "bg-[var(--color-surface-2)]" : ""}`}>
                         <td className="px-2 py-1 font-display tabular-nums text-caption whitespace-nowrap">{fmt.DTs(s.start)}</td>
                         <td className="px-2 py-1 font-display tabular-nums text-caption whitespace-nowrap hidden sm:table-cell">{fmt.DTs(s.finish)}</td>
                         <td className="px-2 py-1">
                           {s.isThis ? <b className="text-[var(--color-text)]">{s.name}</b> : link(s, fin ? "text-[var(--color-text-faint)] line-through" : "font-medium text-[var(--color-text)]")}
                           {s.isThis && <span className="ml-1.5 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 py-px text-caption font-medium text-[var(--color-text)]">This step</span>}
-                          {s.isNext && <span className="ml-1.5 rounded bg-slate-800 px-1 py-px text-caption font-medium text-white dark:bg-slate-200 dark:text-slate-900">Next</span>}
+                          {s.isNext && <span className="ml-1.5 rounded bg-[var(--color-text)] px-1 py-px text-caption font-medium text-[var(--color-surface)]">Next</span>}
                         </td>
                         <td className="px-2 py-1 hidden sm:table-cell text-caption text-[var(--color-text-muted)]">{s.who}</td>
                         <td className="px-2 py-1 text-right font-display tabular-nums text-caption">{fin ? "✓" : `${s.percent}%`}</td>
@@ -188,7 +188,7 @@ export function TaskSearch({ idx, fmt, onPick }: { idx: QuickLookIndex; fmt: Qui
           if (e.key === "Enter" && hits[hi]) { e.preventDefault(); pick(hits[hi].id); }
           if (e.key === "Escape") { setOpen(false); (e.target as HTMLInputElement).blur(); }
         }}
-        className="w-full sm:w-52 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] py-1 pl-7 pr-2 text-caption text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
+        className="w-full sm:w-52 h-9 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-7 pr-2 text-body text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
       {open && q.trim() && (
         <div className="absolute right-0 top-full mt-1 z-30 w-[min(22rem,calc(100vw-2rem))] rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-lg py-1">
           {hits.length === 0 ? (

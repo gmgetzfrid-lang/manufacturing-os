@@ -198,7 +198,7 @@ export function SearchField({ value, onChange, onSubmit, placeholder, title, aut
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         aria-label={placeholder}
-        className="ui-field-bare flex-1 min-w-0 bg-transparent text-body text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none"
+        className="ui-field-bare self-stretch flex-1 min-w-0 bg-transparent text-body text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none"
       />
     </form>
   );

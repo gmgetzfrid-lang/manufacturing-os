@@ -500,7 +500,7 @@ export default function ProjectNeeds({ orgId, project, jobKind, phases, steps, m
         {busy && <span role="status" className="inline-flex items-center gap-1.5 text-body text-[var(--color-text-muted)]"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving</span>}
         {canManage && (
           <button type="button" onClick={() => requestSetup()} className={heroQuiet} data-needs-setup>
-            <Settings2 className="w-4 h-4" /> Setup{todo ? <span className="font-medium text-[var(--state-held-text)]">{`${todo} to do`}</span> : <Check aria-label="all set" className="w-4 h-4 text-[var(--state-released)]" />}
+            <Settings2 className="w-4 h-4" /> Setup{todo ? <span className="font-medium text-[var(--state-held-text)]">{`${todo} to do`}</span> : <Check aria-label="all set" className="w-4 h-4 text-[var(--state-released-text)]" />}
           </button>
         )}
       </span>}>

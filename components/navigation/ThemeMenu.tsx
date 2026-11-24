@@ -38,7 +38,7 @@ export default function ThemeMenu() {
         onClick={openMenu}
         title="Appearance"
         aria-label="Appearance"
-        className="relative w-9 h-9 inline-flex items-center justify-center rounded-full text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
+        className="relative w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 inline-flex items-center justify-center rounded-full text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
       >
         {mode === "dark" ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
       </button>
@@ -57,13 +57,13 @@ export default function ThemeMenu() {
             <div className="grid grid-cols-2 gap-1 p-0.5 rounded-xl bg-[var(--color-surface-2)] border border-[var(--color-border)]">
               <button
                 onClick={() => mode !== "light" && toggleMode()}
-                className={`inline-flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${mode === "light" ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)]"}`}
+                className={`inline-flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-caption font-medium transition-colors ${mode === "light" ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)]"}`}
               >
                 <Sun className="w-3.5 h-3.5" /> Light
               </button>
               <button
                 onClick={() => mode !== "dark" && toggleMode()}
-                className={`inline-flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${mode === "dark" ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)]"}`}
+                className={`inline-flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-caption font-medium transition-colors ${mode === "dark" ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)]"}`}
               >
                 <Moon className="w-3.5 h-3.5" /> Dark
               </button>

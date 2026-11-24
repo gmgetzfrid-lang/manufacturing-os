@@ -11,7 +11,7 @@
 
 import React, { useMemo, useState } from "react";
 import { useProjectTypeCtx } from "@/components/projects/ProjectTypeContext";
-import { ArrowLeft, ArrowLeftRight, CalendarClock, LogOut, Plus, Search, X } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, CalendarClock, LogOut, Plus, Search, X, CircleAlert } from "lucide-react";
 import { Modal, ModalHeader, ModalBody } from "@/components/ui/Modal";
 import type { Milestone } from "@/types/schema";
 import { buildShiftReport, nextShift, previousShift, type LookAheadItem, type ShiftRow, type ShiftTimes, type ShiftWindow } from "@/lib/shiftReport";
@@ -204,7 +204,7 @@ function Picker({ items, out, next, span, onBack, onPick }: {
           <input autoFocus value={query} onChange={(e) => { setQuery(e.target.value); setMore(false); }} aria-label="Search the job for a work order"
             placeholder="Search a work order #, equipment (E-17), step or crew, the whole job"
             className="w-full h-10 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-8 text-body text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
-          {query && <button type="button" onClick={() => setQuery("")} aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>}
+          {query && <button type="button" onClick={() => setQuery("")} aria-label="Clear search" className="ui-hit absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>}
         </label>
         <div className="flex flex-wrap items-center gap-1.5 text-caption">
           {query ? <span className="text-[var(--color-text-muted)]">Searching the whole job · {shown.length} found</span> : (
@@ -212,7 +212,7 @@ function Picker({ items, out, next, span, onBack, onPick }: {
               <div className="inline-flex rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5" role="group" aria-label="How far ahead">
                 {WINDOWS.map((w) => (
                   <button key={w.id} type="button" onClick={() => { setWin(w.id); setMore(false); }} aria-pressed={win === w.id}
-                    className={`px-2 py-1 rounded-md font-medium ${win === w.id ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{w.label}</button>
+                    className={`px-2 py-1 pointer-coarse:min-h-11 rounded-md font-medium ${win === w.id ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{w.label}</button>
                 ))}
               </div>
               <button type="button" onClick={() => setReadyOnly((v) => !v)} aria-pressed={readyOnly}
@@ -318,7 +318,7 @@ function Confirm({ milestones, action, next, now, tz, times, mode, crews, when, 
           {plan.crewHours.map((x) => <div key={x}>{x}: saving puts it on the {next.kind} shift&apos;s hours{crew ? ` for ${crew}` : ""}. Check they&apos;re on.</div>)}
         </div>
       )}
-      <div className={`rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 space-y-1 ${plan.impact.critical || (moved && dh > 0) ? "border-l-2 border-l-rose-500" : ""}`}>
+      <div className={`rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 space-y-1 ${plan.impact.critical || (moved && dh > 0) ? "border-l-2 border-l-[var(--state-overdue)]" : ""}`}>
         <div className="font-medium text-body text-[var(--color-text-muted)]">What it does to the schedule</div>
         <div>{ptype.word} (forecast): {Number.isFinite(f0) ? `${when(f0)} → ` : ""}<b className={moved && dh > 0 ? "text-[var(--state-overdue-text)]" : ""}>{Number.isFinite(f1) ? when(f1) : "-"}</b>{!moved ? ": unchanged" : dh > 0 ? `: ${dh} h later` : `: ${-dh} h sooner`}</div>
         {plan.impact.critical && <div className="font-medium text-[var(--state-overdue-text)]">Touches the critical path.</div>}
@@ -332,9 +332,9 @@ function Confirm({ milestones, action, next, now, tz, times, mode, crews, when, 
           placeholder="e.g. Crew's already in the area, faster to do it now than wait till Wednesday"
           className="w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1.5 text-caption" />
       </label>
-      {msg && <div role="alert" className="font-medium text-[var(--state-overdue-text)]">{msg}</div>}
+      {msg && <div role="alert" className="font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-0.5" /><span>{msg}</span></div>}
       <div className="flex items-center justify-end gap-2">
-        <button type="button" onClick={onBack} className="h-9 px-3 rounded-lg border border-[var(--color-border-strong)] font-medium">Back</button>
+        <button type="button" onClick={onBack} className="h-9 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-strong)] font-medium">Back</button>
         <button type="button" onClick={() => void save()} disabled={busy}
           className="h-9 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-60">
           {busy ? "Saving…" : "Save to the schedule"}
@@ -365,7 +365,7 @@ function Tag({ tone, children }: { tone: "rose" | "amber" | "emerald" | "slate";
   const cls = tone === "rose" ? "bg-transparent text-[var(--state-overdue-text)] border-[var(--color-border)]"
     : tone === "amber" ? "bg-transparent text-[var(--state-held-text)] border-[var(--color-border)]"
       : tone === "emerald" ? "bg-transparent text-[var(--state-released-text)] border-[var(--color-border)]"
-        : "bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700";
+        : "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border-strong)]";
   return <span className={`inline-block max-w-full break-words px-1.5 py-px rounded border text-body font-medium ${cls}`}>{children}</span>;
 }
 

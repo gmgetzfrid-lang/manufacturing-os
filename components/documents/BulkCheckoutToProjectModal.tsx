@@ -25,6 +25,7 @@ import { useEscapeClose } from "@/components/documents/useEscapeClose";
 import { useDraft } from "@/hooks/useDraft";
 
 import { friendlyError } from "@/lib/friendlyError";
+import { Field } from "@/components/ui/Field";
 interface BulkCheckoutToProjectModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -158,7 +159,7 @@ export default function BulkCheckoutToProjectModal({
               : <Briefcase className="w-5 h-5 text-[var(--color-text-muted)]" />}
           </div>
           <div className="flex-1">
-            <div className="text-sm font-medium text-[var(--color-text)]">
+            <div className="text-body font-medium text-[var(--color-text)]">
               Bulk checkout · {docs.length} document{docs.length === 1 ? "" : "s"}
             </div>
             <div className="text-body text-[var(--color-text-muted)]">
@@ -167,7 +168,7 @@ export default function BulkCheckoutToProjectModal({
                 : "Attach all checkouts to the same project so the team knows they belong together."}
             </div>
           </div>
-          <button aria-label="Close" onClick={onClose} disabled={busy} className="p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
+          <button aria-label="Close" onClick={onClose} disabled={busy} className="ui-hit p-2 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -238,47 +239,54 @@ export default function BulkCheckoutToProjectModal({
 
             {choice === "new" ? (
               <div className="space-y-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg p-3">
-                <input
+                <Field label="Project name">
+                  <input
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="Project name * (e.g. 2026 Q1 Turnaround)"
-                  className="w-full px-3 py-2 border border-[var(--color-border)] rounded-md text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+                  placeholder="2026 Q1 Turnaround"
+                  className="w-full px-3 py-2 border border-[var(--color-border)] rounded-md text-body focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
                 />
-                <textarea
+                </Field>
+                <Field label="Description">
+                  <textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Description * (what will the team do with these?)"
+                  placeholder="What will the team do with these?"
                   rows={3}
-                  className="w-full px-3 py-2 border border-[var(--color-border)] rounded-md text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none resize-y"
+                  className="w-full px-3 py-2 border border-[var(--color-border)] rounded-md text-body focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none resize-y"
                 />
+                </Field>
                 <div className="grid grid-cols-2 gap-2">
-                  <input
+                  <Field label="MOC reference (optional)">
+                    <input
                     value={moc}
                     onChange={(e) => setMoc(e.target.value)}
-                    placeholder="MOC reference"
-                    className="px-3 py-1.5 border border-[var(--color-border)] rounded-md text-body"
+                    className="w-full px-3 py-1.5 border border-[var(--color-border)] rounded-md text-body"
                   />
-                  <input
+                  </Field>
+                  <Field label="Target date (optional)">
+                    <input
                     type="date"
                     value={targetDate}
                     onChange={(e) => setTargetDate(e.target.value)}
-                    className="px-3 py-1.5 border border-[var(--color-border)] rounded-md text-body"
+                    className="w-full px-3 py-1.5 border border-[var(--color-border)] rounded-md text-body"
                   />
+                  </Field>
                 </div>
                 <div className="flex bg-[var(--color-surface)] p-1 rounded-md border border-[var(--color-border)]">
                   <button onClick={() => setVisibility("public")} className={`flex-1 py-1 text-body font-medium rounded ${visibility === "public" ? "bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm" : "text-[var(--color-text-muted)]"}`}>
                     <Globe className="inline w-3 h-3 mr-1" />Public
                   </button>
-                  <button onClick={() => setVisibility("private")} className={`flex-1 py-1 text-body font-medium rounded ${visibility === "private" ? "bg-slate-700 text-white" : "text-[var(--color-text-muted)]"}`}>
+                  <button onClick={() => setVisibility("private")} className={`flex-1 py-1 text-body font-medium rounded ${visibility === "private" ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "text-[var(--color-text-muted)]"}`}>
                     <Lock className="inline w-3 h-3 mr-1" />Private
                   </button>
                 </div>
               </div>
             ) : (
-              <select
+              <select aria-label="Project"
                 value={selectedProjectId}
                 onChange={(e) => setSelectedProjectId(e.target.value)}
-                className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm bg-[var(--color-surface)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+                className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-body bg-[var(--color-surface)] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
               >
                 {projects.length === 0 && <option value="">No active projects: switch to New</option>}
                 {projects.map((p) => (
@@ -310,21 +318,21 @@ export default function BulkCheckoutToProjectModal({
               Purpose *
               <IsoGuidance topic="checkout_purpose" />
             </label>
-            <input
+            <input aria-label="Purpose"
               value={purpose}
               onChange={(e) => setPurpose(e.target.value)}
               placeholder="What are you doing with these files?"
-              className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
+              className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-body focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
             />
           </div>
 
           <div>
             <label className="text-body font-medium text-[var(--color-text)] ">Expected release (optional)</label>
-            <input
+            <input aria-label="Expected release"
               type="date"
               value={expectedReleaseAt ? expectedReleaseAt.slice(0, 10) : ""}
               onChange={(e) => setExpectedReleaseAt(e.target.value ? new Date(e.target.value).toISOString() : "")}
-              className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm"
+              className="mt-1 w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-body"
             />
             <div className="text-body text-[var(--color-text-muted)] mt-1">
               Stale checkouts past this date surface a warning bar to the whole team.

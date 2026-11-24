@@ -39,7 +39,7 @@ function TagInput({
 
   return (
     <div
-      className={`mt-1 w-full rounded-lg border px-2 py-2 text-sm ${
+      className={`mt-1 w-full rounded-lg border px-2 py-2 text-body ${
         disabled
           ? "bg-[var(--color-surface-2)] border-[var(--color-border)]"
           : "bg-[var(--color-surface)] border-[var(--color-border-strong)] focus-within:ring-2 focus-within:ring-[var(--color-accent-ring)]"
@@ -61,7 +61,8 @@ function TagInput({
                 type="button"
                 onClick={() => onChange(values.filter((x) => x !== pill))}
                 title="Remove tag"
-                className="ml-0.5 -mb-1 p-0.5 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] rounded transition-colors"
+                aria-label={`Remove ${pill}`}
+                className="ui-hit ml-0.5 -mb-1 p-0.5 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] rounded transition-colors"
               >
                 <X className="w-3 h-3" />
               </button>
@@ -72,7 +73,7 @@ function TagInput({
       </div>
       {!disabled && (
         <div className="flex items-center gap-1 mt-2">
-          <input
+          <input aria-label={`Add ${label}`}
             ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -89,7 +90,8 @@ function TagInput({
             <button
               type="button"
               onClick={addPill}
-              className="shrink-0 p-1.5 border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] rounded-md transition-colors"
+              aria-label={`Add ${input.trim()}`}
+              className="ui-hit shrink-0 p-1.5 border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] rounded-md transition-colors"
             >
               <Plus className="w-3 h-3" />
             </button>
@@ -205,11 +207,11 @@ export default function MetadataEditor(props: {
 
     if (col.type === "select") {
       return (
-        <select
+        <select aria-label={col.label}
           value={typeof value === "string" ? value : ""}
           onChange={(e) => updateField(col.key, col.type, e.target.value)}
           disabled={!canEdit}
-          className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm disabled:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-muted)]"
+          className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-body disabled:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-muted)]"
         >
           <option value="">Select…</option>
           {(col.options ?? []).map((opt) => (
@@ -240,7 +242,7 @@ export default function MetadataEditor(props: {
 
     if (col.type === "boolean") {
       return (
-        <label className="mt-2 inline-flex items-center gap-2 text-sm text-[var(--color-text)]">
+        <label className="mt-2 inline-flex items-center gap-2 text-body text-[var(--color-text)]">
           <input
             type="checkbox"
             checked={Boolean(value)}
@@ -255,52 +257,53 @@ export default function MetadataEditor(props: {
 
     if (col.type === "number") {
       return (
-        <input
+        <input aria-label={col.label}
           type="number"
+          inputMode="decimal"
           value={value == null ? "" : String(value)}
           onChange={(e) => updateField(col.key, col.type, e.target.value)}
           disabled={!canEdit}
-          className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm disabled:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-muted)]"
+          className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-body disabled:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-muted)]"
         />
       );
     }
 
     if (col.type === "date") {
       return (
-        <input
+        <input aria-label={col.label}
           type="date"
           value={typeof value === "string" ? value : ""}
           onChange={(e) => updateField(col.key, col.type, e.target.value)}
           disabled={!canEdit}
-          className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm disabled:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-muted)]"
+          className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-body disabled:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-muted)]"
         />
       );
     }
 
     if (col.type === "link") {
       return (
-        <input
+        <input aria-label={col.label}
           type="url"
           value={typeof value === "string" ? value : ""}
           onChange={(e) => updateField(col.key, col.type, e.target.value)}
           disabled={!canEdit}
-          className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm disabled:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-muted)]"
+          className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-body disabled:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-muted)]"
           placeholder={canEdit ? "https://" : ""}
         />
       );
     }
 
     return (
-      <input
+      <input aria-label={col.label}
         value={value == null ? "" : String(value)}
         onChange={(e) => updateField(col.key, col.type, e.target.value)}
         disabled={!canEdit}
-        className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm disabled:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-muted)]"
+        className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-body disabled:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-muted)]"
       />
     );
   };
 
-  const fieldClass = "mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm disabled:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-muted)]";
+  const fieldClass = "mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-body disabled:bg-[var(--color-surface-2)] disabled:text-[var(--color-text-muted)]";
 
   return (
     <div className="fixed inset-0 z-[90] flex items-start sm:items-center justify-center overflow-y-auto bg-[color-mix(in_srgb,var(--color-ink)_58%,transparent)] animate-in fade-in p-4">
@@ -310,7 +313,7 @@ export default function MetadataEditor(props: {
         <div className="px-6 py-4 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-between shrink-0">
           <div className="flex items-center gap-4 min-w-0">
             <div className="min-w-0">
-              <div className="text-sm font-medium text-[var(--color-text)] flex items-center gap-2">
+              <div className="text-body font-medium text-[var(--color-text)] flex items-center gap-2">
                 <FileText className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
                 Metadata Editor
               </div>
@@ -335,7 +338,7 @@ export default function MetadataEditor(props: {
           </div>
           <button aria-label="Close"
             onClick={onClose}
-            className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] shrink-0"
+            className="ui-hit h-9 w-9 inline-flex items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] shrink-0"
           >
             <X className="h-4 w-4 text-[var(--color-text-muted)]" />
           </button>
@@ -359,7 +362,7 @@ export default function MetadataEditor(props: {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="text-body font-medium text-[var(--color-text-muted)]">Title</label>
-                <input
+                <input aria-label="Title"
                   value={title}
                   onChange={(e) => canEdit && setTitle(e.target.value)}
                   disabled={!canEdit}
@@ -368,7 +371,7 @@ export default function MetadataEditor(props: {
               </div>
               <div>
                 <label className="text-body font-medium text-[var(--color-text-muted)]">Document Number</label>
-                <input
+                <input aria-label="Document number"
                   value={documentNumber}
                   onChange={(e) => canEdit && setDocumentNumber(e.target.value)}
                   disabled={!canEdit}
@@ -377,7 +380,7 @@ export default function MetadataEditor(props: {
               </div>
               <div>
                 <label className="text-body font-medium text-[var(--color-text-muted)]">Revision</label>
-                <input
+                <input aria-label="Revision"
                   value={rev}
                   onChange={(e) => canEdit && setRev(e.target.value)}
                   disabled={!canEdit}
@@ -387,7 +390,7 @@ export default function MetadataEditor(props: {
               </div>
               <div>
                 <label className="text-body font-medium text-[var(--color-text-muted)]">Status</label>
-                <select
+                <select aria-label="Status"
                   value={status}
                   onChange={(e) => canEdit && setStatus(e.target.value)}
                   disabled={!canEdit}
@@ -422,7 +425,7 @@ export default function MetadataEditor(props: {
           )}
 
           {columns.length === 0 && (
-            <div className="text-center py-6 text-[var(--color-text-faint)] text-sm italic border border-dashed border-[var(--color-border)] rounded-xl">
+            <div className="text-center py-6 text-[var(--color-text-faint)] text-body italic border border-dashed border-[var(--color-border)] rounded-xl">
               No custom columns defined for this library yet.
             </div>
           )}
@@ -432,7 +435,7 @@ export default function MetadataEditor(props: {
         <div className="px-6 py-4 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end gap-2 shrink-0">
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+            className="px-4 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
           >
             {canEdit ? "Cancel" : "Close"}
           </button>
@@ -440,7 +443,7 @@ export default function MetadataEditor(props: {
             <button
               onClick={save}
               disabled={saving}
-              className="px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-sm font-medium disabled:opacity-60"
+              className="px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-body font-medium disabled:opacity-60"
             >
               {saving ? "Saving…" : "Save"}
             </button>

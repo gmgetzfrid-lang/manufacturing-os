@@ -12,6 +12,8 @@ import { Loader2, Sparkles, Cpu, Gauge, ArrowRightLeft, CheckCircle2, XCircle } 
 import { readDrawing, newRunId, undoRun, addEquipment, type CensusRun } from "@/lib/drawingCensusClient";
 
 import { friendlyError } from "@/lib/friendlyError";
+import { appConfirm } from "@/components/providers/DialogProvider";
+import { FieldError } from "@/components/ui/Field";
 export default function ReadDrawingPanel({ orgId, documentId, onDone }: { orgId: string; documentId: string; onDone?: () => void }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [run, setRun] = useState<{ id: string; r: CensusRun; runId: string } | null>(null);
@@ -38,7 +40,7 @@ export default function ReadDrawingPanel({ orgId, documentId, onDone }: { orgId:
         </button>
         <span className="text-body text-[var(--color-text-muted)]">{busy ?? "Your model reads the sheet in zoomed tiles and fixes its equipment tags."}</span>
       </div>
-      {err && <div className="text-[var(--state-overdue)]">{err}</div>}
+      {err && <FieldError>{err}</FieldError>}
       <AddMissing orgId={orgId} documentId={documentId} onDone={onDone} />
       {r && (
         <>
@@ -70,13 +72,13 @@ export default function ReadDrawingPanel({ orgId, documentId, onDone }: { orgId:
               ? <span className="text-body text-[var(--state-held)]">Undo is not available: apply migration 20261021_ai_boundary_runs.sql to record reads.</span>
               : undone.note
                 ? <span className="text-body text-[var(--state-released)]">{undone.note}</span>
-                : <button disabled={undone.busy} onClick={() => {
-                    if (!run || !window.confirm("Undo this read? The drawing's tags, links and reading go back to how they were.")) return;
+                : <button disabled={undone.busy} onClick={async () => {
+                    if (!run || !(await appConfirm({ title: "Undo this read?", message: "The drawing's tags, links and reading go back to how they were.", confirmLabel: "Undo read" }))) return;
                     setUndone({ busy: true, note: null });
                     void undoRun(orgId, run.runId)
                       .then((u) => { setUndone({ busy: false, note: `Undone: ${u.columnsRestored} column, ${u.edgesRestored + u.edgesRemoved} links, ${u.readingsRestored} readings put back, ${u.assetsRemoved} registry items removed.` }); onDone?.(); })
                       .catch((e) => setUndone({ busy: false, note: (e as Error).message }));
-                  }} className="rounded-full border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)] px-2 py-0.5 text-body font-medium disabled:opacity-50">Undo this read</button>}
+                  }} className="pointer-coarse:min-h-11 rounded-full border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)] px-2 py-0.5 text-body font-medium disabled:opacity-50">Undo this read</button>}
           </div>
         </>
       )}
@@ -109,13 +111,13 @@ function AddMissing({ orgId, documentId, onDone }: { orgId: string; documentId: 
     <div className="rounded-md border border-[var(--color-border)] p-1.5 space-y-1">
       <div className="text-body font-medium">Add equipment this sheet carries</div>
       <div className="flex flex-wrap items-center gap-1">
-        <input value={tag} onChange={(e) => setTag(e.target.value)} placeholder="Tag, e.g. H-2" className="w-24 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 py-0.5 text-body font-display tabular-nums" onKeyDown={(e) => { if (e.key === "Enter") void add(); }} />
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name, e.g. Crude heater (optional)" className="flex-1 min-w-[10rem] rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 py-0.5 text-body" onKeyDown={(e) => { if (e.key === "Enter") void add(); }} />
+        <input aria-label="Tag" value={tag} onChange={(e) => setTag(e.target.value)} placeholder="Tag, e.g. H-2" className="w-24 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 py-0.5 text-body font-display tabular-nums" onKeyDown={(e) => { if (e.key === "Enter") void add(); }} />
+        <input aria-label="Name (optional)" value={name} onChange={(e) => setName(e.target.value)} placeholder="Name, e.g. Crude heater (optional)" className="flex-1 min-w-[10rem] rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 py-0.5 text-body" onKeyDown={(e) => { if (e.key === "Enter") void add(); }} />
         <label className="text-body text-[var(--color-text-muted)] inline-flex items-center gap-1">page <input value={page} onChange={(e) => setPage(e.target.value.replace(/[^0-9]/g, ""))} inputMode="numeric" className="w-8 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 py-0.5 text-body" /></label>
-        <button onClick={() => void add()} disabled={state.busy || !tag.trim()} className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-0.5 text-body font-medium disabled:opacity-50 inline-flex items-center gap-1">{state.busy && <Loader2 className="w-3 h-3 animate-spin" />} Add</button>
+        <button onClick={() => void add()} disabled={state.busy || !tag.trim()} className="pointer-coarse:min-h-11 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-0.5 text-body font-medium disabled:opacity-50 inline-flex items-center gap-1">{state.busy && <Loader2 className="w-3 h-3 animate-spin" />} Add</button>
         <button onClick={() => setOpen(false)} className="text-body text-[var(--color-text-muted)] hover:underline">close</button>
       </div>
-      {state.error && <div className="text-body text-[var(--state-overdue)]">{state.error}</div>}
+      {state.error && <FieldError>{state.error}</FieldError>}
       {state.note && (
         <div className="text-body text-[var(--state-released)] flex flex-wrap items-center gap-2">{state.note}
           {state.runId && <button onClick={() => {
@@ -123,7 +125,7 @@ function AddMissing({ orgId, documentId, onDone }: { orgId: string; documentId: 
             setState((s) => ({ ...s, busy: true }));
             void undoRun(orgId, id).then(() => { setState({ busy: false, note: "Taken back off.", error: null, runId: null }); onDone?.(); })
               .catch((e) => setState((s) => ({ ...s, busy: false, error: friendlyError(e) })));
-          }} className="rounded-full border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)] px-2 py-0.5 text-body font-medium">Undo</button>}
+          }} className="pointer-coarse:min-h-11 rounded-full border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)] px-2 py-0.5 text-body font-medium">Undo</button>}
         </div>
       )}
     </div>

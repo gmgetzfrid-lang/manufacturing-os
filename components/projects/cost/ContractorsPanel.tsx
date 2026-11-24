@@ -391,7 +391,7 @@ function MoneySection(p: SectionProps) {
       <div className="grid gap-3 sm:grid-cols-3">
         <div className="space-y-1">
           <span className={label}>Company on the Costs tab</span>
-          {x.c.party ? <div className="text-body font-medium text-[var(--color-text)]">{x.c.party.name}{link.partyId && p.canManage && <button type="button" onClick={() => void linkParty("")} className="ml-2 inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Change</button>}</div>
+          {x.c.party ? <div className="text-body font-medium text-[var(--color-text)]">{x.c.party.name}{link.partyId && p.canManage && <button type="button" onClick={() => void linkParty("")} className="ml-2 inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Change</button>}</div>
             : p.canManage ? (
               <div className="flex gap-1.5 flex-wrap">
                 {p.parties.length > 0 && <select aria-label="Company on the Costs tab" value={pick} onChange={(e) => { setPick(e.target.value); if (e.target.value) void linkParty(e.target.value); }} className={`${field} min-w-0 flex-1`}><option value="">Pick one</option>{p.parties.filter((y) => y.status !== "inactive").map((y) => <option key={y.id} value={y.id}>{y.name}</option>)}</select>}
@@ -435,7 +435,7 @@ function CrewsSection(p: SectionProps) {
       <div className="flex gap-1.5 flex-wrap items-center">
         {x.c.crews.map((c) => (
           <span key={c} className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border-strong)] px-2.5 py-1 text-body text-[var(--color-text)]">{c}
-            {p.canManage && p.settings.manpower.companyOf?.[c] === co && <button type="button" aria-label={`Take ${c} off ${co}`} onClick={() => void assign(c, "")} className="text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)]"><X className="w-3.5 h-3.5" /></button>}
+            {p.canManage && p.settings.manpower.companyOf?.[c] === co && <button type="button" aria-label={`Take ${c} off ${co}`} onClick={() => void assign(c, "")} className="ui-hit text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)]"><X className="w-3.5 h-3.5" /></button>}
           </span>
         ))}
         {p.canManage && others.length > 0 && (
@@ -516,7 +516,7 @@ function PlanSection(p: SectionProps) {
   });
   const remove = () => p.act("plan", async () => {
     if (!saved) return;
-    if (!(await appConfirm({ title: p.scope ? `Remove ${co}'s plan for ${p.scope.name}?` : `Remove ${co}'s staffing plan?`, message: p.scope ? "Only that phase's dates are taken out; the rest of its plan stays. Head counts stay." : "Head counts stay; they are no longer held to a plan.", confirmLabel: "Remove", tone: "danger" }))) return;
+    if (!(await appConfirm({ title: p.scope ? `Remove ${co}'s plan for ${p.scope.name}?` : `Remove ${co}'s staffing plan?`, message: p.scope ? "Only that phase's dates are taken out; the rest of its plan stays. Head counts stay." : "Head counts stay; they are no longer held to a plan.", confirmLabel: "Remove plan", tone: "danger" }))) return;
     const next = range ? withoutRange(saved, range) : null;
     await saveStaffingPlan(p.projectId, co, next);
     p.setSettings((s) => { const st = { ...s.staffing }; if (next) st[co] = next; else delete st[co]; return { ...s, staffing: st }; });
@@ -567,7 +567,7 @@ function PlanSection(p: SectionProps) {
             </div>
           </div>
           <div className="flex gap-1.5 flex-wrap">
-            <button type="button" disabled={!!p.busy || !Object.values(read.keep).some(Boolean)} onClick={() => void saveRead()} className={pri}>{p.busy === "plan" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Keep this plan</button>
+            <button type="button" disabled={!!p.busy || !Object.values(read.keep).some(Boolean)} onClick={() => void saveRead()} className={pri}>{p.busy === "plan" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {p.busy === "plan" ? "Keeping" : "Keep this plan"}</button>
             <button type="button" onClick={() => { setRead(null); setSheetFile(null); }} className={btn}>Cancel</button>
           </div>
         </div>
@@ -576,7 +576,7 @@ function PlanSection(p: SectionProps) {
       {plan && !read && <PlanGridView {...p} plan={plan} onChange={p.canManage ? (next) => setDraft(next) : null} />}
       {draft && (
         <div className="flex gap-1.5 flex-wrap items-center">
-          <button type="button" disabled={!!p.busy} onClick={() => void saveDraft()} className={pri}>{p.busy === "plan" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save the plan</button>
+          <button type="button" disabled={!!p.busy} onClick={() => void saveDraft()} className={pri}>{p.busy === "plan" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {p.busy === "plan" ? "Saving" : "Save the plan"}</button>
           <button type="button" onClick={() => setDraft(null)} className={btn}>Cancel</button>
           <span className="text-caption text-[var(--color-text-muted)]">Not saved yet.</span>
         </div>
@@ -639,7 +639,7 @@ function PlanGridView(p: SectionProps & { plan: StaffingPlan; onChange: ((next: 
           <table className="text-caption border-collapse min-w-full">
             <thead><tr className="bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
               <th className="sticky left-0 z-[1] bg-[var(--color-surface-2)] text-left font-medium px-2.5 py-2 min-w-[8rem] sm:min-w-[180px]">Craft</th>
-              {keys.map((k) => <th key={k} data-key={k} className={`px-1 py-2 font-medium whitespace-nowrap ${k.endsWith("night") ? "text-[var(--color-text)] dark:text-[var(--color-text)]" : ""}`}>{shiftLabel(k, true)}</th>)}
+              {keys.map((k) => <th key={k} data-key={k} className={`px-1 py-2 font-medium whitespace-nowrap ${k.endsWith("night") ? "text-[var(--color-text)]" : ""}`}>{shiftLabel(k, true)}</th>)}
             </tr></thead>
             <tbody>
               {crafts.map((c) => (
@@ -767,7 +767,7 @@ function RatesSection(p: SectionProps) {
       )}
       {draft && (
         <div className="flex gap-1.5 flex-wrap items-center">
-          <button type="button" disabled={!!p.busy} onClick={() => void save()} className={pri}>{p.busy === "rates" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save the rates</button>
+          <button type="button" disabled={!!p.busy} onClick={() => void save()} className={pri}>{p.busy === "rates" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {p.busy === "rates" ? "Saving" : "Save the rates"}</button>
           <button type="button" onClick={() => { setDraft(null); setMsg(null); }} className={btn}>Cancel</button>
           <span className="text-caption text-[var(--color-text-muted)]">Not saved yet.</span>
         </div>

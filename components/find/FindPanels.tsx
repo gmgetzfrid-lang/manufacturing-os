@@ -24,13 +24,13 @@ export function EntityStrip({ entities }: { entities: FindEntity[] }) {
   if (!entities.length) return null;
   const Icon = (k: FindEntity["kind"]) => (k === "asset" ? Cpu : k === "unit" ? Factory : k === "tag" ? Tag : FolderKanban);
   return (
-    <div className="flex flex-wrap items-center gap-1.5 text-xs">
+    <div className="flex flex-wrap items-center gap-1.5 text-caption">
       <span className="text-body text-[var(--color-text-muted)]">Looking at</span>
       {entities.map((e) => {
         const I = Icon(e.kind);
         const body = (
           <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5">
-            <I className={`w-3.5 h-3.5 ${e.kind === "asset" ? "text-emerald-600" : e.kind === "unit" ? "text-[var(--color-text-muted)]" : e.kind === "tag" ? "text-slate-500" : "text-amber-600"}`} />
+            <I className={`w-3.5 h-3.5 ${e.kind === "asset" ? "text-[var(--state-released)]" : e.kind === "unit" ? "text-[var(--color-text-muted)]" : e.kind === "tag" ? "text-[var(--color-text-muted)]" : "text-[var(--state-held)]"}`} />
             <span className="font-medium">{e.label}</span>
             {e.sub && <span className="text-[var(--color-text-muted)]">· {e.sub}</span>}
             {e.via !== "typed" && <span className="text-caption text-[var(--color-text-faint)]">({e.via})</span>}
@@ -75,17 +75,17 @@ export function EquipmentCards({ entities, results, onReveal, onUnit }: {
         if (c.mentioned_in) parts.push(`mentioned in ${c.mentioned_in}`);
         if (c.filed_under) parts.push(`${c.filed_under} filed under it`);
         return (
-          <div key={e.node} className="rounded-xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50/50 dark:bg-emerald-950/20 p-2.5 text-xs">
+          <div key={e.node} className="rounded-xl border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] bg-[color-mix(in_srgb,var(--state-released)_6%,transparent)] p-2.5 text-caption">
             <div className="flex items-center gap-1 flex-wrap text-caption text-[var(--color-text-muted)]">
               {e.unitCode ? (
                 <button onClick={() => onUnit?.(e.unitCode!)} className="inline-flex items-center gap-1 font-medium text-[var(--color-accent-text)] hover:underline" title="Narrow to this unit"><Factory className="w-3 h-3" /> {e.unitLabel ?? e.unitCode}</button>
               ) : <span className="inline-flex items-center gap-1"><Factory className="w-3 h-3" /> no unit on record</span>}
               <ChevronRight className="w-3 h-3" />
-              <span className="inline-flex items-center gap-1 font-medium text-emerald-700">{e.kind === "asset" ? <Cpu className="w-3 h-3" /> : <Tag className="w-3 h-3" />} {e.typeName ?? (e.kind === "asset" ? "Equipment" : "Tag")}</span>
+              <span className="inline-flex items-center gap-1 font-medium text-[var(--state-released-text)]">{e.kind === "asset" ? <Cpu className="w-3 h-3" /> : <Tag className="w-3 h-3" />} {e.typeName ?? (e.kind === "asset" ? "Equipment" : "Tag")}</span>
             </div>
             <div className="mt-0.5 flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <div className="text-sm font-semibold text-[var(--color-text)]">{e.label}{e.code ? <span className="ml-1.5 text-caption font-medium text-[var(--color-text-muted)]">{e.code}</span> : null}</div>
+                <div className="text-body font-semibold text-[var(--color-text)]">{e.label}{e.code ? <span className="ml-1.5 text-caption font-medium text-[var(--color-text-muted)]">{e.code}</span> : null}</div>
                 {e.description && <div className="text-caption text-[var(--color-text-muted)] truncate">{e.description}</div>}
                 <div className="text-caption text-[var(--color-text-muted)]">
                   {e.kind === "tag"
@@ -107,7 +107,7 @@ export function EquipmentCards({ entities, results, onReveal, onUnit }: {
             <div className="mt-1.5 flex flex-wrap gap-1">
               {e.href && <Link href={e.href} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-caption font-medium hover:underline"><ExternalLink className="w-3 h-3" /> Equipment page{e.photos ? ` · ${e.photos} photo${e.photos === 1 ? "" : "s"}` : ""}</Link>}
               {e.kind === "asset" && <Link href={globalGraphHref(e.node)} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-caption font-medium hover:underline"><Globe className="w-3 h-3" /> Global graph</Link>}
-              {related > 0 && onReveal && <button onClick={() => onReveal(e.node)} className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-caption font-medium hover:underline"><Crosshair className="w-3 h-3" /> Show on map</button>}
+              {related > 0 && onReveal && <button onClick={() => onReveal(e.node)} className="pointer-coarse:min-h-11 inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-caption font-medium hover:underline"><Crosshair className="w-3 h-3" /> Show on map</button>}
             </div>
           </div>
         );
@@ -125,7 +125,7 @@ export function RelationChips({ relations, onPage }: { relations: FindRelation[]
         const clickable = !!onPage && r.page != null;
         return (
           <button key={i} type="button" disabled={!clickable} onClick={() => clickable && onPage!(r)} title={r.snippet ?? r.detail}
-            className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-caption font-medium ${r.rel === "drawn_on" ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]" : r.rel === "mentioned_in" ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]" : "bg-slate-50 border-slate-200 text-slate-700"} ${clickable ? "hover:ring-1 hover:ring-[var(--color-border-strong)] cursor-pointer" : "cursor-default"}`}>
+            className={`pointer-coarse:min-h-11 inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-caption font-medium ${r.rel === "drawn_on" ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]" : r.rel === "mentioned_in" ? "bg-[var(--color-text)] border-[var(--color-text)] text-[var(--color-surface)]" : "bg-slate-50 border-slate-200 text-slate-700"} ${clickable ? "hover:ring-1 hover:ring-[var(--color-border-strong)] cursor-pointer" : "cursor-default"}`}>
             <I className="w-3 h-3" /> {REL_LABEL[r.rel]} {r.label}{r.detail ? ` · ${r.detail}` : ""}
           </button>
         );
@@ -153,25 +153,25 @@ const when = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(und
 export function ActivityPanel({ activity, compact = false }: { activity: FindActivity; compact?: boolean }) {
   const total = activity.tickets.length + activity.checkouts.length + activity.markups.length + activity.holds.length + activity.projects.length + activity.milestones.length;
   if (!total) {
-    return <div className="text-xs text-[var(--color-text-muted)]">Nothing in flight: no open requests, checkouts, markups, holds or scoped projects touch this.</div>;
+    return <div className="text-caption text-[var(--color-text-muted)]">Nothing in flight: no open requests, checkouts, markups, holds or scoped projects touch this.</div>;
   }
   const Row = ({ icon: I, tone, href, title, sub }: { icon: React.ComponentType<{ className?: string }>; tone: string; href: string; title: string; sub?: string }) => (
     <li>
       <Link href={href} className="flex items-start gap-2 rounded-md px-1.5 py-1 hover:bg-[var(--color-canvas)]">
         <I className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${tone}`} />
-        <span className="min-w-0"><span className="block text-xs font-medium truncate">{title}</span>{sub && <span className="block text-caption text-[var(--color-text-muted)] truncate">{sub}</span>}</span>
+        <span className="min-w-0"><span className="block text-caption font-medium truncate">{title}</span>{sub && <span className="block text-caption text-[var(--color-text-muted)] truncate">{sub}</span>}</span>
       </Link>
     </li>
   );
   const lim = compact ? 3 : 8;
   return (
     <ul className="space-y-0.5">
-      {activity.projects.slice(0, lim).map((p) => <Row key={`p${p.id}`} icon={Briefcase} tone="text-amber-600" href={p.href} title={p.name} sub={`Project${p.status ? ` · ${p.status}` : ""} · ${p.why}`} />)}
-      {activity.tickets.slice(0, lim).map((t) => <Row key={`t${t.id}`} icon={Ticket} tone="text-rose-600" href={t.href} title={`${t.ticketId} · ${t.title}`} sub={`Drafting request · ${t.status}${t.unit ? ` · ${t.unit}` : ""}${t.drafter ? ` · ${t.drafter}` : t.requester ? ` · ${t.requester}` : ""} · ${t.why}`} />)}
+      {activity.projects.slice(0, lim).map((p) => <Row key={`p${p.id}`} icon={Briefcase} tone="text-[var(--state-held)]" href={p.href} title={p.name} sub={`Project${p.status ? ` · ${p.status}` : ""} · ${p.why}`} />)}
+      {activity.tickets.slice(0, lim).map((t) => <Row key={`t${t.id}`} icon={Ticket} tone="text-[var(--state-overdue)]" href={t.href} title={`${t.ticketId} · ${t.title}`} sub={`Drafting request · ${t.status}${t.unit ? ` · ${t.unit}` : ""}${t.drafter ? ` · ${t.drafter}` : t.requester ? ` · ${t.requester}` : ""} · ${t.why}`} />)}
       {activity.checkouts.slice(0, lim).map((c) => <Row key={`c${c.id}`} icon={Lock} tone="text-[var(--color-text-muted)]" href={c.href} title={c.documentName} sub={`Checked out by ${c.user ?? "someone"} since ${when(c.since)}${c.projectName ? ` under ${c.projectName}` : ""}${c.mode ? ` · ${c.mode}` : ""}`} />)}
       {activity.markups.slice(0, lim).map((m) => <Row key={`m${m.id}`} icon={PenLine} tone="text-[var(--color-text-muted)]" href={m.href} title={m.documentName} sub={`Markup ${m.status} · ${m.requestedBy ?? "?"} → ${m.requestedFrom ?? "?"} · ${when(m.createdAt)}`} />)}
-      {activity.holds.slice(0, lim).map((h) => <Row key={`h${h.id}`} icon={AlertOctagon} tone="text-red-600" href={h.href} title={h.documentName} sub={`On hold${h.reason ? `: ${h.reason}` : ""} · ${h.openedBy ?? ""} ${when(h.openedAt)}`} />)}
-      {activity.milestones.slice(0, lim).map((m) => <Row key={`ms${m.id}`} icon={Flag} tone="text-emerald-600" href={m.href} title={m.name} sub={`Milestone${m.plannedAt ? ` · ${when(m.plannedAt)}` : ""}${m.projectName ? ` · ${m.projectName}` : ""}${m.status ? ` · ${m.status}` : ""}`} />)}
+      {activity.holds.slice(0, lim).map((h) => <Row key={`h${h.id}`} icon={AlertOctagon} tone="text-[var(--state-overdue)]" href={h.href} title={h.documentName} sub={`On hold${h.reason ? `: ${h.reason}` : ""} · ${h.openedBy ?? ""} ${when(h.openedAt)}`} />)}
+      {activity.milestones.slice(0, lim).map((m) => <Row key={`ms${m.id}`} icon={Flag} tone="text-[var(--state-released)]" href={m.href} title={m.name} sub={`Milestone${m.plannedAt ? ` · ${when(m.plannedAt)}` : ""}${m.projectName ? ` · ${m.projectName}` : ""}${m.status ? ` · ${m.status}` : ""}`} />)}
     </ul>
   );
 }
@@ -182,7 +182,7 @@ export function CoverageLine({ coverage, onReadFolder }: { coverage: FindCoverag
   return (
     <div className="text-caption text-[var(--color-text-muted)] space-y-1">
       <div className="flex items-center gap-1.5">
-        {pct >= 100 ? <Eye className="w-3 h-3 text-emerald-600" /> : <EyeOff className="w-3 h-3 text-amber-600" />}
+        {pct >= 100 ? <Eye className="w-3 h-3 text-[var(--state-released)]" /> : <EyeOff className="w-3 h-3 text-[var(--state-held)]" />}
         <span><b>{coverage.read}</b> of <b>{coverage.inScope}</b> files in this scope have had their contents read ({pct}%). Names and folders are always searched; contents only once read.</span>
       </div>
       {coverage.unreadFolders.length > 0 && coverage.unread > 0 && (
@@ -190,7 +190,7 @@ export function CoverageLine({ coverage, onReadFolder }: { coverage: FindCoverag
           {coverage.unreadFolders.slice(0, 3).map((f, i) => (
             <li key={i} className="flex items-center gap-2">
               <span className="truncate">{f.path || "Library root"} · {f.count} unread</span>
-              {onReadFolder && <button type="button" onClick={() => onReadFolder(f)} className="shrink-0 rounded border border-[var(--color-border)] px-1.5 py-px text-caption font-medium hover:bg-[var(--color-canvas)]">Read these…</button>}
+              {onReadFolder && <button type="button" onClick={() => onReadFolder(f)} className="pointer-coarse:min-h-11 shrink-0 rounded border border-[var(--color-border)] px-1.5 py-px text-caption font-medium hover:bg-[var(--color-canvas)]">Read these…</button>}
             </li>
           ))}
         </ul>

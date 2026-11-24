@@ -30,6 +30,7 @@ import { useFileDrag } from "@/hooks/useFileDrag";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 import { friendlyError } from "@/lib/friendlyError";
+import { FieldError } from "@/components/ui/Field";
 interface BackfillVersionModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -177,7 +178,7 @@ export default function BackfillVersionModal({
               </div>
             </div>
           </div>
-          <button aria-label="Close" type="button" onClick={onClose} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
+          <button aria-label="Close" type="button" onClick={onClose} className="ui-hit p-1.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -204,17 +205,17 @@ export default function BackfillVersionModal({
                 onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
               />
               {fileDrag.over ? (
-                <div className="text-sm font-medium text-[var(--color-text)]">{fileDrag.say}</div>
+                <div className="text-body font-medium text-[var(--color-text)]">{fileDrag.say}</div>
               ) : file ? (
                 <div className="flex items-center gap-3 text-left">
                   <FileThumb file={file} />
                   <span className="min-w-0 flex-1">
-                    <span className="block text-sm font-medium text-[var(--color-text)] truncate">{file.name}</span>
+                    <span className="block text-body font-medium text-[var(--color-text)] truncate">{file.name}</span>
                     <span className="block text-body text-[var(--color-text-muted)]">{file.size < 1024 * 1024 ? `${(file.size / 1024).toFixed(0)} KB` : `${(file.size / (1024 * 1024)).toFixed(1)} MB`} · tap to pick another</span>
                   </span>
                 </div>
               ) : (
-                <div className="text-sm text-[var(--color-text-muted)]">
+                <div className="text-body text-[var(--color-text-muted)]">
                   <Upload className="w-5 h-5 mx-auto mb-1 opacity-60" />
                   Drop the PDF here, or tap to pick it
                 </div>
@@ -229,7 +230,7 @@ export default function BackfillVersionModal({
                 value={revisionLabel}
                 onChange={(e) => setRevisionLabel(e.target.value)}
                 placeholder="e.g. 0, 1, A, R2"
-                className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-sm font-display tabular-nums"
+                className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-body font-display tabular-nums"
               />
             </Field>
             <Field label="Historical Release Date">
@@ -237,7 +238,7 @@ export default function BackfillVersionModal({
                 type="datetime-local"
                 value={releasedAtLocal}
                 onChange={(e) => setReleasedAtLocal(e.target.value)}
-                className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-sm"
+                className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-body"
                 title="When the file was originally released. Leave empty for now."
               />
             </Field>
@@ -249,7 +250,7 @@ export default function BackfillVersionModal({
               <select
                 value={issueType ?? ""}
                 onChange={(e) => setIssueType(e.target.value as DocumentVersion["issueType"])}
-                className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-sm bg-[var(--color-surface)]"
+                className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-body bg-[var(--color-surface)]"
               >
                 {ISSUE_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
@@ -258,7 +259,7 @@ export default function BackfillVersionModal({
               <select
                 value={changeType ?? ""}
                 onChange={(e) => setChangeType(e.target.value as DocumentVersion["changeType"])}
-                className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-sm bg-[var(--color-surface)]"
+                className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-body bg-[var(--color-surface)]"
               >
                 {CHANGE_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
@@ -272,24 +273,24 @@ export default function BackfillVersionModal({
               onChange={(e) => setChangeLog(e.target.value)}
               placeholder="What this revision contained / what changed since the prior one."
               rows={3}
-              className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-sm resize-y"
+              className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-body resize-y"
             />
           </Field>
 
           {/* Signoffs */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <Field label="Drawn By"><input value={drawnByName} onChange={(e) => setDrawnByName(e.target.value)} className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-sm" /></Field>
-            <Field label="Checked By"><input value={checkedByName} onChange={(e) => setCheckedByName(e.target.value)} className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-sm" /></Field>
-            <Field label="Approved By"><input value={approvedByName} onChange={(e) => setApprovedByName(e.target.value)} className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-sm" /></Field>
+            <Field label="Drawn By"><input value={drawnByName} onChange={(e) => setDrawnByName(e.target.value)} className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-body" /></Field>
+            <Field label="Checked By"><input value={checkedByName} onChange={(e) => setCheckedByName(e.target.value)} className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-body" /></Field>
+            <Field label="Approved By"><input value={approvedByName} onChange={(e) => setApprovedByName(e.target.value)} className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-body" /></Field>
           </div>
 
           {/* MOC + source filename */}
           <div className="grid grid-cols-2 gap-3">
             <Field label="MOC Reference">
-              <input value={mocReference} onChange={(e) => setMocReference(e.target.value)} className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-sm font-display tabular-nums" />
+              <input value={mocReference} onChange={(e) => setMocReference(e.target.value)} className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-body font-display tabular-nums" />
             </Field>
             <Field label="Source CAD Filename">
-              <input value={sourceFileName} onChange={(e) => setSourceFileName(e.target.value)} className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-sm font-mono" />
+              <input value={sourceFileName} onChange={(e) => setSourceFileName(e.target.value)} className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-body font-mono" />
             </Field>
           </div>
 
@@ -299,7 +300,7 @@ export default function BackfillVersionModal({
               <select
                 value={supersedesVersionId}
                 onChange={(e) => setSupersedesVersionId(e.target.value)}
-                className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-sm bg-[var(--color-surface)]"
+                className="w-full border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 text-body bg-[var(--color-surface)]"
               >
                 <option value="">- Free-floating (no chain link)</option>
                 {existingVersions.map((v) => (
@@ -312,18 +313,18 @@ export default function BackfillVersionModal({
           )}
 
           {error && (
-            <p role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 text-body text-[var(--state-overdue)]">{error}</p>
+            <FieldError>{error}</FieldError>
           )}
         </div>
 
         {/* Footer */}
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center justify-end">
           <div className="flex items-center gap-2">
-            <button type="button" onClick={onClose} disabled={busy} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
+            <button type="button" onClick={onClose} disabled={busy} className="text-body text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">Cancel</button>
             <button
               type="submit"
               disabled={busy || !file || !revisionLabel.trim() || !changeLog.trim()}
-              className="inline-flex items-center gap-1.5 text-sm font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 text-body font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40"
             >
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowUpFromLine className="w-3.5 h-3.5" />}
               Add revision

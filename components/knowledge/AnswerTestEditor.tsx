@@ -14,6 +14,7 @@ import { useDraft } from "@/hooks/useDraft";
 import { Plus, X, Loader2, FlaskConical } from "lucide-react";
 import { pressureClassOf } from "@/lib/pressureClass";
 import type { AnswerTestExpect } from "@/lib/knowledge";
+import { FieldError } from "@/components/ui/Field";
 
 export interface EditorCitation { documentName: string; page: number }
 
@@ -112,7 +113,7 @@ export default function AnswerTestEditor({ initial, citations = [], onSave, onCa
 
       <div className="space-y-1">
         <div className={label}>Question</div>
-        <textarea value={question} onChange={(e) => setQuestion(e.target.value)} rows={2} className={field} />
+        <textarea aria-label="Question" value={question} onChange={(e) => setQuestion(e.target.value)} rows={2} className={field} />
         {rating && <div className="text-body text-[var(--color-text-muted)]">Checked automatically: the answer must stay on <b>Class {rating}</b>.</div>}
       </div>
 
@@ -122,7 +123,7 @@ export default function AnswerTestEditor({ initial, citations = [], onSave, onCa
           <div className="flex flex-wrap gap-1">
             {offered.map((c) => (
               <button key={`${c.documentName}|${c.page}`} type="button" onClick={() => toggle(c)}
-                className={`rounded-md border px-2 py-0.5 text-body ${ticked(c) ? "border-[var(--state-released)] bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+                className={`pointer-coarse:min-h-11 rounded-md border px-2 py-0.5 text-body ${ticked(c) ? "border-[var(--state-released)] bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)]" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
                 {ticked(c) ? "✓ " : ""}{shortName(c.documentName)} p.{c.page}
               </button>
             ))}
@@ -132,9 +133,9 @@ export default function AnswerTestEditor({ initial, citations = [], onSave, onCa
           const i = pages.indexOf(p);
           return (
             <div key={i} className="flex gap-1.5">
-              <input value={p.document} placeholder="Document number or name" onChange={(e) => setPages((ps) => ps.map((x, j) => j === i ? { ...x, document: e.target.value } : x))} className={field} />
-              <input value={p.page} placeholder="Page" inputMode="numeric" onChange={(e) => setPages((ps) => ps.map((x, j) => j === i ? { ...x, page: e.target.value } : x))} className={`${field} w-20`} />
-              <button type="button" aria-label="Remove page" onClick={() => setPages((ps) => ps.filter((_, j) => j !== i))} className="px-1 text-[var(--color-text-muted)] hover:text-[var(--state-overdue)]"><X className="w-3.5 h-3.5" /></button>
+              <input aria-label="Document number or name" value={p.document} placeholder="Document number or name" onChange={(e) => setPages((ps) => ps.map((x, j) => j === i ? { ...x, document: e.target.value } : x))} className={field} />
+              <input aria-label="Page" value={p.page} placeholder="Page" inputMode="numeric" onChange={(e) => setPages((ps) => ps.map((x, j) => j === i ? { ...x, page: e.target.value } : x))} className={`${field} w-20`} />
+              <button type="button" aria-label="Remove page" onClick={() => setPages((ps) => ps.filter((_, j) => j !== i))} className="ui-hit px-1 text-[var(--color-text-muted)] hover:text-[var(--state-overdue)]"><X className="w-3.5 h-3.5" /></button>
             </div>
           );
         })}
@@ -146,13 +147,13 @@ export default function AnswerTestEditor({ initial, citations = [], onSave, onCa
       <div className="grid sm:grid-cols-2 gap-3">
         <div className="space-y-1">
           <div className={label}>Facts it must state (one per line)</div>
-          <textarea value={contain} onChange={(e) => setContain(e.target.value)} rows={3} className={field}
+          <textarea aria-label="Facts it must state" value={contain} onChange={(e) => setContain(e.target.value)} rows={3} className={field}
             placeholder={"the class code a right answer names\nfree water | water present"} />
           <div className="text-body text-[var(--color-text-faint)]">Use “ | ” for either wording.</div>
         </div>
         <div className="space-y-1">
           <div className={label}>It must never say (one per line)</div>
-          <textarea value={mustNot} onChange={(e) => setMustNot(e.target.value)} rows={3} className={field}
+          <textarea aria-label="It must never say" value={mustNot} onChange={(e) => setMustNot(e.target.value)} rows={3} className={field}
             placeholder={"Class 1500"} />
         </div>
       </div>
@@ -161,10 +162,10 @@ export default function AnswerTestEditor({ initial, citations = [], onSave, onCa
         <div className={label}>Terms it must not treat as the same without a passage that does</div>
         {terms.map((t, i) => (
           <div key={i} className="flex gap-1.5 items-center">
-            <input value={t.term} placeholder="sour gas" onChange={(e) => setTerms((ts) => ts.map((x, j) => j === i ? { ...x, term: e.target.value } : x))} className={field} />
+            <input aria-label="Term" value={t.term} placeholder="sour gas" onChange={(e) => setTerms((ts) => ts.map((x, j) => j === i ? { ...x, term: e.target.value } : x))} className={field} />
             <span className="text-[var(--color-text-muted)] shrink-0">≠</span>
-            <input value={t.not} placeholder="wet H2S, NACE service" onChange={(e) => setTerms((ts) => ts.map((x, j) => j === i ? { ...x, not: e.target.value } : x))} className={field} />
-            <button type="button" aria-label="Remove rule" onClick={() => setTerms((ts) => ts.filter((_, j) => j !== i))} className="px-1 text-[var(--color-text-muted)] hover:text-[var(--state-overdue)]"><X className="w-3.5 h-3.5" /></button>
+            <input aria-label="Not the same as" value={t.not} placeholder="wet H2S, NACE service" onChange={(e) => setTerms((ts) => ts.map((x, j) => j === i ? { ...x, not: e.target.value } : x))} className={field} />
+            <button type="button" aria-label="Remove rule" onClick={() => setTerms((ts) => ts.filter((_, j) => j !== i))} className="ui-hit px-1 text-[var(--color-text-muted)] hover:text-[var(--state-overdue)]"><X className="w-3.5 h-3.5" /></button>
           </div>
         ))}
         <button type="button" onClick={() => setTerms((ts) => [...ts, { term: "", not: "" }])} className="inline-flex items-center gap-1 text-body font-medium text-[var(--color-accent-text)] hover:underline">
@@ -175,7 +176,7 @@ export default function AnswerTestEditor({ initial, citations = [], onSave, onCa
 
       <div className="space-y-1">
         <div className={label}>Note (optional)</div>
-        <input value={notes} onChange={(e) => setNotes(e.target.value)} className={field} placeholder="Why this answer is right, for whoever reads a failure" />
+        <input aria-label="Note (optional)" value={notes} onChange={(e) => setNotes(e.target.value)} className={field} placeholder="Why this answer is right, for whoever reads a failure" />
       </div>
 
       <label className="flex items-center gap-2 text-body text-[var(--color-text)]">
@@ -183,7 +184,7 @@ export default function AnswerTestEditor({ initial, citations = [], onSave, onCa
         Critical - a version that fails this is flagged as a regression
       </label>
 
-      {error && <div className="text-body font-medium text-[var(--state-overdue)]">{error}</div>}
+      {error && <FieldError>{error}</FieldError>}
       <div className="flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3.5 text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Cancel</button>
         <button type="button" onClick={() => void save()} disabled={saving}

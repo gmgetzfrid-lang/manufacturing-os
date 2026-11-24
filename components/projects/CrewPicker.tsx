@@ -24,7 +24,7 @@ export default function CrewPicker({ value, onChange, crews, className = "", lab
       <span className={`inline-flex items-center gap-1 ${className}`}>
         <input autoFocus value={value} onChange={(e) => onChange(e.target.value)} placeholder="New crew name" aria-label={label} disabled={disabled}
           className="h-8 pointer-coarse:h-11 min-w-0 flex-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption text-[var(--color-text)]" />
-        <button type="button" onClick={() => setTyping(false)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">List</button>
+        <button type="button" onClick={() => setTyping(false)} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">List</button>
       </span>
     );
   }

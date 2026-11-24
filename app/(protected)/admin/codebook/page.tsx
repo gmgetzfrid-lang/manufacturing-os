@@ -254,7 +254,7 @@ function EntryTable({ kind, title, entries, canWrite, codeHint, labelHint, withP
     const ok = await appConfirm({
       title: `Remove ${e.code} (${e.label})?`,
       message: "Features stop recognizing this code. Nothing else is deleted.",
-      confirmLabel: "Remove",
+      confirmLabel: "Remove code",
       tone: "danger",
     });
     if (!ok) return;
@@ -327,7 +327,7 @@ function EntryRow({ entry, withPrefixes, canWrite, orgId, uid, onChanged, onErro
       <td className={tbl.td}><span className="ui-id text-reading">{entry.code}</span></td>
       <td className={tbl.td}>
         {editing
-          ? <input value={label} onChange={(e) => setLabel(e.target.value)} aria-label="Label" className={`${fieldBox} h-9 text-reading w-full`} autoFocus />
+          ? <input value={label} onChange={(e) => setLabel(e.target.value)} aria-label="Label" className={`${fieldBox} h-9 pointer-coarse:h-11 text-reading w-full`} autoFocus />
           : canWrite
             // Tap the meaning to change it, as before.
             ? <button type="button" onClick={() => setEditing(true)} title="Change what this code means" className="text-left text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{entry.label}</button>
@@ -336,7 +336,7 @@ function EntryRow({ entry, withPrefixes, canWrite, orgId, uid, onChanged, onErro
       {withPrefixes && (
         <td className={`${tbl.td} max-sm:hidden`}>
           {editing
-            ? <input value={prefixes} onChange={(e) => setPrefixes(e.target.value)} aria-label="Tag prefixes" className={`${fieldBox} h-9 text-reading w-full`} />
+            ? <input value={prefixes} onChange={(e) => setPrefixes(e.target.value)} aria-label="Tag prefixes" className={`${fieldBox} h-9 pointer-coarse:h-11 text-reading w-full`} />
             : (
               <span className="flex flex-wrap gap-1">
                 <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{(entry.meta.tagPrefixes ?? []).slice(0, 4).map((p) => `${p}-`).join(", ")}</span>
@@ -421,28 +421,28 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
           {segments.map((seg, i) => (
             <div key={i} className="flex items-center gap-2 flex-wrap">
               <span className="text-body font-medium text-[var(--color-text-faint)] w-4">{i + 1}.</span>
-              <select value={seg.kind} disabled={!canWrite}
+              <select value={seg.kind} disabled={!canWrite} aria-label={`Segment ${i + 1}`}
                 onChange={(e) => setSegments(segments.map((s, j) => j === i ? { kind: e.target.value as DrawingSegment["kind"], digits: 2, letters: 1 } : s))}
-                className={`${fieldBox} h-9 text-body`}>
+                className={`${fieldBox} h-9 pointer-coarse:h-11 text-body pointer-coarse:text-reading`}>
                 {SEGMENT_KINDS.map((k) => <option key={k.kind} value={k.kind}>{k.label}</option>)}
               </select>
               {(seg.kind === "unit" || seg.kind === "drawing_type") && (
                 <label className="text-body text-[var(--color-text-muted)] inline-flex items-center gap-1">
-                  digits <Input type="number" value={seg.digits ?? 2} disabled={!canWrite} min={1} max={4}
+                  digits <Input type="number" inputMode="numeric" value={seg.digits ?? 2} disabled={!canWrite} min={1} max={4}
                     onChange={(e) => setSegments(segments.map((s, j) => j === i ? { ...s, digits: Math.max(1, Math.min(4, Number(e.target.value) || 2)) } : s))}
                     className="w-14 h-8" />
                 </label>
               )}
               {seg.kind === "size" && (
                 <label className="text-body text-[var(--color-text-muted)] inline-flex items-center gap-1">
-                  letters <Input type="number" value={seg.letters ?? 1} disabled={!canWrite} min={1} max={3}
+                  letters <Input type="number" inputMode="numeric" value={seg.letters ?? 1} disabled={!canWrite} min={1} max={3}
                     onChange={(e) => setSegments(segments.map((s, j) => j === i ? { ...s, letters: Math.max(1, Math.min(3, Number(e.target.value) || 1)) } : s))}
                     className="w-14 h-8" />
                 </label>
               )}
               {canWrite && (
                 <button onClick={() => setSegments(segments.filter((_, j) => j !== i))}
-                  className="p-1 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] rounded" title="Remove segment" aria-label="Remove segment">
+                  className="ui-hit p-1 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] rounded" title="Remove segment" aria-label="Remove segment">
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               )}
@@ -486,7 +486,7 @@ function NumberingTab({ book, canWrite, orgId, uid, onChanged, onError }: {
           <input type="checkbox" checked={mirrors} disabled={!canWrite} onChange={(e) => setMirrors(e.target.checked)} className="w-4 h-4 accent-[var(--color-main)]" /> it&apos;s the tag&apos;s number
         </label>
         <label className={`text-body text-[var(--color-text-muted)] inline-flex items-center gap-1.5 whitespace-nowrap ${mirrors ? "" : "opacity-40"}`}>
-          pad to <Input type="number" value={padTo} disabled={!canWrite || !mirrors} min={0} max={6}
+          pad to <Input type="number" inputMode="numeric" value={padTo} disabled={!canWrite || !mirrors} min={0} max={6}
             onChange={(e) => setPadTo(Math.max(0, Math.min(6, Number(e.target.value) || 0)))} className="w-14 h-8" /> digits
         </label>
         {canWrite && (
@@ -565,12 +565,12 @@ function LegendTab({ book, canWrite, orgId, uid, onChanged, onError }: {
       </div>
       {canWrite && book.legendDocIds.length < 3 && (
         <div>
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Find an indexed document" placeholder="e.g. P&ID legend" autoComplete="off" enterKeyHint="search" />
+          <Input type="search" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Find an indexed document" placeholder="e.g. P&ID legend" autoComplete="off" enterKeyHint="search" />
           {results.length > 0 && (
             <div className="mt-1 rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
               {results.map((r) => (
                 <button key={r.id} onClick={() => { setQuery(""); void setLegend([...book.legendDocIds, r.id]); }}
-                  className="w-full text-left px-3 py-1.5 text-body hover:bg-[var(--color-surface-2)] flex items-center gap-2">
+                  className="w-full text-left px-3 py-1.5 pointer-coarse:min-h-11 text-body hover:bg-[var(--color-surface-2)] flex items-center gap-2">
                   <Plus className="w-3 h-3 text-[var(--color-text-muted)]" /> {r.name}
                 </button>
               ))}
@@ -828,7 +828,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
                       <span className="block font-medium text-[var(--color-text)] truncate">{pickedFile.name}</span>
                       <span className="block text-body text-[var(--color-text-muted)]">{formatBytes(pickedFile.file.size)}</span>
                     </span>
-                    <button onClick={() => setPickedFile(null)} disabled={running} aria-label={`Remove ${pickedFile.name}`} className="ml-auto p-0.5 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)]"><X className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => setPickedFile(null)} disabled={running} aria-label={`Remove ${pickedFile.name}`} className="ui-hit ml-auto p-0.5 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)]"><X className="w-3.5 h-3.5" /></button>
                   </div>
                 ) : (
                   <button
@@ -855,16 +855,16 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
                 {pickedDoc ? (
                   <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-body font-medium text-[var(--color-text)]">
                     <FileText className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> {pickedDoc.name}
-                    <button onClick={() => setPickedDoc(null)} disabled={running} aria-label={`Remove ${pickedDoc.name}`} className="ml-auto p-0.5 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)]"><X className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => setPickedDoc(null)} disabled={running} aria-label={`Remove ${pickedDoc.name}`} className="ui-hit ml-auto p-0.5 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)]"><X className="w-3.5 h-3.5" /></button>
                   </div>
                 ) : (
                   <>
-                    <Input value={docQuery} onChange={(e) => setDocQuery(e.target.value)} aria-label="Find an indexed document" placeholder="e.g. numbering standard" autoComplete="off" enterKeyHint="search" />
+                    <Input type="search" value={docQuery} onChange={(e) => setDocQuery(e.target.value)} aria-label="Find an indexed document" placeholder="e.g. numbering standard" autoComplete="off" enterKeyHint="search" />
                     {docResults.length > 0 && (
                       <div className="mt-1 rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
                         {docResults.map((r) => (
                           <button key={r.id} onClick={() => { setPickedDoc(r); setDocQuery(""); }}
-                            className="w-full text-left px-3 py-1.5 text-body hover:bg-[var(--color-surface-2)]">{r.name}</button>
+                            className="w-full text-left px-3 py-1.5 pointer-coarse:min-h-11 text-body hover:bg-[var(--color-surface-2)]">{r.name}</button>
                         ))}
                       </div>
                     )}
@@ -934,7 +934,7 @@ function ImportModal({ orgId, uid, book, onClose, onApplied }: {
             )
           ) : (
             <Button onClick={() => void apply()} loading={applying} disabled={accepted.size === 0}>
-              <Check aria-hidden className="w-4 h-4" /> Apply {accepted.size} row{accepted.size === 1 ? "" : "s"}
+              {!applying && <Check aria-hidden className="w-4 h-4" />} {applying ? "Applying" : <>Apply {accepted.size} row{accepted.size === 1 ? "" : "s"}</>}
             </Button>
           )}
         </div>

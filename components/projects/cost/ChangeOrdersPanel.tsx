@@ -14,7 +14,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  GitPullRequestArrow, Plus, Loader2, Check, X as XIcon, Pencil, Ban,
+  GitPullRequestArrow, Plus, Loader2, Check, X as XIcon, Pencil, Ban, CircleAlert
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { fmtMoney, type CostAccount, type CostParty, type Actor } from "@/lib/costs";
@@ -65,7 +65,9 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
       // on a cancelled approval.
       const postsTo = accountName.get(co.costAccountId ?? accountId ?? "") ?? "the budget line";
       if (!(await appConfirm({
-        message: `Approve ${co.coNumber} for ${fmtMoney(co.amount)}? This posts the money to "${postsTo}" immediately.`,
+        title: `Approve ${co.coNumber} for ${fmtMoney(co.amount)}?`,
+        message: `This posts the money to "${postsTo}" right away.`,
+        confirmLabel: `Approve ${co.coNumber}`,
       }))) return;
       if (!co.costAccountId && accountId) {
         const { error } = await supabase.from("change_orders").update({ cost_account_id: accountId })
@@ -123,7 +125,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
         <GitPullRequestArrow className="w-4 h-4 text-[var(--color-text-muted)]" />
         <span className="text-body font-medium text-[var(--color-text-muted)]">Change orders</span>
         {open.length > 0 && (
-          <span className="text-caption font-medium px-1.5 py-0.5 rounded bg-[var(--state-held)] text-[var(--state-held-text)] border border-[var(--state-held)]">
+          <span className="text-caption font-medium px-1.5 py-0.5 rounded bg-transparent text-[var(--state-held-text)] border border-[var(--state-held)]">
             {open.length} awaiting decision
           </span>
         )}
@@ -148,19 +150,19 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
       {notice && (
         <div role="status" className="mx-4 my-2 border-l-2 border-[var(--state-held)] pl-3 flex items-center gap-2 text-caption font-medium text-[var(--state-held-text)]">
           <span className="min-w-0 flex-1">{notice}</span>
-          <button onClick={() => setNotice(null)} className="ml-auto p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]" aria-label="Dismiss"><XIcon className="w-3.5 h-3.5" /></button>
+          <button onClick={() => setNotice(null)} className="ui-hit ml-auto p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]" aria-label="Dismiss"><XIcon className="w-3.5 h-3.5" /></button>
         </div>
       )}
 
       {cos === null ? (
         <SkeletonRows rows={3} cols={2} what="change orders" sheet={false} />
       ) : readErr ? (
-        <div role="alert" className="mx-4 my-3 border-l-2 border-[var(--state-overdue)] pl-3 text-xs text-[var(--state-overdue-text)] flex flex-wrap items-center gap-x-3">
+        <div role="alert" className="mx-4 my-3 border-l-2 border-[var(--state-overdue)] pl-3 text-caption text-[var(--state-overdue-text)] flex flex-wrap items-center gap-x-3">
           <span>Couldn&apos;t load change orders: {readErr}</span>
           <button onClick={() => void refresh()} className="text-[var(--color-accent-text)] hover:underline">Try again</button>
         </div>
       ) : cos.length === 0 ? (
-        <div className="px-4 py-6 text-center text-xs text-[var(--color-text-muted)]">
+        <div className="px-4 py-6 text-center text-caption text-[var(--color-text-muted)]">
           No change orders. When scope grows or shrinks, propose it here with a reason.
         </div>
       ) : (
@@ -207,7 +209,7 @@ function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide,
   const [accountPick, setAccountPick] = useState(co.costAccountId ?? "");
   const isOpen = co.status === "proposed";
   return (
-    <li className={`px-4 py-2.5 text-xs ${!isOpen && co.status !== "approved" ? "opacity-60" : ""}`}>
+    <li className={`px-4 py-2.5 text-caption ${!isOpen && co.status !== "approved" ? "opacity-60" : ""}`}>
       <div className="flex items-center gap-2 flex-wrap">
         <span className="font-display tabular-nums text-caption font-semibold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{co.coNumber}</span>
         <span className="font-medium text-[var(--color-text)]">{co.title}</span>
@@ -227,7 +229,7 @@ function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide,
         {isOpen && canManage && (
           <span className="ml-auto inline-flex items-center gap-1.5">
             {!co.costAccountId && (
-              <select value={accountPick} onChange={(e) => setAccountPick(e.target.value)}
+              <select value={accountPick} onChange={(e) => setAccountPick(e.target.value)} aria-label="Budget line it posts to"
                 className="h-6 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-caption max-w-40"
                 title="Approval posts money. Pick where it lands.">
                 <option value="">Posts to budget line…</option>
@@ -236,26 +238,26 @@ function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide,
             )}
             <button onClick={() => void decide(co, "approved", accountPick || undefined)} disabled={busy}
               className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
-              {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Approve
+              {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} {busy ? "Approving" : "Approve"}
             </button>
             <button onClick={() => void decide(co, "rejected")} disabled={busy}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-[var(--state-overdue)] text-[var(--state-overdue-text)] text-caption font-medium hover:bg-[var(--state-overdue)] disabled:opacity-50 transition-colors">
+              className="inline-flex items-center gap-1 px-2 py-0.5 pointer-coarse:min-h-11 rounded-lg border border-[var(--state-overdue)] text-[var(--state-overdue-text)] text-caption font-medium hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-50 transition-colors">
               <XIcon className="w-3 h-3" /> Reject
             </button>
             <button onClick={onEdit} disabled={busy} title="Change the title, amount, reason or where it posts"
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text-muted)] text-caption font-medium hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
+              className="inline-flex items-center gap-1 px-2 py-0.5 pointer-coarse:min-h-11 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text-muted)] text-caption font-medium hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
               <Pencil className="w-3 h-3" /> Edit
             </button>
             <button onClick={() => void decide(co, "void")} disabled={busy} title="Take the proposal back. It stays on the record as void."
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[var(--color-text-faint)] text-caption font-medium hover:text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)] disabled:opacity-50 transition-colors">
+              className="inline-flex items-center gap-1 px-2 py-0.5 pointer-coarse:min-h-11 rounded-lg text-[var(--color-text-faint)] text-caption font-medium hover:text-[var(--state-overdue-text)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-50 transition-colors">
               <Ban className="w-3 h-3" /> Withdraw
             </button>
           </span>
         )}
         {co.status === "approved" && canManage && (
           <button onClick={onVoidApproved} disabled={busy} title="Approved in error: its money comes off the budget line and the CO shows as void"
-            className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[var(--color-text-faint)] text-caption font-medium hover:text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)] disabled:opacity-50 transition-colors">
-            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Ban className="w-3 h-3" />} Void
+            className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 pointer-coarse:min-h-11 rounded-lg text-[var(--color-text-faint)] text-caption font-medium hover:text-[var(--state-overdue-text)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-50 transition-colors">
+            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Ban className="w-3 h-3" />} {busy ? "Voiding" : "Void"}
           </button>
         )}
       </div>
@@ -330,35 +332,35 @@ function ProposeForm({ orgId, projectId, actor, accounts, parties, onDone, onCan
   return (
     <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] space-y-2">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What changed? (title)" autoFocus
-          className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs col-span-2" />
-        <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="Amount (− = credit)" inputMode="decimal"
-          className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-display tabular-nums" />
-        <select value={reason} onChange={(e) => setReason(e.target.value as CoReason)}
-          className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
+        <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="What changed" placeholder="What changed? (title)" autoFocus
+          className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption col-span-2" />
+        <input value={amount} onChange={(e) => setAmount(e.target.value)} aria-label="Amount (minus for a credit)" placeholder="Amount (− = credit)" inputMode="decimal"
+          className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption font-display tabular-nums" />
+        <select value={reason} onChange={(e) => setReason(e.target.value as CoReason)} aria-label="Reason"
+          className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption">
           {(Object.keys(CO_REASON_LABEL) as CoReason[]).map((r) => (
             <option key={r} value={r}>{CO_REASON_LABEL[r]}</option>
           ))}
         </select>
-        <select value={accountId} onChange={(e) => setAccountId(e.target.value)}
-          className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs col-span-2">
+        <select value={accountId} onChange={(e) => setAccountId(e.target.value)} aria-label="Budget line it posts to"
+          className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption col-span-2">
           <option value="">Budget line it posts to (required to approve)…</option>
           {accounts.map((a) => <option key={a.id} value={a.id}>{a.code ? `${a.code} ` : ""}{a.name}</option>)}
         </select>
-        <select value={partyId} onChange={(e) => setPartyId(e.target.value)}
-          className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
+        <select value={partyId} onChange={(e) => setPartyId(e.target.value)} aria-label="Contractor or vendor"
+          className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption">
           <option value="">Contractor / vendor…</option>
           {pickParties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
-        <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Detail (goes on the record)"
-          className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+        <input value={desc} onChange={(e) => setDesc(e.target.value)} aria-label="Detail" placeholder="Detail (goes on the record)"
+          className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption" />
       </div>
       <div className="flex items-center gap-2">
-        {error && <span role="alert" className="inline-flex items-center gap-1 text-caption font-medium text-[var(--state-overdue-text)]">{error}</span>}
+        {error && <span role="alert" className="text-caption font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{error}</span></span>}
         <span className="ml-auto flex items-center gap-2">
-          <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+          <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
           <button onClick={() => void submit()} disabled={saving}
-            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
             {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} {editing ? `Save ${editing.coNumber}` : "Propose"}
           </button>
         </span>

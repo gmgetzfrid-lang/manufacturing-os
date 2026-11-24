@@ -53,7 +53,7 @@ export default function UserAvatar({
   const photoUrl = avatarPath ? cachedAvatarUrl(avatarPath) : null;
 
   const radius = rounded === "full" ? "rounded-full" : rounded === "xl" ? "rounded-xl" : "rounded-lg";
-  const fontSize = Math.max(9, Math.round(size * 0.38));
+  const fontSize = Math.max(12, Math.round(size * 0.38)); // never under 12 px (rule TY3)
 
   if (photoUrl) {
     return (

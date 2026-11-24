@@ -38,7 +38,7 @@ export default function DensityToggle() {
       onClick={toggle}
       title={density === "comfortable" ? "Switch to compact density" : "Switch to comfortable density"}
       aria-label="Toggle density"
-      className="w-9 h-9 inline-flex items-center justify-center rounded-full text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
+      className="w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 inline-flex items-center justify-center rounded-full text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors"
     >
       {density === "comfortable" ? <Rows3 className="w-4 h-4" /> : <Rows4 className="w-4 h-4" />}
     </button>

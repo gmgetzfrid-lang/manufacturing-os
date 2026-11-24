@@ -177,7 +177,7 @@ export default function RegisterPage() {
           </select>
           <div className="relative flex-1 min-w-[12rem] max-w-md">
             <Search className={bandInputIcon} />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search number, title, owner" aria-label="Search the register" className={`${bandInput} max-sm:text-base`} />
+            <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search number, title, owner" aria-label="Search the register" className={`${bandInput} max-sm:text-reading`} />
           </div>
           <span className="text-body text-[var(--color-text-muted)] ml-auto tabular-nums">{filtered.length.toLocaleString()} of {rows.length.toLocaleString()}{capped ? " (first rows only)" : ""}</span>
         </div>

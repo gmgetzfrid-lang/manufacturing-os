@@ -52,7 +52,7 @@ export function RemoveStepDialog({ m, under, userId, userName, userEmail, onDele
             <div className="text-body font-medium text-[var(--color-text-muted)]">Take it off the schedule</div>
             <div className="mt-0.5 text-reading font-medium text-[var(--color-text)] break-words">{what}</div>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close" className="-mr-1.5 w-8 h-8 shrink-0 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+          <button type="button" onClick={onClose} aria-label="Close" className="ui-hit -mr-1.5 w-8 h-8 shrink-0 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
         {cancelling && m.id ? (
           <CancelJobForm id={m.id} name={m.name} steps={Math.max(1, under)} userId={userId} userName={userName} userEmail={userEmail}

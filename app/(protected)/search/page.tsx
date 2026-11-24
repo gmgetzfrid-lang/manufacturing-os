@@ -117,7 +117,7 @@ export default function SearchPage() {
           />
           {query && (
             <button type="button" onClick={() => { setQuery(""); router.replace("/search"); }} title="Clear the search" aria-label="Clear the search"
-              className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 pointer-coarse:w-10 pointer-coarse:h-10 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+              className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
               <X className="w-4 h-4" />
             </button>
           )}

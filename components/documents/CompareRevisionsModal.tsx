@@ -199,13 +199,13 @@ export default function CompareRevisionsModal({
           ) : error ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-rose-300">
               <AlertTriangle className="w-10 h-10 mb-2 opacity-60" />
-              <span className="text-sm font-medium">The revisions didn&apos;t load.</span>
+              <span className="text-body font-medium">The revisions didn&apos;t load.</span>
               <span className="text-body mt-1 max-w-md text-center text-[var(--color-text-muted)]">{error}</span>
             </div>
           ) : versions.length < 2 ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-[var(--color-text-muted)] px-8 text-center">
               <GitCompare className="w-10 h-10 mb-3 opacity-40" />
-              <span className="text-sm font-medium text-[var(--color-text)]">Need two revisions on the server to compare</span>
+              <span className="text-body font-medium text-[var(--color-text)]">Need two revisions on the server to compare</span>
               <span className="text-body mt-1 max-w-md">
                 {versions.length === 1 ? "Only one revision is available. " : "No revisions with files are available. "}
                 {offloadedCount > 0 && `${offloadedCount} older revision${offloadedCount === 1 ? " was" : "s were"} archived off the server for space: restore from the offline archive to compare against them.`}

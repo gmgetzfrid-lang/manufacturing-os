@@ -75,7 +75,7 @@ export default function QuickNoteComposer({ orgId, userId, userEmail, userName, 
   };
 
   const remove = async (noteId: string) => {
-    if (!(await appConfirm({ message: "Delete this note?", tone: "danger" }))) return;
+    if (!(await appConfirm({ title: "Delete this note?", tone: "danger", confirmLabel: "Delete note" }))) return;
     try {
       await deleteNote(noteId, userId, orgId);
       await refresh();
@@ -94,21 +94,21 @@ export default function QuickNoteComposer({ orgId, userId, userEmail, userName, 
       {loading ? (
         <div className="py-2 text-caption text-[var(--color-text-faint)] inline-flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" /> Loading…</div>
       ) : loadError ? (
-        <div role="alert" className="py-2 text-caption font-medium text-red-700 dark:text-red-400">Couldn&apos;t load the notes: {loadError}</div>
+        <div role="alert" className="py-2 text-caption font-medium text-[var(--state-overdue-text)]">Couldn&apos;t load the notes: {loadError}</div>
       ) : notes.length === 0 ? (
-        <div className="py-2 text-caption italic text-[var(--color-text-faint)]">No notes yet.</div>
+        <div className="py-2 text-caption text-[var(--color-text-muted)]">No notes yet. A note you add below shows here.</div>
       ) : (
         <ul className="space-y-1.5 mb-2">
           {notes.map((n) => (
-            <li key={n.id} className="group flex items-start gap-2 text-xs">
+            <li key={n.id} className="group flex items-start gap-2 text-caption">
               <div className="flex-1 min-w-0 bg-[var(--color-surface)] rounded-md border border-[var(--color-border)] px-2 py-1.5">
-                <CommentBody text={n.body} currentUserId={userId} className="text-[var(--color-text)] text-xs" />
+                <CommentBody text={n.body} currentUserId={userId} className="text-[var(--color-text)] text-caption" />
                 <div className="text-caption text-[var(--color-text-faint)] mt-1">{n.createdByName ?? "-"} · {formatAgo(n.createdAt)}</div>
               </div>
               {String(n.createdBy) === String(userId) && (
                 <button
                   onClick={() => void remove(n.id)}
-                  className="opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity p-1 text-[var(--color-text-faint)] hover:text-red-600 hover:bg-red-50 rounded"
+                  className="ui-hit opacity-60 sm:opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 transition-opacity p-1 text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)] rounded"
                   title="Delete"
                   aria-label="Delete note"
                 >
@@ -132,13 +132,14 @@ export default function QuickNoteComposer({ orgId, userId, userEmail, userName, 
             value={body}
             onChange={(next) => setBody(next)}
             placeholder="Add a note. Type @ to name someone."
+            aria-label="New note"
             rows={2}
           />
         </div>
         <button
           onClick={submit}
           disabled={!body.trim() || busy}
-          className="p-2 rounded bg-[var(--color-ink)] hover:opacity-90 text-white transition-opacity disabled:opacity-50"
+          className="ui-hit p-2 rounded bg-[var(--color-ink)] hover:opacity-90 text-[var(--color-ink-fg)] transition-opacity disabled:opacity-50"
           title="Post note"
           aria-label="Post note"
         >

@@ -469,7 +469,7 @@ export default function ReportsView(p: Props) {
       </span>
       <input type="date" value={shift.dayKey} max={today} onChange={(e) => { if (e.target.value) setShiftPick({ dayKey: e.target.value, kind: shift.kind }); }} aria-label="Date"
         className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption text-[var(--color-text)]" />
-      {shiftPick && <button type="button" onClick={() => setShiftPick(null)} className="h-8 px-2.5 rounded-lg border border-[var(--color-border)] text-caption font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Current shift</button>}
+      {shiftPick && <button type="button" onClick={() => setShiftPick(null)} className="h-8 pointer-coarse:h-11 px-2.5 rounded-lg border border-[var(--color-border)] text-caption font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Current shift</button>}
     </>)
   );
   // What the hourly log and the time log cover: the whole project, some days, one shift.
@@ -505,8 +505,8 @@ export default function ReportsView(p: Props) {
       Plain pages, the app default.{p.canEdit && <> <button type="button" onClick={() => requestSetup("print")} className="font-medium text-[var(--color-accent-text)] hover:underline">Add the company letterhead</button></>}
     </span>)
   ) : null;
-  const primary = "inline-flex items-center gap-1.5 h-10 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50";
-  const secondary = "inline-flex items-center gap-1.5 h-10 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
+  const primary = "inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50";
+  const secondary = "inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50";
 
   const options = (
     <div className="space-y-2">
@@ -537,7 +537,7 @@ export default function ReportsView(p: Props) {
             </select>
             {woShow !== "one" && woQuery.trim() && (
               <span className="inline-flex items-center gap-1 h-8 px-2 rounded-full bg-[var(--color-surface-2)] text-caption font-medium">“{woQuery.trim()}”
-                <button type="button" onClick={() => { setWoQuery(""); setWoAlso([]); }} aria-label="Clear the search" className="text-[var(--color-text-muted)]"><X className="w-3.5 h-3.5" /></button>
+                <button type="button" onClick={() => { setWoQuery(""); setWoAlso([]); }} aria-label="Clear the search" className="ui-hit text-[var(--color-text-muted)]"><X className="w-3.5 h-3.5" /></button>
               </span>
             )}
           </>)}
@@ -570,7 +570,7 @@ export default function ReportsView(p: Props) {
             </span>
             <input type="date" value={sheetShift.dayKey} onChange={(e) => { if (e.target.value) setSheetPick({ dayKey: e.target.value, kind: sheetShift.kind }); }} aria-label="Date"
               className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption text-[var(--color-text)]" />
-            {sheetPick && <button type="button" onClick={() => setSheetPick(null)} className="h-8 px-2.5 rounded-lg border border-[var(--color-border)] text-caption font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Coming shift</button>}
+            {sheetPick && <button type="button" onClick={() => setSheetPick(null)} className="h-8 pointer-coarse:h-11 px-2.5 rounded-lg border border-[var(--color-border)] text-caption font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Coming shift</button>}
           </>)}
           <div className="text-caption text-[var(--color-text-muted)] pl-0 sm:pl-[108px]">
             {sheet ? `${sheet.count} job${sheet.count === 1 ? "" : "s"}: carried over, going, planned, pulled ahead at the turnover, and ready to start early. Print it at the shift's start meeting.` : null}
@@ -695,11 +695,11 @@ export default function ReportsView(p: Props) {
         </FullView>
       )}
       {onScreen && meeting && (
-        <div role="dialog" aria-modal="true" aria-label={meta.name} className="fixed inset-0 z-[300] bg-[var(--color-bg,#f8fafc)] overflow-y-auto">
+        <div role="dialog" aria-modal="true" aria-label={meta.name} className="fixed inset-0 z-[300] bg-[var(--color-canvas)] overflow-y-auto">
           <EscapeCloses onClose={() => setOnScreen(null)} />
           <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2">
             <b className="text-body">{meta.name}</b>
-            <button type="button" onClick={() => setOnScreen(null)} aria-label="Close" className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium"><X className="w-4 h-4" /> Close</button>
+            <button type="button" onClick={() => setOnScreen(null)} aria-label="Close" className="inline-flex items-center gap-1 h-8 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium"><X className="w-4 h-4" /> Close</button>
           </div>
           <div className="max-w-[1400px] mx-auto p-3 sm:p-5">
             <ShiftReportView {...base} meetingFixed={meeting} presentOnOpen={onScreen === "present"} />
@@ -791,11 +791,11 @@ function DocView({ preview, busy, err, onFull, fill }: { preview: Preview; busy:
   const what = !preview ? "" : preview.kind === "pdf" ? `${preview.total} page${preview.total === 1 ? "" : "s"}${preview.total > preview.pages.length ? ` · ${busy ? "drawing" : "showing"} ${preview.pages.length}` : ""}`
     : preview.kind === "rows" ? `${preview.total} row${preview.total === 1 ? "" : "s"}${preview.total > preview.rows.length ? ` · first ${preview.rows.length} shown` : ""}`
       : preview.pages ? `${preview.pages} page${preview.pages === 1 ? "" : "s"}` : "Whole report";
-  const btn = "inline-flex items-center justify-center whitespace-nowrap shrink-0 h-8 min-w-8 px-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40";
+  const btn = "inline-flex items-center justify-center whitespace-nowrap shrink-0 h-8 min-w-8 pointer-coarse:h-11 pointer-coarse:min-w-11 px-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40";
   return (
-    <div className={`min-w-0 rounded-xl bg-slate-200/70 dark:bg-slate-800/60 flex flex-col ${fill ? "h-full" : "lg:sticky lg:top-4 lg:h-[calc(100vh-140px)] lg:min-h-[560px]"}`}>
-      <div className="flex items-center gap-1.5 px-3 py-2 border-b border-slate-300/70 dark:border-slate-700">
-        <span className="min-w-0 text-caption font-medium text-slate-700 dark:text-slate-200 mr-auto truncate">{busy && !preview ? "Getting it ready…" : what}{busy && preview ? " · updating" : ""}</span>
+    <div className={`min-w-0 rounded-xl bg-[var(--color-surface-2)] flex flex-col ${fill ? "h-full" : "lg:sticky lg:top-4 lg:h-[calc(100vh-140px)] lg:min-h-[560px]"}`}>
+      <div className="flex items-center gap-1.5 px-3 py-2 border-b border-[var(--color-border-strong)]">
+        <span className="min-w-0 text-caption font-medium text-[var(--color-text)] mr-auto truncate">{busy && !preview ? "Getting it ready…" : what}{busy && preview ? " · updating" : ""}</span>
         {preview?.kind !== "rows" && (
           <>
             <button type="button" onClick={() => step(-1)} disabled={z === ZOOMS[0]} aria-label="Zoom out" className={btn}><Minus className="w-3.5 h-3.5" /></button>
@@ -867,15 +867,15 @@ function FullView({ name, onClose, actions, options, children }: { name: string;
     return () => { window.removeEventListener("keydown", k); document.body.style.overflow = prev; };
   }, [onClose]);
   return (
-    <div role="dialog" aria-modal="true" aria-label={name} className="fixed inset-0 z-[300] flex flex-col bg-[var(--color-bg,#f8fafc)]">
+    <div role="dialog" aria-modal="true" aria-label={name} className="fixed inset-0 z-[300] flex flex-col bg-[var(--color-canvas)]">
       <div className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 sm:px-4 py-2">
         <b className="text-body text-[var(--color-text)] mr-auto truncate">{name}</b>
         {options && (
-          <button type="button" onClick={() => setOpts((v) => !v)} aria-pressed={opts} className="lg:hidden inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text)]">
+          <button type="button" onClick={() => setOpts((v) => !v)} aria-pressed={opts} className="lg:hidden inline-flex items-center gap-1 h-8 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text)]">
             <SlidersHorizontal className="w-4 h-4" /> Options
           </button>
         )}
-        <button type="button" onClick={onClose} aria-label="Close" className="inline-flex items-center gap-1 h-8 px-3 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text)]"><X className="w-4 h-4" /> Close</button>
+        <button type="button" onClick={onClose} aria-label="Close" className="inline-flex items-center gap-1 h-8 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text)]"><X className="w-4 h-4" /> Close</button>
       </div>
       <div className="flex-1 min-h-0 flex flex-col lg:flex-row">
         <aside className={`${opts ? "block" : "hidden"} lg:block lg:w-[360px] shrink-0 max-h-[50vh] lg:max-h-none overflow-y-auto border-b lg:border-b-0 lg:border-r border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-4`}>

@@ -186,7 +186,7 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
   return (
     <div className="space-y-4">
       {notice && (
-        <p className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] px-5 py-3 text-body text-amber-800 dark:text-amber-300 leading-relaxed">{notice.message}</p>
+        <p className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] px-5 py-3 text-body text-[var(--state-held-text)] leading-relaxed">{notice.message}</p>
       )}
 
       {!zip ? (
@@ -208,10 +208,10 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
                   </span>
                 </div>
               )}
-              <div className="inline-flex items-center gap-2 text-sm text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Reading archive…</div>
+              <div className="inline-flex items-center gap-2 text-body text-[var(--color-text-muted)]"><Loader2 className="w-4 h-4 animate-spin" /> Reading archive…</div>
             </div>
           ) : drag.over ? (
-            <div className="text-sm font-medium text-[var(--color-text)]">{drag.say}</div>
+            <div className="text-body font-medium text-[var(--color-text)]">{drag.say}</div>
           ) : (
             <>
               <UploadCloud className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-2" />
@@ -228,9 +228,9 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
           <div className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] overflow-hidden flex flex-col max-h-[70vh]">
             <div className="px-3 py-2 border-b border-[var(--color-border)] flex items-center gap-2">
               <Search className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
-              <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={`Filter ${entries.length} files…`}
+              <input type="search" aria-label="Filter files" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={`Filter ${entries.length} files…`}
                 className="flex-1 bg-transparent text-body text-[var(--color-text)] outline-none" />
-              <button onClick={clearAll} title="Close archive (discards it)" aria-label="Close archive" className="p-1 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-3.5 h-3.5" /></button>
+              <button onClick={clearAll} title="Close archive (discards it)" aria-label="Close archive" className="ui-hit p-1 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-3.5 h-3.5" /></button>
             </div>
             <div className="overflow-y-auto divide-y divide-[var(--color-border)]">
               {shown.map((e) => {
@@ -252,7 +252,7 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
           {/* Preview */}
           <div className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] overflow-hidden flex flex-col min-h-[24rem] max-h-[70vh]">
             {previewBusy ? (
-              <div className="flex-1 grid place-items-center text-sm text-[var(--color-text-muted)]"><span className="inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Opening the file…</span></div>
+              <div className="flex-1 grid place-items-center text-body text-[var(--color-text-muted)]"><span className="inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Opening the file…</span></div>
             ) : preview ? (
               <>
                 <div className="px-3 py-2 border-b border-[var(--color-border)] flex items-center gap-2">
@@ -262,13 +262,13 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
                     <span className="inline-flex items-center gap-1 text-caption font-medium text-[var(--color-text-faint)]"><Loader2 className="w-3 h-3 animate-spin" /> verifying…</span>
                   )}
                   {verify?.status === "verified" && (
-                    <span className="inline-flex items-center gap-1 text-body font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded"
+                    <span className="inline-flex items-center gap-1 text-body font-medium text-[var(--state-released-text)] bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] px-1.5 py-0.5 rounded"
                       title={verify.source === "record" ? "SHA-256 matches the hash recorded on this revision at upload. These are the original bytes." : "SHA-256 matches the archive's own manifest."}>
                       <ShieldCheck className="w-3 h-3" /> {verify.source === "record" ? "Matches recorded hash" : "Matches manifest"}
                     </span>
                   )}
                   {verify?.status === "mismatch" && (
-                    <span className="inline-flex items-center gap-1 text-body font-medium text-red-700 bg-red-50 border border-red-300 px-1.5 py-0.5 rounded"
+                    <span className="inline-flex items-center gap-1 text-body font-medium text-[var(--state-overdue-text)] bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] border border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)] px-1.5 py-0.5 rounded"
                       title="The bytes in this zip do NOT match the recorded SHA-256. The file was changed or this is the wrong archive. Do not rely on this copy.">
                       <ShieldAlert className="w-3 h-3" /> Hash mismatch
                     </span>
@@ -290,7 +290,7 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
                     <div className="text-center p-6">
                       <FileIcon className="w-10 h-10 mx-auto text-[var(--color-text-faint)] mb-2" />
                       <div className="text-body text-[var(--color-text-muted)] mb-3">This file type can&apos;t preview inline.</div>
-                      <a href={preview.url} download={preview.name} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]"><Download className="w-3.5 h-3.5" /> Open / download</a>
+                      <a href={preview.url} download={preview.name} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-caption font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]"><Download className="w-3.5 h-3.5" /> Open / download</a>
                     </div>
                   )}
                 </div>
@@ -299,7 +299,7 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
               <div className="flex-1 grid place-items-center text-center p-6">
                 <div>
                   <Eye className="w-8 h-8 mx-auto text-[var(--color-text-faint)] mb-2" />
-                  <div className="text-sm text-[var(--color-text-muted)]">Pick a file to view it.</div>
+                  <div className="text-body text-[var(--color-text-muted)]">Pick a file to view it.</div>
                 </div>
               </div>
             )}
@@ -308,7 +308,7 @@ export default function BackupViewer({ target }: { target?: ArchiveTarget }) {
       )}
 
       {error && (
-        <p role="alert" className="mt-4 border-l-2 border-red-500 pl-3 text-body text-red-700 dark:text-red-400 flex items-start gap-2">
+        <p role="alert" className="mt-4 border-l-2 border-[var(--state-overdue)] pl-3 text-body text-[var(--state-overdue-text)] flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {error}
         </p>
       )}

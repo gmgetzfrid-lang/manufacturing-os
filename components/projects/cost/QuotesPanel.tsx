@@ -126,7 +126,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
         <span className="text-body font-medium text-[var(--color-text-muted)]">Quotes &amp; bid tabulation</span>
         {canManage && (
           <button onClick={() => setShowLinks((v) => !v)}
-            className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+            className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 pointer-coarse:min-h-11 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
             <Link2 className="w-3 h-3" /> Quote links for contractors
           </button>
         )}
@@ -145,7 +145,7 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
         <div className="px-4 py-8 text-center">
           <FileText className="w-7 h-7 mx-auto text-[var(--color-text-faint)] mb-2" />
           <div className="text-body font-medium text-[var(--color-text)]">No quotes yet</div>
-          <div className="text-xs text-[var(--color-text-muted)] mt-1 max-w-lg mx-auto">
+          <div className="text-caption text-[var(--color-text-muted)] mt-1 max-w-lg mx-auto">
             Upload the quotes vendors sent you. Quotes with the same RFQ group are compared side by side.
           </div>
         </div>
@@ -234,7 +234,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
     if (!(await appConfirm({
       title: `Post ${ready.length} invoice${ready.length === 1 ? "" : "s"} as actual spend?`,
       message: (
-        <ul className="mt-1 space-y-0.5 text-xs">
+        <ul className="mt-1 space-y-0.5 text-caption">
           {ready.map((r) => (
             <li key={r.doc.id}>
               <span className="font-medium text-[var(--color-text)]">{r.doc.vendorName ?? "Vendor"}</span>
@@ -243,6 +243,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
           ))}
         </ul>
       ),
+      confirmLabel: `Post ${ready.length} invoice${ready.length === 1 ? "" : "s"}`,
     }))) return;
     let failed = 0;
     for (const [i, r] of ready.entries()) {
@@ -262,7 +263,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
         <span className="text-body font-medium text-[var(--color-text-muted)]">Invoices</span>
         {canManage && ready.length > 0 && (
           <button onClick={() => void postReady()} disabled={!!batch}
-            className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors"
+            className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 pointer-coarse:min-h-11 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors"
             title="Invoices whose vendor maps to exactly one budget line, with a readable total and no duplicate on file.">
             {batch ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
             {batch ?? `Post ${ready.length} matched`}
@@ -281,9 +282,9 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
             const p = (doc.parsed ?? {}) as { poNumber?: unknown; dueDate?: unknown; subtotal?: unknown; tax?: unknown };
             const onLine = doc.status === "posted" ? lineOfDoc(doc, entries) : null;
             return (
-              <li key={doc.id} className="px-4 py-2.5 text-xs">
+              <li key={doc.id} className="px-4 py-2.5 text-caption">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <button onClick={() => setOpen(isOpen ? null : doc.id)} className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]" title="What the AI read">
+                  <button onClick={() => setOpen(isOpen ? null : doc.id)} aria-expanded={isOpen} aria-label={`${isOpen ? "Hide" : "Show"} what the AI read`} className="ui-hit text-[var(--color-text-faint)] hover:text-[var(--color-text)]" title="What the AI read">
                     <ChevronRight className={`w-3.5 h-3.5 ui-chevron${(isOpen) ? " rotate-90" : ""}`} />
                   </button>
                   <span className="font-medium text-[var(--color-text)] truncate">{doc.vendorName ?? doc.fileName ?? "Invoice"}</span>
@@ -293,7 +294,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
                   {doc.totalAmount != null && <span className="font-medium tabular-nums text-[var(--color-text)]">{fmtMoney(doc.totalAmount, doc.currency ?? "USD")}</span>}
                   <StatusChip status={doc.status} />
                   {duplicate && (doc.status === "draft" || doc.status === "parsed") && (
-                    <span className="inline-flex items-center gap-1 text-body font-medium px-1.5 py-0.5 rounded border border-[var(--state-overdue)] bg-[var(--state-overdue)] text-[var(--state-overdue-text)]"
+                    <span className="inline-flex items-center gap-1 text-body font-medium px-1.5 py-0.5 rounded border border-[var(--state-overdue)] bg-transparent text-[var(--state-overdue-text)]"
                       title={`Same vendor and ${duplicate.docNumber ? "invoice number" : "amount and date"} as ${duplicate.fileName ?? "another invoice"} (${COST_DOC_STATUS_LABEL[duplicate.status as CostDocument["status"]]?.toLowerCase() ?? duplicate.status}).`}>
                       <CopyIcon className="w-2.5 h-2.5" /> possible duplicate
                     </span>
@@ -302,13 +303,13 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
                     <>
                       <ReadButton busy={busy === doc.id} onClick={() => void readDoc(doc)} />
                       <button onClick={() => void typeTotal(doc)}
-                        className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">type total</button>
+                        className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">type total</button>
                     </>
                   )}
                   {canManage && doc.status === "parsed" && (
                     <PostControls accounts={accounts} busy={busy === doc.id} suggested={suggestion}
                       onPost={async (accountId) => {
-                        if (duplicate && !(await appConfirm({ message: `This looks like a duplicate of ${duplicate.fileName ?? "another invoice"} from the same vendor. Post it anyway?`, tone: "danger" }))) return;
+                        if (duplicate && !(await appConfirm({ title: "Post a possible duplicate?", message: `This looks like a duplicate of ${duplicate.fileName ?? "another invoice"} from the same vendor.`, tone: "danger", confirmLabel: "Post anyway" }))) return;
                         setBusy(doc.id);
                         const res = await postInvoice({ doc, costAccountId: accountId, actor });
                         setBusy(null);
@@ -323,7 +324,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
                   )}
                   {canManage && doc.status === "posted" && moving !== doc.id && accounts.length > 1 && (
                     <button onClick={() => setMoving(doc.id)} title="Posted to the wrong budget line? Move it. The old entry stays on the record, struck through."
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                      className="inline-flex items-center gap-1 px-2 py-1 pointer-coarse:min-h-11 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                       <ArrowRightLeft className="w-3 h-3" /> Move to line
                     </button>
                   )}
@@ -331,7 +332,7 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
                     <span className="inline-flex items-center gap-1.5">
                       <PostControls accounts={accounts.filter((a) => a.id !== onLine)} busy={busy === doc.id}
                         onPost={(accountId) => move(doc, onLine, accountId)} label="Move here" />
-                      <button onClick={() => setMoving(null)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+                      <button onClick={() => setMoving(null)} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
                     </span>
                   )}
                   {canManage && (doc.status === "draft" || doc.status === "parsed") && (
@@ -431,7 +432,7 @@ function InvoiceDrop({ orgId, projectId, actor, onDone, setErr }: {
         onClick={() => !working && input.current?.click()}
         role="button" tabIndex={0}
         onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && !working) input.current?.click(); }}
-        className={`rounded-lg border border-dashed px-3 py-2 flex items-center gap-2 text-xs cursor-pointer transition-colors ${
+        className={`rounded-lg border border-dashed px-3 py-2 flex items-center gap-2 text-caption cursor-pointer transition-colors ${
           drag.over ? `border-[var(--color-main)] ${drag.ring}` : "border-[var(--color-border-strong)] hover:border-[var(--color-accent-ring)] bg-[var(--color-surface-2)]/30"}`}>
         {working ? <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-muted)]" /> : <UploadCloud className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
         <span className={`truncate ${drag.over ? "font-bold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
@@ -443,7 +444,7 @@ function InvoiceDrop({ orgId, projectId, actor, onDone, setErr }: {
       {jobs.length > 0 && (
         <ul className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
           {jobs.map((j) => (
-            <li key={j.key} className="px-2.5 py-1.5 flex items-center gap-2 text-xs">
+            <li key={j.key} className="px-2.5 py-1.5 flex items-center gap-2 text-caption">
               <FileThumb file={j.file} size={28} />
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-medium text-[var(--color-text)]">{j.file.name} <span className="font-normal text-[var(--color-text-muted)]">· {fileSize(j.file.size)}</span></span>
@@ -455,8 +456,8 @@ function InvoiceDrop({ orgId, projectId, actor, onDone, setErr }: {
               {j.state === "done" && <CheckCircle2 className="w-3.5 h-3.5 text-[var(--state-released-text)] shrink-0" />}
               {j.state === "failed" && (
                 <>
-                  <button type="button" onClick={() => void retry(j)} className="shrink-0 h-7 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Try again</button>
-                  <button type="button" onClick={() => setJobs((js) => js.filter((x) => x.key !== j.key))} aria-label={`Remove ${j.file.name} from the list`} className="shrink-0 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
+                  <button type="button" onClick={() => void retry(j)} className="shrink-0 h-7 pointer-coarse:h-11 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Try again</button>
+                  <button type="button" onClick={() => setJobs((js) => js.filter((x) => x.key !== j.key))} aria-label={`Remove ${j.file.name} from the list`} className="ui-hit shrink-0 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
                 </>
               )}
             </li>
@@ -512,7 +513,9 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
     const total = doc.totalAmount ?? parsedQuoteFrom(doc)?.total ?? 0;
     const account = accounts.find((a) => a.id === accountId);
     if (!(await appConfirm({
-      message: `Award "${group}" to ${doc.vendorName ?? "this vendor"} for ${fmtMoney(total)}? This posts a commitment on "${account?.name ?? "the budget line"}" and marks the other bids not selected.`,
+      title: `Award "${group}" to ${doc.vendorName ?? "this vendor"} for ${fmtMoney(total)}?`,
+      message: `This posts a commitment on "${account?.name ?? "the budget line"}" and marks the other bids not selected.`,
+      confirmLabel: "Award",
     }))) return;
     setBusy(doc.id);
     const res = await awardQuote({ doc, siblings: allDocs, costAccountId: accountId, actor });
@@ -551,7 +554,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
     <div>
       <button onClick={() => setOpen((v) => !v)} className="w-full px-4 py-2.5 flex items-center gap-2 text-left hover:bg-[var(--color-surface-2)]/40 transition-colors">
         <ChevronRight className={`w-4 h-4 text-[var(--color-text-faint)] ui-chevron${(open) ? " rotate-90" : ""}`} />
-        <span className="text-xs font-medium text-[var(--color-text)]">{group}</span>
+        <span className="text-caption font-medium text-[var(--color-text)]">{group}</span>
         <span className="text-caption text-[var(--color-text-muted)]">{groupDocs.length} bid{groupDocs.length === 1 ? "" : "s"}</span>
         {awarded && (
           <span className="inline-flex items-center gap-1 text-caption font-medium text-[var(--state-released-text)]">
@@ -572,7 +575,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
               </span>
               <button onClick={() => void unaward(awarded)} disabled={busy === awarded.id}
                 title="Void the commitment it posted and bring the other bids back"
-                className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+                className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 pointer-coarse:min-h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
                 {busy === awarded.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />} Undo award
               </button>
             </div>
@@ -586,7 +589,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
                   <span className="font-medium text-[var(--color-text)] max-w-40 truncate">{d.vendorName ?? d.fileName}</span>
                   <PreviewButton file={fileOfDoc(d)} />
                   {canManage && <ReadButton busy={busy === d.id} onClick={() => void readDoc(d)} />}
-                  {canManage && <button onClick={() => void typeTotal(d)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">type total</button>}
+                  {canManage && <button onClick={() => void typeTotal(d)} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">type total</button>}
                   {bidTools(d)}
                 </span>
               ))}
@@ -595,7 +598,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
 
           {econ.length > 0 && (
             <div className="overflow-x-auto rounded-xl border border-[var(--color-border)]">
-              <table className="w-full text-xs">
+              <table className="w-full text-caption">
                 <thead>
                   <tr className="text-left text-body font-medium text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
                     <th className="px-3 py-2">Bidder</th>
@@ -629,7 +632,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
                               </Link>
                             )}
                             {known?.status === "do_not_use" && (
-                              <span className="ml-1.5 text-body font-medium px-1.5 py-0.5 rounded border border-[var(--state-overdue)] bg-[var(--state-overdue)] text-[var(--state-overdue-text)]">do not use</span>
+                              <span className="ml-1.5 text-body font-medium px-1.5 py-0.5 rounded border border-[var(--state-overdue)] bg-transparent text-[var(--state-overdue-text)]">do not use</span>
                             )}
                             {s?.best && !awarded && (
                               <span className="ml-1.5 text-caption font-medium text-[var(--color-text)]" title="Highest weighted value score - not automatically the winner; you decide.">Best value</span>
@@ -697,7 +700,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
           {manualBids.length > 0 && (
             <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
               {manualBids.map((d) => (
-                <li key={d.id} className={`px-3 py-2 flex items-center gap-2 flex-wrap text-xs ${d.status === "declined" && correcting !== d.id ? "opacity-55" : ""}`}>
+                <li key={d.id} className={`px-3 py-2 flex items-center gap-2 flex-wrap text-caption ${d.status === "declined" && correcting !== d.id ? "opacity-55" : ""}`}>
                   <span className="font-medium text-[var(--color-text)]">{d.vendorName ?? d.fileName ?? "Bid"}</span>
                   <PreviewButton file={fileOfDoc(d)} />
                   <span className="font-medium tabular-nums text-[var(--color-text)]">{fmtMoney(d.totalAmount ?? 0)}</span>
@@ -737,7 +740,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
 function StatusChip({ status }: { status: CostDocument["status"] }) {
   const tone = status === "awarded" || status === "posted"
     ? "border-[var(--state-released)] bg-[var(--state-released)]/[0.07] text-[var(--state-released-text)]"
-    : status === "parsed" ? "border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)]"
+    : status === "parsed" ? "border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-text)]"
     : status === "declined" || status === "void" ? "border-[var(--color-border)] text-[var(--color-text-faint)]"
     : "border-[var(--state-held)] bg-[var(--state-held)]/[0.07] text-[var(--state-held-text)]";
   return (
@@ -750,9 +753,9 @@ function StatusChip({ status }: { status: CostDocument["status"] }) {
 function ReadButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {
   return (
     <button onClick={onClick} disabled={busy}
-      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] text-caption font-medium hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
+      className="inline-flex items-center gap-1 px-2 py-0.5 pointer-coarse:min-h-11 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] text-caption font-medium hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"
       title="Reads the printed pages into numbers, on your own AI key. You check them before anything posts.">
-      {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Read
+      {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} {busy ? "Reading" : "Read"}
     </button>
   );
 }
@@ -769,7 +772,7 @@ function PostControls({ accounts, busy, onPost, label, suggested }: {
   }
   return (
     <span className="inline-flex items-center gap-1">
-      <select value={accountId} onChange={(e) => setAccountId(e.target.value)}
+      <select value={accountId} onChange={(e) => setAccountId(e.target.value)} aria-label="Budget line"
         className="h-6 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-caption max-w-36">
         <option value="">Budget line…</option>
         {accounts.map((a) => <option key={a.id} value={a.id}>{a.code ? `${a.code} ` : ""}{a.name}</option>)}
@@ -795,14 +798,14 @@ function VoidButton({ doc, actor, busy, setBusy, onChanged, setErr }: {
   return (
     <button
       onClick={async () => {
-        if (!(await appConfirm({ message: `Void ${doc.fileName ?? "this document"}? It stays on the record but leaves every list.`, tone: "danger" }))) return;
+        if (!(await appConfirm({ title: `Void ${doc.fileName ?? "this document"}?`, message: "It stays on the record but leaves every list.", tone: "danger", confirmLabel: "Void document" }))) return;
         setBusy(doc.id);
         const res = await voidCostDoc({ doc, actor });
         setBusy(null);
         if (!res.ok) setErr(res.error ?? "Couldn't void."); else onChanged();
       }}
       disabled={busy}
-      className="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-caption font-medium text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)] transition-colors">
+      className="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 pointer-coarse:min-h-11 rounded text-caption font-medium text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] transition-colors">
       <Ban className="w-3 h-3" /> Void
     </button>
   );
@@ -811,7 +814,7 @@ function VoidButton({ doc, actor, busy, setBusy, onChanged, setErr }: {
 function CorrectButton({ onClick }: { onClick: () => void }) {
   return (
     <button onClick={onClick} title="Fix what was read: the total, the vendor, the RFQ group"
-      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 pointer-coarse:min-h-11 rounded text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
       <Pencil className="w-3 h-3" /> Correct
     </button>
   );
@@ -845,31 +848,31 @@ function CorrectForm({ doc, actor, groups, onDone, onCancel, setErr }: {
   };
 
   return (
-    <div className="mt-1.5 rounded-lg border border-[var(--color-accent-ring)]/50 bg-[var(--color-surface-2)] px-2.5 py-2 flex items-end gap-2 flex-wrap text-xs">
+    <div className="mt-1.5 rounded-lg border border-[var(--color-accent-ring)]/50 bg-[var(--color-surface-2)] px-2.5 py-2 flex items-end gap-2 flex-wrap text-caption">
       <label className="block">
         <span className="text-body font-medium text-[var(--color-text-muted)]">Total</span>
         <input value={total} onChange={(e) => setTotal(e.target.value)} inputMode="decimal" placeholder="e.g. 182,000"
-          className="mt-0.5 block h-8 pointer-coarse:h-11 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-display tabular-nums" />
+          className="mt-0.5 block h-8 pointer-coarse:h-11 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption font-display tabular-nums" />
       </label>
       <label className="block">
         <span className="text-body font-medium text-[var(--color-text-muted)]">Vendor</span>
         <input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Company name"
-          className="mt-0.5 block h-8 pointer-coarse:h-11 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+          className="mt-0.5 block h-8 pointer-coarse:h-11 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption" />
       </label>
       {doc.kind === "quote" && (
         <label className="block">
           <span className="text-body font-medium text-[var(--color-text-muted)]">RFQ group</span>
           <input value={group} onChange={(e) => setGroup(e.target.value)} list={listId} placeholder="The scope being bid"
             title="Quotes with the same group name are compared side by side."
-            className="mt-0.5 block h-8 pointer-coarse:h-11 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+            className="mt-0.5 block h-8 pointer-coarse:h-11 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption" />
           <datalist id={listId}>{groups.map((g) => <option key={g} value={g} />)}</datalist>
         </label>
       )}
       <button onClick={() => void save()} disabled={saving}
         className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
-        {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />} Save
+        {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />} {saving ? "Saving" : "Save"}
       </button>
-      <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+      <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
     </div>
   );
 }
@@ -909,7 +912,7 @@ function UploadRow({ orgId, projectId, actor, kind, existingGroups, onDone, setE
 
   return (
     <div {...drag.bind} className={`px-4 py-2.5 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]/30 flex items-center gap-2 flex-wrap ${drag.ring}`}>
-      <label className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-[var(--color-border-strong)] px-2.5 py-1.5 cursor-pointer hover:border-[var(--color-accent-ring)] text-xs min-w-0">
+      <label className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-[var(--color-border-strong)] px-2.5 py-1.5 cursor-pointer hover:border-[var(--color-accent-ring)] text-caption min-w-0">
         {file ? <FileThumb file={file} size={24} /> : <UploadCloud className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
         <span className={`max-w-56 truncate ${drag.over ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
           {drag.over ? drag.say : file ? <><span className="text-[var(--color-text)] font-medium">{file.name}</span> · {fileSize(file.size)}</> : `${kind === "quote" ? "Quote" : "Invoice"} PDF or photo: drop or choose…`}
@@ -917,12 +920,12 @@ function UploadRow({ orgId, projectId, actor, kind, existingGroups, onDone, setE
         <input type="file" accept={INVOICE_ACCEPT} className="hidden"
           onChange={(e) => { setFile(e.target.files?.[0] ?? null); setFailed(null); e.target.value = ""; }} />
       </label>
-      <input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Vendor (or let the AI read it)"
-        className="h-8 pointer-coarse:h-11 w-52 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+      <input value={vendor} onChange={(e) => setVendor(e.target.value)} aria-label="Vendor" placeholder="Vendor (or let the AI read it)"
+        className="h-8 pointer-coarse:h-11 w-52 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption" />
       {kind === "quote" && (
         <>
-          <input value={group} onChange={(e) => setGroup(e.target.value)} placeholder="RFQ group: the scope being bid" list="rfq-groups"
-            className="h-8 pointer-coarse:h-11 w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs"
+          <input value={group} onChange={(e) => setGroup(e.target.value)} aria-label="RFQ group" placeholder="RFQ group: the scope being bid" list="rfq-groups"
+            className="h-8 pointer-coarse:h-11 w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption"
             title="Quotes sharing a group name tabulate side by side." />
           <datalist id="rfq-groups">
             {existingGroups.map((g) => <option key={g} value={g} />)}
@@ -1039,16 +1042,16 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
         A contractor&apos;s own link, no account needed. Their quote lands here and joins the comparison.
       </div>
       <div className="flex items-center gap-2 flex-wrap">
-        <input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Company name"
-          className="h-8 pointer-coarse:h-11 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
-        <input value={group} onChange={(e) => setGroup(e.target.value)} placeholder="RFQ group (optional)" list="rfq-groups-link"
-          className="h-8 pointer-coarse:h-11 w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+        <input value={company} onChange={(e) => setCompany(e.target.value)} aria-label="Company name" placeholder="Company name"
+          className="h-8 pointer-coarse:h-11 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption" />
+        <input value={group} onChange={(e) => setGroup(e.target.value)} aria-label="RFQ group (optional)" placeholder="RFQ group (optional)" list="rfq-groups-link"
+          className="h-8 pointer-coarse:h-11 w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption" />
         <datalist id="rfq-groups-link">
           {existingGroups.map((g) => <option key={g} value={g} />)}
         </datalist>
         <button onClick={() => void create()} disabled={saving}
           className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
-          {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Link2 className="w-3 h-3" />} Create link
+          {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Link2 className="w-3 h-3" />} {saving ? "Creating link" : "Create link"}
         </button>
       </div>
       {(links ?? []).filter((l) => !l.revokedAt).length > 0 && (
@@ -1061,11 +1064,11 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
               <span className="ml-auto flex items-center gap-1">
                 <button onClick={() => void makeRfq(l)}
                   title="Download a ready-to-send Request For Quote (.docx) built from this project's scope, purpose and turnover requirements, with this company's submission link inside."
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+                  className="inline-flex items-center gap-1 px-2 py-0.5 pointer-coarse:min-h-11 rounded-md border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
                   <FileText className="w-3 h-3" /> RFQ (.docx)
                 </button>
                 <button onClick={() => void copy(l)}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+                  className="inline-flex items-center gap-1 px-2 py-0.5 pointer-coarse:min-h-11 rounded-md border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
                   <Copy className="w-3 h-3" /> {copied === l.id ? "Copied!" : "Copy link"}
                 </button>
               </span>

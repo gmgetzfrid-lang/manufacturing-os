@@ -21,7 +21,7 @@ import { SubTabs } from "@/components/projects/SubTabs";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 import { ErrorNote } from "@/components/ui/ErrorNote";
 import {
-  Plus, X, Loader2, Check, ChevronRight, AlertTriangle, Ban, FileCheck2, FileUp, Hourglass, Pencil, RotateCcw,
+  Plus, X, Loader2, Check, ChevronRight, AlertTriangle, Ban, FileCheck2, FileUp, Hourglass, Pencil, RotateCcw, CircleAlert
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
@@ -229,8 +229,8 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
       )}
       {notice && (
         <div role="status" className="mt-2 flex items-center gap-2 text-body font-medium text-[var(--color-text)]">
-          <Check className="w-4 h-4 shrink-0 text-[var(--state-released)]" /> <span className="min-w-0 flex-1">{notice}</span>
-          <button onClick={() => setNotice(null)} aria-label="Dismiss" className="shrink-0 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
+          <Check className="w-4 h-4 shrink-0 text-[var(--state-released-text)]" /> <span className="min-w-0 flex-1">{notice}</span>
+          <button onClick={() => setNotice(null)} aria-label="Dismiss" className="ui-hit shrink-0 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
         </div>
       )}
       </div>
@@ -515,7 +515,7 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
           <label className="block">
             <span className="text-body font-medium text-[var(--color-text-muted)]" title="Earned value = budget × the pinned task's % complete">Pin to schedule task (for EV)</span>
             <select value={pinDraft} onChange={(e) => void savePin(e.target.value)}
-              className="mt-0.5 h-8 pointer-coarse:h-11 w-64 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
+              className="mt-0.5 h-8 pointer-coarse:h-11 w-64 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption">
               <option value="">Not pinned</option>
               {milestones.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.pct}%)</option>)}
             </select>
@@ -535,10 +535,10 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
       ) : (
         <ul className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
           {entries.map((e) => (
-            <li key={e.id} className={`px-3 py-2 flex flex-wrap items-center gap-2 text-xs ${e.status === "void" ? "opacity-50" : ""}`}>
+            <li key={e.id} className={`px-3 py-2 flex flex-wrap items-center gap-2 text-caption ${e.status === "void" ? "opacity-50" : ""}`}>
               <span className={`shrink-0 text-caption font-semibold px-1.5 py-0.5 rounded border ${
-                e.entryType === "commitment" ? "text-[var(--color-text)] dark:text-[var(--color-text)] border-[var(--color-border-strong)] bg-[var(--color-surface-2)]"
-                : e.entryType === "actual" ? "text-[var(--color-text)] dark:text-[var(--color-text)] border-[var(--color-border-strong)] bg-[var(--color-surface-2)]"
+                e.entryType === "commitment" ? "text-[var(--color-text)] border-[var(--color-border-strong)] bg-[var(--color-surface-2)]"
+                : e.entryType === "actual" ? "text-[var(--color-text)] border-[var(--color-border-strong)] bg-[var(--color-surface-2)]"
                 : "text-[var(--state-held-text)] border-[var(--state-held)] bg-[var(--state-held)]"}`}>
                 {e.entryType}
               </span>
@@ -553,14 +553,14 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
               {canManage && e.status !== "void" && (
                 <button
                   onClick={async () => {
-                    if (!(await appConfirm({ message: `Void this ${e.entryType} of ${fmtMoney(e.amount, cur)}? It stays on the record (struck through) and leaves every total.`, tone: "danger" }))) return;
+                    if (!(await appConfirm({ title: `Void this ${e.entryType} of ${fmtMoney(e.amount, cur)}?`, message: "It stays on the record, struck through, and leaves every total.", tone: "danger", confirmLabel: `Void ${e.entryType}` }))) return;
                     setBusy(e.id);
                     const res = await voidEntry({ orgId, entryId: e.id, actor });
                     setBusy(null);
                     if (!res.ok) setErr(res.error ?? "Couldn't void the entry."); else onChanged();
                   }}
                   disabled={busy === e.id}
-                  className="ml-auto shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-caption font-medium text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--state-overdue)] transition-colors"
+                  className="ml-auto shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 pointer-coarse:min-h-11 rounded text-caption font-medium text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] transition-colors"
                   title="Void (financial records are never deleted)"
                 >
                   <Ban className="w-3 h-3" /> Void
@@ -568,7 +568,7 @@ function AccountDetail({ orgId, projectId, actor, rollup: r, entries, parties, m
               )}
               {canManage && e.status !== "void" && revising !== e.id && (
                 <button onClick={() => setRevising(e.id)} title="A revised quote, PO or invoice: the old amount stays on the record, struck through"
-                  className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                  className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 pointer-coarse:min-h-11 rounded text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                   Change amount
                 </button>
               )}
@@ -621,28 +621,28 @@ function EntryForm({ orgId, projectId, accountId, defaultParty, parties, actor, 
       <div className="inline-flex items-center rounded-lg border border-[var(--color-border)] p-0.5 gap-0.5">
         {ENTRY_TYPES.map((t) => (
           <button key={t.v} onClick={() => setType(t.v)} title={t.hint}
-            className={`px-2 py-1 rounded-md text-caption font-medium transition-colors ${type === t.v ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
+            className={`px-2 py-1 pointer-coarse:min-h-11 rounded-md text-caption font-medium transition-colors ${type === t.v ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
             {t.label}
           </button>
         ))}
       </div>
-      <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="Amount" inputMode="decimal"
-        className="h-8 pointer-coarse:h-11 w-28 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-display tabular-nums" />
-      <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
-        className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs [color-scheme:light] dark:[color-scheme:dark]" />
+      <input value={amount} onChange={(e) => setAmount(e.target.value)} aria-label="Amount" placeholder="Amount" inputMode="decimal"
+        className="h-8 pointer-coarse:h-11 w-28 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption font-display tabular-nums" />
+      <input type="date" value={date} onChange={(e) => setDate(e.target.value)} aria-label="Date"
+        className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption [color-scheme:light] dark:[color-scheme:dark]" />
       {parties.length > 0 && (
-        <select value={party} onChange={(e) => setParty(e.target.value)} className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
+        <select value={party} onChange={(e) => setParty(e.target.value)} aria-label="Party" className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption">
           <option value="">Party…</option>
           {parties.filter((p) => p.status !== "inactive").map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
       )}
-      <input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="PO / invoice #"
-        className="h-8 pointer-coarse:h-11 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-display tabular-nums" />
-      <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Description"
-        className="h-8 pointer-coarse:h-11 flex-1 min-w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+      <input value={ref} onChange={(e) => setRef(e.target.value)} aria-label="PO or invoice number" placeholder="PO / invoice #"
+        className="h-8 pointer-coarse:h-11 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption font-display tabular-nums" />
+      <input value={desc} onChange={(e) => setDesc(e.target.value)} aria-label="Description" placeholder="Description"
+        className="h-8 pointer-coarse:h-11 flex-1 min-w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption" />
       <button onClick={() => void submit()} disabled={saving}
-        className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
-        {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Post
+        className="h-8 pointer-coarse:h-11 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50 transition-colors">
+        {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} {saving ? "Posting" : "Post"}
       </button>
     </div>
   );
@@ -705,18 +705,18 @@ function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }
           ) : (
             <li key={p.id} className={`rounded-xl border border-[var(--color-border)] px-3 py-2 ${p.status === "inactive" ? "opacity-60" : ""}`}>
               <div className="flex items-center gap-2">
-                <span className="text-xs font-medium text-[var(--color-text)] truncate">{p.name}</span>
+                <span className="text-caption font-medium text-[var(--color-text)] truncate">{p.name}</span>
                 {p.kind && <span className="text-body font-medium text-[var(--color-text-muted)]">{p.kind}</span>}
                 {p.status === "inactive" && <span className="text-caption font-medium text-[var(--color-text-faint)]">inactive</span>}
                 {canManage && (
                   <span className="ml-auto flex items-center gap-1 shrink-0">
                     <button onClick={() => setEditing(p.id)} title="Change the name, kind, trade or contact"
-                      className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                      className="inline-flex items-center gap-1 px-1.5 py-1 pointer-coarse:min-h-11 rounded text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
                       <Pencil className="w-3 h-3" /> Edit
                     </button>
                     <button onClick={() => void setStatus(p, p.status === "inactive" ? "active" : "inactive")} disabled={busyId === p.id}
                       title={p.status === "inactive" ? "Put them back on the job's pick lists" : "Off the job: they stay on everything already recorded, but aren't offered for new entries"}
-                      className="inline-flex items-center gap-1 px-1.5 py-1 rounded text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+                      className="inline-flex items-center gap-1 px-1.5 py-1 pointer-coarse:min-h-11 rounded text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50">
                       {busyId === p.id ? <Loader2 className="w-3 h-3 animate-spin" /> : p.status === "inactive" ? <RotateCcw className="w-3 h-3" /> : <Ban className="w-3 h-3" />}
                       {p.status === "inactive" ? "Reactivate" : "Deactivate"}
                     </button>
@@ -732,18 +732,18 @@ function PartiesPanel({ orgId, projectId, actor, parties, canManage, onChanged }
       )}
       {canManage && (
         <div className="pt-1 flex items-end gap-2 flex-wrap">
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Company name" className="h-8 pointer-coarse:h-11 flex-1 min-w-40 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
-          <select value={kind} onChange={(e) => setKind(e.target.value)} className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs">
+          <input value={name} onChange={(e) => setName(e.target.value)} aria-label="Company name" placeholder="Company name" className="h-8 pointer-coarse:h-11 flex-1 min-w-40 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption" />
+          <select value={kind} onChange={(e) => setKind(e.target.value)} aria-label="Kind of company" className="h-8 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption">
             <option value="contractor">contractor</option>
             <option value="vendor">vendor</option>
             <option value="internal">internal</option>
           </select>
-          <input value={trade} onChange={(e) => setTrade(e.target.value)} placeholder="Trade (piping, E&I…)" className="h-8 pointer-coarse:h-11 w-36 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
-          <input value={contract} onChange={(e) => setContract(e.target.value)} placeholder="Contract value" inputMode="decimal" className="h-8 pointer-coarse:h-11 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs font-display tabular-nums" />
-          <button onClick={() => void add()} disabled={saving} className="h-8 inline-flex items-center gap-1 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-caption font-medium hover:bg-[var(--color-surface-2)] disabled:opacity-50">
-            {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Add
+          <input value={trade} onChange={(e) => setTrade(e.target.value)} aria-label="Trade" placeholder="Trade (piping, E&I…)" className="h-8 pointer-coarse:h-11 w-36 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption" />
+          <input value={contract} onChange={(e) => setContract(e.target.value)} aria-label="Contract value" placeholder="Contract value" inputMode="decimal" className="h-8 pointer-coarse:h-11 w-32 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption font-display tabular-nums" />
+          <button onClick={() => void add()} disabled={saving} className="h-8 pointer-coarse:h-11 inline-flex items-center gap-1 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-caption font-medium hover:bg-[var(--color-surface-2)] disabled:opacity-50">
+            {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} {saving ? "Adding" : "Add"}
           </button>
-          {error && <span className="text-caption font-medium text-[var(--state-overdue-text)]">{error}</span>}
+          {error && <span role="alert" className="text-caption font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{error}</span></span>}
         </div>
       )}
     </div>
@@ -763,7 +763,7 @@ function PartyEditor({ orgId, projectId, actor, party, onCancel, onSaved }: {
   const [contactEmail, setContactEmail] = useState(party.contactEmail ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const field = "h-8 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs";
+  const field = "h-8 pointer-coarse:h-11 w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-caption";
   const label = "text-body font-medium text-[var(--color-text-muted)]";
 
   const save = async () => {
@@ -807,11 +807,11 @@ function PartyEditor({ orgId, projectId, actor, party, onCancel, onSaved }: {
           <input value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} type="email" inputMode="email" placeholder="name@company.com" className={`mt-0.5 ${field}`} /></label>
       </div>
       <div className="flex items-center gap-2">
-        {error && <span className="text-caption font-medium text-[var(--state-overdue-text)]">{error}</span>}
+        {error && <span role="alert" className="text-caption font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{error}</span></span>}
         <span className="ml-auto flex items-center gap-2">
-          <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
-          <button onClick={() => void save()} disabled={saving} className="h-8 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
-            {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Save
+          <button onClick={onCancel} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+          <button onClick={() => void save()} disabled={saving} className="h-8 pointer-coarse:h-11 inline-flex items-center gap-1 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-caption font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+            {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} {saving ? "Saving" : "Save"}
           </button>
         </span>
       </div>

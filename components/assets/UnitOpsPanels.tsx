@@ -550,7 +550,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
         <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)] shrink-0">
           <ScanSearch className="w-4 h-4 text-[var(--color-text-muted)]" />
           <div className="flex-1">
-            <div className="text-sm font-medium text-[var(--color-text)]">Read flows from a document</div>
+            <div className="text-body font-medium text-[var(--color-text)]">Read flows from a document</div>
             <div className="text-body text-[var(--color-text-muted)]">
               Your libraries and folders as filed. Each file says whether the AI can read it.
             </div>
@@ -570,7 +570,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
         <div className="p-3 space-y-2 shrink-0 border-b border-[var(--color-border)]">
           <div className="flex items-center gap-2 flex-wrap">
             <select value={dcLibFilter} onChange={(e) => setDcLibFilter(e.target.value)}
-              className="flex-1 min-w-[10rem] px-2.5 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm">
+              className="flex-1 min-w-[10rem] px-2.5 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-body">
               <option value="">All document libraries</option>
               {(model?.tree ?? []).map((l) => (
                 <option key={l.id} value={l.id}>{l.name} ({l.totalDocs})</option>
@@ -583,7 +583,7 @@ function ReadFlowsModal({ orgId, onClose, onDone }: {
               <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
               <input value={query} onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search by name…"
-                className="w-full pl-8 pr-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm" />
+                className="w-full pl-8 pr-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-body" />
             </div>
           </div>
           <div className="flex items-center gap-2">

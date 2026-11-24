@@ -77,8 +77,8 @@ export default function PathBar({ library, segments, onNavigate, onDropItems, on
   const hidden = ancestors.slice(0, ancestors.length - visibleAncestors.length);
 
   const chip = onDark
-    ? "flex items-center gap-1.5 py-1 rounded-md transition-colors shrink-0 hover:text-[var(--color-text)] hover:underline underline-offset-4"
-    : "flex items-center gap-1.5 px-1.5 py-1 rounded-lg transition-colors shrink-0 " +
+    ? "flex items-center gap-1.5 py-1 pointer-coarse:min-h-11 rounded-md transition-colors shrink-0 hover:text-[var(--color-text)] hover:underline underline-offset-4"
+    : "flex items-center gap-1.5 px-1.5 py-1 pointer-coarse:min-h-11 rounded-lg transition-colors shrink-0 " +
       "hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]";
 
   const [dropOn, setDropOn] = useState<string | "root" | null>(null);
@@ -147,14 +147,14 @@ export default function PathBar({ library, segments, onNavigate, onDropItems, on
               aria-haspopup="menu"
               aria-expanded={menuOpen}
               aria-label={`${hidden.length} more level${hidden.length === 1 ? "" : "s"}`}
-              className={`${chip} ${menuOpen ? (onDark ? "text-white" : "bg-[var(--color-surface-2)] text-[var(--color-text)]") : ""}`}
+              className={`${chip} ${menuOpen ? (onDark ? "text-[var(--color-text)]" : "bg-[var(--color-surface-2)] text-[var(--color-text)]") : ""}`}
               title={`${hidden.length} more level${hidden.length === 1 ? "" : "s"}`}
             >
               <MoreHorizontal className="w-3.5 h-3.5" />
               <ChevronDown className="w-2.5 h-2.5 -ml-0.5" />
             </button>
             {menuAt && (
-              <div role="menu" style={{ left: menuAt.x, top: menuAt.y }} className="fixed z-[70] min-w-44 max-w-64 py-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg ring-1 ring-black/5 normal-case tracking-normal animate-in fade-in zoom-in-95 duration-150 origin-top-left">
+              <div role="menu" style={{ left: menuAt.x, top: menuAt.y }} className="fixed z-[70] min-w-44 max-w-64 py-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg ring-1 ring-[var(--color-ink)]/5 normal-case tracking-normal animate-in fade-in zoom-in-95 duration-150 origin-top-left">
                 {hidden.map((seg, i) => (
                   <button
                     key={seg.id}
@@ -189,7 +189,7 @@ export default function PathBar({ library, segments, onNavigate, onDropItems, on
       {current && (
         <>
           {sep}
-          <span aria-current="page" className={`flex items-center gap-1.5 py-1 min-w-0 ${onDark ? "text-white" : "px-1.5 font-medium text-[var(--color-text)]"}`} title={current.name}>
+          <span aria-current="page" className={`flex items-center gap-1.5 py-1 min-w-0 ${onDark ? "text-[var(--color-text)]" : "px-1.5 font-medium text-[var(--color-text)]"}`} title={current.name}>
             {!onDark && <Tile icon={current.icon} color={current.color} />}
             <span className="truncate">{current.name}</span>
           </span>

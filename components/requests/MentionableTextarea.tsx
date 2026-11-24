@@ -25,10 +25,12 @@ interface MentionableTextareaProps {
   /** Optional id for the wrapping textarea (forwarded for label-htmlFor). */
   id?: string;
   autoFocus?: boolean;
+  /** The field's name for screen readers, when no visible label points at it. */
+  "aria-label"?: string;
 }
 
 export default function MentionableTextarea({
-  value, onChange, orgId, placeholder, rows = 3, className, disabled, id, autoFocus,
+  value, onChange, orgId, placeholder, rows = 3, className, disabled, id, autoFocus, "aria-label": ariaLabel,
 }: MentionableTextareaProps) {
   const taRef = useRef<HTMLTextAreaElement>(null);
   const [open, setOpen] = useState(false);
@@ -126,6 +128,7 @@ export default function MentionableTextarea({
     <div className={`relative ${className ?? ""}`}>
       <Textarea
         id={id}
+        aria-label={ariaLabel}
         ref={taRef}
         value={value}
         onChange={handleChange}
@@ -142,7 +145,7 @@ export default function MentionableTextarea({
       </div>
 
       {open && users.length > 0 && (
-        <div className="absolute z-[300] mt-1 w-full max-w-xs bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150 origin-top">
+        <div className="absolute z-[300] mt-1 w-full max-w-xs bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] rounded-xl shadow-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150 origin-top">
           <div className="px-3 py-1.5 text-body font-medium text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-b border-[var(--color-border)]">
             Mention a user
           </div>
@@ -154,7 +157,7 @@ export default function MentionableTextarea({
                 onClick={() => insertMention(u)}
                 className={`w-full text-left px-3 py-2 flex items-center gap-2 transition-colors ${idx === activeIdx ? "bg-[var(--color-surface-2)]" : "hover:bg-[var(--color-surface-2)]"}`}
               >
-                <span className="text-xs font-medium text-[var(--color-text)] truncate">{u.name}</span>
+                <span className="text-caption font-medium text-[var(--color-text)] truncate">{u.name}</span>
                 <span className="text-caption text-[var(--color-text-faint)] truncate flex-1">{u.email}</span>
                 <span className="text-caption font-medium text-[var(--color-text)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded shrink-0">{u.role}</span>
               </button>

@@ -110,19 +110,19 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
     <section aria-label="Checkouts held too long" className="relative rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
       <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-held)]" />
       <div className="flex items-center gap-3 pl-4 sm:pl-5 pr-2 py-2.5">
-        <span className="shrink-0 inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-body font-medium bg-[color-mix(in_srgb,var(--state-held)_14%,transparent)] text-[var(--state-held)]">
+        <span className="shrink-0 inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-body font-medium bg-[color-mix(in_srgb,var(--state-held)_14%,transparent)] text-[var(--state-held-text)]">
           Held too long
         </span>
         <p className="min-w-0 flex-1 text-reading text-[var(--color-text)]">
           {n === 1 ? "1 of your checkouts is" : `${n} of your checkouts are`} past the release date
         </p>
         <button onClick={dismissForToday} aria-label="Hide for today" title="Hide for today"
-          className="shrink-0 w-8 h-8 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
+          className="ui-hit shrink-0 w-8 h-8 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors">
           <X className="w-4 h-4" />
         </button>
       </div>
       {releaseError && (
-        <p role="alert" className="pl-4 sm:pl-5 pr-4 pb-2 text-body font-medium text-[var(--state-overdue)]">{releaseError}</p>
+        <p role="alert" className="pl-4 sm:pl-5 pr-4 pb-2 text-body font-medium text-[var(--state-overdue-text)]">{releaseError}</p>
       )}
       <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
         {rows.map((r) => (
@@ -136,7 +136,7 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
             <div className="shrink-0 text-body text-[var(--color-text-muted)] whitespace-nowrap">
               Checked out {formatRelative(r.startedAt)}
             </div>
-            <div className="shrink-0 text-body font-medium text-[var(--state-held)] whitespace-nowrap">
+            <div className="shrink-0 text-body font-medium text-[var(--state-held-text)] whitespace-nowrap">
               Was due {formatRelative(dueOf(r))}
             </div>
             <div className="ml-auto shrink-0 flex items-center gap-2">

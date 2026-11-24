@@ -22,20 +22,20 @@ export default function UndoToastHost({
     <div className="fixed bottom-4 max-sm:bottom-24 left-1/2 -translate-x-1/2 z-[280] flex flex-col items-center gap-2 pointer-events-none">
       {toasts.map((t) => {
         const Icon = t.tone === "warning" ? AlertTriangle : t.tone === "success" ? CheckCircle2 : Info;
-        const accent = t.tone === "warning" ? "text-[var(--state-held-text)]" : t.tone === "success" ? "text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]";
+        const accent = t.tone === "warning" ? "text-[var(--state-held)]" : t.tone === "success" ? "text-[var(--state-released)]" : "text-[var(--color-ink-muted)]";
         return (
-          <div key={t.id} className="pointer-events-auto flex items-center gap-3 bg-[var(--color-ink)] text-white rounded-xl shadow-2xl ring-1 ring-[var(--color-ink-line)] pl-3 pr-2 py-2 max-w-md animate-[toastin_.15s_ease-out]">
+          <div key={t.id} className="pointer-events-auto flex items-center gap-3 bg-[var(--color-ink)] text-[var(--color-ink-fg)] rounded-xl shadow-2xl ring-1 ring-[var(--color-ink-line)] pl-3 pr-2 py-2 max-w-md animate-[toastin_.15s_ease-out]">
             <Icon className={`w-4 h-4 shrink-0 ${accent}`} />
             <span className="text-body font-medium flex-1 min-w-0">{t.message}</span>
             {t.undo && (
               <button
                 onClick={() => onUndo(t)}
-                className="inline-flex items-center gap-1 text-caption font-medium text-white bg-white/10 hover:bg-white/20 px-2.5 py-1 rounded-lg transition-colors shrink-0"
+                className="inline-flex items-center gap-1 text-caption font-medium text-[var(--color-ink-fg)] bg-[var(--color-ink-2)] hover:bg-[var(--color-ink-line)] px-2.5 py-1 pointer-coarse:min-h-11 rounded-lg transition-colors shrink-0"
               >
                 <RotateCcw className="w-3 h-3" /> Undo
               </button>
             )}
-            <button onClick={() => onDismiss(t.id)} className="p-1 rounded hover:bg-white/10 text-[var(--color-ink-muted)] shrink-0" title="Dismiss" aria-label="Dismiss">
+            <button onClick={() => onDismiss(t.id)} className="ui-hit p-1 rounded hover:bg-[var(--color-ink-2)] text-[var(--color-ink-muted)] shrink-0" title="Dismiss" aria-label="Dismiss">
               <XIcon className="w-3.5 h-3.5" />
             </button>
           </div>

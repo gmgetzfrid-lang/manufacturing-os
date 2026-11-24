@@ -18,9 +18,11 @@ import React, { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { friendlyError } from "@/lib/friendlyError";
 import {
-  X, Plus, Loader2, FlaskConical, CheckCircle2, AlertTriangle,
+  X, Plus, FlaskConical, CheckCircle2, AlertTriangle,
   Users, Lock, Wand2, PenLine, ArrowLeft,
 } from "lucide-react";
+import { Field, Input, Textarea } from "@/components/ui/Field";
+import { Button } from "@/components/ui/Button";
 import { supabase } from "@/lib/supabase";
 import { createLinkRule, testSkillPatterns, type LinkRuleVisibility } from "@/lib/linkRules";
 import { createAnswerSkill } from "@/lib/answerSkills";
@@ -137,7 +139,7 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
         <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)]">
           {phase === "edit" && (
             <button onClick={() => setPhase("describe")} title="Back to the description" aria-label="Back"
-              className="p-1 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
+              className="ui-hit p-1 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
               <ArrowLeft className="w-4 h-4" />
             </button>
           )}
@@ -157,7 +159,7 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
                   : "The tester runs the same matcher the engine runs: what matches here is what it will match.")}
             </div>
           </div>
-          <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
+          <button onClick={onClose} aria-label="Close" className="ui-hit p-1.5 rounded-lg text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -167,30 +169,30 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
 
         {phase === "describe" ? (
           <div className="p-4 space-y-3">
-            <textarea
-              value={describeText}
-              onChange={(e) => setDescribeText(e.target.value)}
-              rows={4}
-              placeholder={kind === "reasoning"
-                ? 'Describe the discipline in your own words…\n\ne.g. "When someone asks about torque values, always state the lubrication condition the value assumes and warn if the passage does not say."'
-                : 'Describe the connection in your own words…\n\ne.g. "Our maintenance procedures reference work orders like WO-48122, and inspection reports cite permits written as PTW-2024-0113."'}
-              className="w-full px-3 py-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm leading-relaxed"
-            />
+            <Field label={kind === "reasoning" ? "Describe the discipline in your own words" : "Describe the connection in your own words"}>
+              <Textarea
+                value={describeText}
+                onChange={(e) => setDescribeText(e.target.value)}
+                rows={4}
+                placeholder={kind === "reasoning"
+                  ? 'e.g. "When someone asks about torque values, always state the lubrication condition the value assumes and warn if the passage does not say."'
+                  : 'e.g. "Our maintenance procedures reference work orders like WO-48122, and inspection reports cite permits written as PTW-2024-0113."'}
+                className="leading-relaxed"
+              />
+            </Field>
             {error && (
-              <div role="alert" className="flex items-start gap-2 border-l-2 border-[var(--state-overdue)] pl-2.5 text-body text-[var(--state-overdue)]">
+              <div role="alert" className="flex items-start gap-2 border-l-2 border-[var(--state-overdue)] pl-2.5 text-body text-[var(--state-overdue-text)]">
                 <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
               </div>
             )}
             <div className="flex items-center gap-2">
-              <button onClick={() => void draft()} disabled={drafting || describeText.trim().length < 8}
-                className="flex-1 inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-lg text-body font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
-                {drafting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
-                {drafting ? "Drafting with your model…" : "Draft it with AI"}
-              </button>
-              <button onClick={() => setPhase("edit")}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg text-body font-medium text-[var(--color-text-muted)] border border-[var(--color-border-strong)] hover:text-[var(--color-text)]">
-                <PenLine className="w-3.5 h-3.5" /> Start blank
-              </button>
+              <Button onClick={() => void draft()} loading={drafting} disabled={describeText.trim().length < 8} className="flex-1">
+                {!drafting && <Wand2 aria-hidden className="w-4 h-4" />}
+                {drafting ? "Drafting" : "Draft it with AI"}
+              </Button>
+              <Button variant="secondary" onClick={() => setPhase("edit")}>
+                <PenLine aria-hidden className="w-3.5 h-3.5" /> Start blank
+              </Button>
             </div>
             <p className="text-body text-[var(--color-text-faint)]">
               Drafting runs on your own AI key and lands in an editor. You publish it, never the model.
@@ -199,36 +201,29 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
         ) : (
           <div className="p-4 space-y-3">
             {draftNote && (
-              <div className="text-body text-[var(--state-held)] border-l-2 border-[var(--state-held)] pl-2.5">{draftNote}</div>
+              <div className="text-body text-[var(--state-held-text)] border-l-2 border-[var(--state-held)] pl-2.5">{draftNote}</div>
             )}
-            <div>
-              <label className="text-body font-medium text-[var(--color-text-muted)]">Name</label>
-              <input value={name} onChange={(e) => setName(e.target.value)}
-                placeholder="Work order references"
-                className="mt-1 w-full px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm" />
-            </div>
-            <div>
-              <label className="text-body font-medium text-[var(--color-text-muted)]">
-                {kind === "reasoning" ? "What it does" : "What it finds"}
-              </label>
-              <input value={description} onChange={(e) => setDescription(e.target.value)}
+            <Field label="Name">
+              <Input value={name} onChange={(e) => setName(e.target.value)}
+                placeholder="Work order references" />
+            </Field>
+            <Field label={kind === "reasoning" ? "What it does" : "What it finds"}>
+              <Input value={description} onChange={(e) => setDescription(e.target.value)}
                 placeholder={kind === "reasoning"
                   ? "Torque answers always state the lubrication condition the value assumes."
-                  : "Documents that call out a work order number connect to that work order's record."}
-                className="mt-1 w-full px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm" />
-            </div>
+                  : "Documents that call out a work order number connect to that work order's record."} />
+            </Field>
 
             {kind === "reasoning" && (
               <div>
-                <label className="text-body font-medium text-[var(--color-text-muted)]">
-                  The discipline (open with when it applies)
-                </label>
-                <textarea value={instructions} onChange={(e) => setInstructions(e.target.value)}
-                  placeholder={"APPLIES WHEN the question asks about torque values. Otherwise ignore this skill.\n- State the lubrication condition the value assumes.\n- Warn when the passage does not say."}
-                  rows={7}
-                  className="mt-1 w-full px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm leading-relaxed" />
+                <Field label="The discipline (open with when it applies)">
+                  <Textarea value={instructions} onChange={(e) => setInstructions(e.target.value)}
+                    placeholder={"APPLIES WHEN the question asks about torque values. Otherwise ignore this skill.\n- State the lubrication condition the value assumes.\n- Warn when the passage does not say."}
+                    rows={7}
+                    className="leading-relaxed" />
+                </Field>
                 {instructions.trim().length > 0 && !/applies when/i.test(instructions) && (
-                  <div className="mt-1 text-body text-[var(--state-held)]">
+                  <div className="mt-1 text-body text-[var(--state-held-text)]">
                     Start with &ldquo;APPLIES WHEN …&rdquo;. The pack rides every question and must gate itself.
                   </div>
                 )}
@@ -236,33 +231,27 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
             )}
 
             {kind === "connection" && (
-            <div>
-              <label className="text-body font-medium text-[var(--color-text-muted)]">
-                Patterns, one per line (regular expressions)
-              </label>
-              <textarea value={patternsRaw} onChange={(e) => setPatternsRaw(e.target.value)}
+            <Field label="Patterns, one per line (regular expressions)"
+              error={test.errors.length > 0 ? test.errors[0] : undefined}>
+              <Textarea value={patternsRaw} onChange={(e) => setPatternsRaw(e.target.value)}
                 placeholder={"\\bWO-\\d{5}\\b\n\\bPERMIT-\\d{4}\\b"}
-                rows={3}
-                className="mt-1 w-full px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm font-mono" />
-              {test.errors.length > 0 && (
-                <div className="mt-1 text-body text-[var(--state-overdue)]">{test.errors[0]}</div>
-              )}
-            </div>
+                rows={3} spellCheck={false} autoCapitalize="none" autoCorrect="off"
+                className="font-mono" />
+            </Field>
             )}
 
             {kind === "connection" && (
             <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)]/50 p-3">
-              <div className="flex items-center gap-1.5 text-body font-medium text-[var(--color-text-muted)] mb-1.5">
-                <FlaskConical className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Prove it on real text
-              </div>
-              <textarea value={sample} onChange={(e) => setSample(e.target.value)}
-                placeholder="Paste a paragraph from one of your documents…"
-                rows={3}
-                className="w-full px-3 py-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm" />
+              <label htmlFor="skill-sample" className="flex items-center gap-1.5 text-body font-medium text-[var(--color-text-muted)] mb-1.5">
+                <FlaskConical aria-hidden className="w-3.5 h-3.5 text-[var(--color-text-muted)]" /> Prove it on real text
+              </label>
+              <Textarea id="skill-sample" value={sample} onChange={(e) => setSample(e.target.value)}
+                placeholder="Paste a paragraph from one of your documents"
+                rows={3} />
               {sample && patterns.length > 0 && (
                 <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
                   {test.matches.length === 0 ? (
-                    <span className="text-body text-[var(--state-held)]">No matches in this sample.</span>
+                    <span className="text-body text-[var(--state-held-text)]">No matches in this sample.</span>
                   ) : test.matches.map((m) => (
                     <span key={m} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] text-body font-display font-semibold text-[var(--color-text)]"
                       style={{ animation: "pop 0.2s var(--ease-fluid) both" }}>
@@ -275,16 +264,16 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
             )}
 
             <div>
-              <label className="text-body font-medium text-[var(--color-text-muted)]">Sharing</label>
-              <div className="mt-1 flex items-center gap-2">
+              <div id="skill-sharing" className="text-body font-medium text-[var(--color-text)]">Sharing</div>
+              <div role="group" aria-labelledby="skill-sharing" className="mt-1.5 flex items-center gap-2">
                 <button type="button" onClick={() => setVisibility("org")} aria-pressed={visibility === "org"}
-                  className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border text-body font-semibold ${visibility === "org"
+                  className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 pointer-coarse:min-h-11 rounded-lg border text-body font-semibold ${visibility === "org"
                     ? "border-[var(--color-text)] text-[var(--color-surface)] bg-[var(--color-text)] dark:bg-[var(--color-surface-2)]"
                     : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
                   <Users className="w-3.5 h-3.5" /> Share org-wide
                 </button>
                 <button type="button" onClick={() => setVisibility("private")} aria-pressed={visibility === "private"}
-                  className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border text-body font-semibold ${visibility === "private"
+                  className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 pointer-coarse:min-h-11 rounded-lg border text-body font-semibold ${visibility === "private"
                     ? "border-[var(--color-text)] text-[var(--color-surface)] bg-[var(--color-text)] dark:bg-[var(--color-surface-2)]"
                     : "border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>
                   <Lock className="w-3.5 h-3.5" /> Just me
@@ -298,23 +287,22 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
             </div>
 
             {error && (
-              <div role="alert" className="flex items-start gap-2 border-l-2 border-[var(--state-overdue)] pl-2.5 text-body text-[var(--state-overdue)]">
+              <div role="alert" className="flex items-start gap-2 border-l-2 border-[var(--state-overdue)] pl-2.5 text-body text-[var(--state-overdue-text)]">
                 <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {error}
               </div>
             )}
 
             <div className="flex items-center justify-end gap-2 pt-1">
-              <button onClick={onClose} className="px-3 py-2 rounded-lg text-body font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+              <Button variant="secondary" onClick={onClose}>
                 Cancel
-              </button>
-              <button onClick={() => void save()}
-                disabled={saving || !name.trim() || (kind === "reasoning"
+              </Button>
+              <Button onClick={() => void save()} loading={saving}
+                disabled={!name.trim() || (kind === "reasoning"
                   ? instructions.trim().length < 40
-                  : patterns.length === 0 || test.errors.length > 0)}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-body font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
-                {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
-                Publish skill
-              </button>
+                  : patterns.length === 0 || test.errors.length > 0)}>
+                {!saving && <Plus aria-hidden className="w-3.5 h-3.5" />}
+                {saving ? "Publishing" : "Publish skill"}
+              </Button>
             </div>
           </div>
         )}

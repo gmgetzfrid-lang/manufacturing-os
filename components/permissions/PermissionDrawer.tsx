@@ -334,7 +334,7 @@ export default function PermissionsDrawer(props: {
             <div className="text-body text-[var(--color-text-muted)]">
               Permissions · {nodeType === "collection" ? "folder" : nodeType}{!canEdit && <span className="text-[var(--color-text)]"> · read only</span>}
             </div>
-            <h2 className="mt-1 font-display text-[24px] leading-tight font-semibold break-words">{nodeLabel}</h2>
+            <h2 className="mt-1 font-display text-title leading-tight font-semibold break-words">{nodeLabel}</h2>
           </div>
           <button type="button" onClick={close} disabled={saving} className={`-mr-2 ${btnIcon}`} title="Close" aria-label="Close">
             <X className="h-5 w-5" />
@@ -457,7 +457,7 @@ export default function PermissionsDrawer(props: {
                       const on = actions.includes(a.key);
                       return (
                         <button key={a.key} type="button" role="checkbox" aria-checked={on} onClick={() => toggleAction(a.key)} title={a.hint}
-                          className={`inline-flex items-center gap-1 h-8 pointer-coarse:h-10 px-2.5 rounded-md text-body font-medium border transition-colors ${on ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border-strong)] hover:text-[var(--color-text)]"}`}>
+                          className={`inline-flex items-center gap-1 h-8 pointer-coarse:h-11 px-2.5 rounded-md text-body font-medium border transition-colors ${on ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-text)]" : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border-strong)] hover:text-[var(--color-text)]"}`}>
                           {on && <Check aria-hidden className="w-3.5 h-3.5" />}{a.label}
                         </button>
                       );
@@ -493,7 +493,7 @@ export default function PermissionsDrawer(props: {
           {canEdit && dirty && <span className="mr-auto text-body text-[var(--color-text-muted)]">Not saved yet</span>}
           <Button variant="secondary" onClick={close} disabled={saving}>{canEdit ? "Cancel" : "Close"}</Button>
           {canEdit && (
-            <Button onClick={() => void save()} loading={saving} disabled={!dirty} title={!dirty ? "Nothing changed yet" : undefined}>Save</Button>
+            <Button onClick={() => void save()} loading={saving} disabled={!dirty} title={!dirty ? "Nothing changed yet" : undefined}>{saving ? "Saving" : "Save"}</Button>
           )}
         </div>
       </div>

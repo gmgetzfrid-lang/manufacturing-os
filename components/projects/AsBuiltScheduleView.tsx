@@ -242,7 +242,7 @@ function Header({ shifts, tz, dayLabel }: { shifts: Array<{ start: number; kind:
 
 function Grid({ shifts }: { shifts: Array<{ kind: string }> }) {
   const PX = React.useContext(PxCtx);
-  return <>{shifts.map((s, i) => <i key={i} aria-hidden className={`absolute top-0 bottom-0 ${s.kind === "night" ? "border-l border-dashed border-[var(--color-border)] bg-slate-500/[0.03]" : "border-l border-[var(--color-border)]"}`} style={{ left: i * PX, width: PX }} />)}</>;
+  return <>{shifts.map((s, i) => <i key={i} aria-hidden className={`absolute top-0 bottom-0 ${s.kind === "night" ? "border-l border-dashed border-[var(--color-border)] bg-[color-mix(in_srgb,var(--color-text)_3%,transparent)]" : "border-l border-[var(--color-border)]"}`} style={{ left: i * PX, width: PX }} />)}</>;
 }
 
 const when = (t: number | null, tz: string) => (t == null ? "-" : `${fmtInTz(t, tz, { weekday: "short", month: "numeric", day: "numeric" })} ${fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true })}`);
@@ -376,7 +376,7 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
                     <td className={`${cellN} ${ow?.waited ? "text-[var(--state-held-text)]" : ""}`}>{ow?.waited || "-"}</td>
                     <td className="p-0 relative"><div className="relative" style={{ width, height: Math.max(44, 12 + bar.h + 7) }}>
                       <Grid shifts={work.shifts} />
-                      {o.planStart != null && o.planFinish != null && <i className="absolute top-1.5 h-1 rounded bg-slate-300" style={{ left: x(o.planStart), width: Math.max(2, x(o.planFinish) - x(o.planStart)) }} />}
+                      {o.planStart != null && o.planFinish != null && <i className="absolute top-1.5 h-1 rounded bg-[var(--color-border-strong)]" style={{ left: x(o.planStart), width: Math.max(2, x(o.planFinish) - x(o.planStart)) }} />}
                       {bar.nodes}
                       {ow?.cells.map((c, i) => c === "wait" && <i key={i} className="absolute bottom-1 h-[4px] rounded-sm" style={{ left: i * PX + 1, width: PX - 2, ...ORDER_WAIT }} title="Work order open, nothing logged that shift" />)}
                       {line}
@@ -406,7 +406,7 @@ function BuiltView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: As
                         <td className={`${cellN} ${waited ? "text-[var(--state-held-text)]" : ""}`}>{waited || "-"}</td>
                         <td className="p-0 relative"><div className="relative min-h-[42px] h-full" style={{ width }}>
                           <Grid shifts={work.shifts} />
-                          {s.planStart != null && s.planFinish != null && <i className="absolute top-1.5 h-1 rounded bg-slate-300" style={{ left: x(s.planStart), width: Math.max(2, x(s.planFinish) - x(s.planStart)) }} />}
+                          {s.planStart != null && s.planFinish != null && <i className="absolute top-1.5 h-1 rounded bg-[var(--color-border-strong)]" style={{ left: x(s.planStart), width: Math.max(2, x(s.planFinish) - x(s.planStart)) }} />}
                           {w.worked.map((k) => idx.has(k) && <i key={k} title={`${w.moved[k] ? `${r1(w.moved[k])}% moved` : "started"}`} className="absolute top-3.5 h-4 rounded-sm" style={{ left: idx.get(k)! * PX + 2, width: PX - 4, background: p.colorOf(w.crew) }} />)}
                           {w.waits.flatMap((r) => r.keys).map((k) => <i key={`w${k}`} className="absolute top-3.5 h-4 rounded-sm" style={{ left: idx.get(k)! * PX + 2, width: PX - 4, ...WAIT }} />)}
                           {w.ready?.shifts.map((k) => idx.has(k) && <i key={`r${k}`} className="absolute top-3.5 h-4 rounded-sm" style={{ left: idx.get(k)! * PX + 2, width: PX - 4, ...READY }} />)}
@@ -493,7 +493,7 @@ function PlanFor({ run, stepName, crews, doneBefore, onSave, onCancel }: { run: 
   const [name, setName] = useState(reason.slice(0, 120));
   const [crew, setCrew] = useState(guess);
   const [hours, setHours] = useState(String(run.shifts * 12));
-  const field = "rounded border border-slate-400 bg-[var(--color-surface)] px-1.5 py-1 text-caption text-[var(--color-text)]";
+  const field = "rounded border border-[var(--color-border-control)] bg-[var(--color-surface)] px-1.5 py-1 text-caption text-[var(--color-text)]";
   const save = () => {
     const base = { id: `p${Date.now().toString(36)}`, said: `${stepName}: ${reason}`, at: Date.now() };
     if (where === "pre") onSave({ ...base, kind: "add", name: name.trim() || reason, crew, hours: 0, pre: true });
@@ -587,8 +587,8 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
           <div className="font-medium text-body">Tell the schedule</div>
           <div className="flex gap-2">
             <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void send(); }} placeholder='"V-7 is critical path, start it as soon as possible", "Ancon has 2 crews on nights", "PSV-021 needs 6 hours"'
-              aria-label="Tell the schedule" className="flex-1 min-w-0 rounded-lg border border-slate-400 bg-[var(--color-surface)] px-3 py-2 text-body text-[var(--color-text)]" />
-            <button type="button" onClick={() => void send()} disabled={busy || !text.trim() || !p.orgId} className={btnQuiet}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Send</button>
+              aria-label="Tell the schedule" className="flex-1 min-w-0 rounded-lg border border-[var(--color-border-control)] bg-[var(--color-surface)] px-3 py-2 text-body text-[var(--color-text)]" />
+            <button type="button" onClick={() => void send()} disabled={busy || !text.trim() || !p.orgId} className={btnQuiet}>{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} {busy ? "Sending" : "Send"}</button>
           </div>
           {answer && (
             <div className="rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-caption space-y-1.5">
@@ -619,7 +619,7 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
             {mine.map((c) => (
               <li key={c.id} className="flex items-start gap-2">
                 <span className="flex-1">{describe(c, orderName, actName, dayOf)}{c.said ? <span className="text-[var(--color-text-muted)]"> · from &quot;{c.said.slice(0, 120)}&quot;</span> : null}</span>
-                {p.canEdit && <button type="button" onClick={() => p.onChanges(changes.filter((x) => x.id !== c.id))} className="cursor-pointer inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"><Undo2 className="w-3.5 h-3.5" /> Undo</button>}
+                {p.canEdit && <button type="button" onClick={() => p.onChanges(changes.filter((x) => x.id !== c.id))} className="cursor-pointer inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors"><Undo2 className="w-3.5 h-3.5" /> Undo</button>}
               </li>
             ))}
           </ul>
@@ -924,7 +924,7 @@ function CrewSizeEdit({ crew, size, pace, mine, onSave, onClear }: { crew: strin
   const [day, setDay] = useState(String(size.hands?.day ?? ""));
   const [night, setNight] = useState(String(size.hands?.night ?? ""));
   const [jobs, setJobs] = useState(String(size.jobs ?? Math.max(1, size.worked)));
-  const field = "w-14 rounded border border-slate-400 bg-[var(--color-surface)] px-1.5 py-0.5 text-caption text-[var(--color-text)]";
+  const field = "w-14 rounded border border-[var(--color-border-control)] bg-[var(--color-surface)] px-1.5 py-0.5 text-caption text-[var(--color-text)]";
   const num = (v: string) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n >= 1 ? n : null; };
   const ok = mode === "jobs" ? num(jobs) != null : (!size.works.day || num(day) != null) && (!size.works.night || num(night) != null);
   const save = () => {

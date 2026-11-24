@@ -161,7 +161,7 @@ export default function FolderTree({
           <button
             type="button"
             className={cx(
-              "h-7 w-7 grid place-items-center rounded-lg border border-[var(--color-border)]",
+              "h-7 w-7 pointer-coarse:size-11 grid place-items-center rounded-lg border border-[var(--color-border)]",
               "hover:bg-[var(--color-surface-2)]",
               hasKids ? "opacity-100" : "opacity-0 pointer-events-none"
             )}
@@ -178,7 +178,7 @@ export default function FolderTree({
           {open ? <FolderOpen className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" /> : <Folder className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" />}
 
           <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium text-[var(--color-text)]">{node.name}</div>
+            <div className="truncate text-body font-medium text-[var(--color-text)]">{node.name}</div>
             {Array.isArray(node.pathNames) && node.pathNames.length > 1 ? (
               <div className="truncate text-body text-[var(--color-text-muted)]">
                 {node.pathNames.slice(0, -1).join(" / ")}
@@ -237,11 +237,11 @@ export default function FolderTree({
     <div className="w-full">
       <div className="mb-2 flex items-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
         <Search className="h-4 w-4 text-[var(--color-text-muted)]" />
-        <input
+        <input type="search" aria-label="Search folders"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search folders"
-          className="w-full bg-transparent text-sm outline-none placeholder:text-[var(--color-text-faint)]"
+          className="w-full bg-transparent text-body outline-none placeholder:text-[var(--color-text-faint)]"
         />
       </div>
 
@@ -257,14 +257,14 @@ export default function FolderTree({
           >
             <div className="h-7 w-7" />
             <Folder className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" />
-            <div className="truncate text-sm font-medium text-[var(--color-text)]">{rootLabel}</div>
+            <div className="truncate text-body font-medium text-[var(--color-text)]">{rootLabel}</div>
           </div>
         ) : null}
 
         {filteredRoots.length ? (
           filteredRoots.map((n) => <Row key={n.id} node={n} depth={0} />)
         ) : (
-          <div className="px-2 py-6 text-center text-sm text-[var(--color-text-muted)]">No folders found.</div>
+          <div className="px-2 py-6 text-center text-body text-[var(--color-text-muted)]">No folders found.</div>
         )}
       </div>
     </div>

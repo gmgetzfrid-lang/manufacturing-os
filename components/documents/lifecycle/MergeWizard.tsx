@@ -22,6 +22,7 @@ import StepPath from "@/components/ui/StepPath";
 import FileThumb from "@/components/ui/FileThumb";
 import PdfDrop, { formatSize } from "@/components/documents/lifecycle/PdfDrop";
 import { tryUpload } from "@/lib/uploadRetry";
+import { Field } from "@/components/ui/Field";
 
 interface MergeWizardProps {
   sourceDoc: DocumentRecord;
@@ -159,7 +160,7 @@ export default function MergeWizard(props: MergeWizardProps) {
               </div>
             </div>
           </div>
-          <button aria-label="Close" onClick={onCancel} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
+          <button aria-label="Close" onClick={onCancel} className="ui-hit p-1.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -227,7 +228,7 @@ export default function MergeWizard(props: MergeWizardProps) {
           <button
             onClick={step === 1 ? onCancel : () => setStep((s) => (s - 1) as 1 | 2 | 3)}
             disabled={submitting}
-            className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] inline-flex items-center gap-1"
+            className="text-body text-[var(--color-text-muted)] hover:text-[var(--color-text)] inline-flex items-center gap-1"
           >
             <ChevronLeft className="w-3.5 h-3.5" /> {step === 1 ? "Cancel" : "Back"}
           </button>
@@ -235,7 +236,7 @@ export default function MergeWizard(props: MergeWizardProps) {
             <button
               onClick={() => setStep((s) => (s + 1) as 1 | 2 | 3)}
               disabled={step === 1 ? !step1Valid : !step2Valid}
-              className="inline-flex items-center gap-1.5 text-sm font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 text-body font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40"
             >
               Next <ArrowRight className="w-3.5 h-3.5" />
             </button>
@@ -243,7 +244,7 @@ export default function MergeWizard(props: MergeWizardProps) {
             <button
               onClick={onSubmit}
               disabled={submitting || !step3Valid}
-              className="inline-flex items-center gap-1.5 text-sm font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 text-body font-medium bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] px-3 py-1.5 rounded disabled:opacity-40"
             >
               {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
               Confirm Merge
@@ -316,15 +317,15 @@ function Step1Sources({
 
       <div className="relative">
         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-faint)]" />
-        <input
+        <input type="search" aria-label="Search documents"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search other documents in this library by number or title…"
-          className="w-full pl-8 pr-3 py-1.5 text-sm border border-[var(--color-border-strong)] rounded"
+          className="w-full pl-8 pr-3 py-1.5 text-body border border-[var(--color-border-strong)] rounded"
         />
       </div>
 
-      {loading && <div className="text-xs text-[var(--color-text-muted)] inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Searching…</div>}
+      {loading && <div className="text-caption text-[var(--color-text-muted)] inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Searching…</div>}
 
       {results.length > 0 && (
         <div className="border border-[var(--color-border)] rounded-lg divide-y divide-[var(--color-border)] max-h-60 overflow-y-auto">
@@ -356,7 +357,7 @@ function SourceChip({ doc, primary, onRemove }: { doc: DocumentRecord; primary?:
       <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{doc.documentNumber || "-"}</span>
       <span className="text-[var(--color-text-muted)] truncate flex-1">{doc.title || doc.name}</span>
       {onRemove && (
-        <button onClick={onRemove} className="p-1 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)]">
+        <button onClick={onRemove} aria-label={`Remove ${doc.documentNumber || doc.title || "this document"}`} className="ui-hit p-1 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)]">
           <Trash2 className="w-3 h-3" />
         </button>
       )}
@@ -394,18 +395,25 @@ function Step2Target(props: {
       {mode === "create_new" && (
         <div className="border border-[var(--color-border)] rounded-lg p-3 bg-[var(--color-surface-2)]/40 space-y-2">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-            <DuplicateAwareInput
-              value={props.newDocNumber}
-              onChange={props.setNewDocNumber}
-              onDuplicateChange={(isDup) => props.setNewDocNumberConflict(isDup)}
-              check={{ table: "documents", column: "document_number", scope: { library_id: props.libraryId } }}
-              fieldLabel="document number"
-              placeholder="Document number"
-              className="font-display tabular-nums"
-            />
-            <input value={props.newTitle} onChange={(e) => props.setNewTitle(e.target.value)} placeholder="Title" className="text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5" />
-            <input value={props.newRev} onChange={(e) => props.setNewRev(e.target.value)} placeholder="Initial rev" className="text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5 font-display tabular-nums" />
-            <input value={props.newSheetNumber} onChange={(e) => props.setNewSheetNumber(e.target.value)} placeholder="Sheet # (optional)" className="text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5 font-display tabular-nums" />
+            <Field label="Document number">
+              <DuplicateAwareInput
+                value={props.newDocNumber}
+                onChange={props.setNewDocNumber}
+                onDuplicateChange={(isDup) => props.setNewDocNumberConflict(isDup)}
+                check={{ table: "documents", column: "document_number", scope: { library_id: props.libraryId } }}
+                fieldLabel="document number"
+                className="font-display tabular-nums"
+              />
+            </Field>
+            <Field label="Title">
+              <input value={props.newTitle} onChange={(e) => props.setNewTitle(e.target.value)} className="w-full text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5" />
+            </Field>
+            <Field label="Initial revision">
+              <input value={props.newRev} onChange={(e) => props.setNewRev(e.target.value)} className="w-full text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5 font-display tabular-nums" />
+            </Field>
+            <Field label="Sheet number (optional)">
+              <input value={props.newSheetNumber} onChange={(e) => props.setNewSheetNumber(e.target.value)} className="w-full text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5 font-display tabular-nums" />
+            </Field>
           </div>
           <PdfDrop onFile={props.setNewFile} file={props.newFile}>
             {props.newFile ? (
@@ -419,7 +427,9 @@ function Step2Target(props: {
               </span>
             )}
           </PdfDrop>
-          <input value={props.newChangeLog} onChange={(e) => props.setNewChangeLog(e.target.value)} placeholder="Initial change note" className="w-full text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5" />
+          <Field label="Initial change note">
+            <input value={props.newChangeLog} onChange={(e) => props.setNewChangeLog(e.target.value)} className="w-full text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5" />
+          </Field>
         </div>
       )}
 
@@ -449,7 +459,9 @@ function Step2Target(props: {
           {props.extendRevUp && (
             <>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                <input value={props.extendRevLabel} onChange={(e) => props.setExtendRevLabel(e.target.value)} placeholder="New rev label" className="text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5 font-display tabular-nums" />
+                <Field label="New revision label">
+                  <input value={props.extendRevLabel} onChange={(e) => props.setExtendRevLabel(e.target.value)} className="w-full text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5 font-display tabular-nums" />
+                </Field>
               </div>
               <PdfDrop onFile={props.setExtendFile} file={props.extendFile}>
                 {props.extendFile ? (
@@ -463,7 +475,9 @@ function Step2Target(props: {
                   </span>
                 )}
               </PdfDrop>
-              <input value={props.extendChangeLog} onChange={(e) => props.setExtendChangeLog(e.target.value)} placeholder="Rev change narrative" className="w-full text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5" />
+              <Field label="Change narrative">
+                <input value={props.extendChangeLog} onChange={(e) => props.setExtendChangeLog(e.target.value)} className="w-full text-body border border-[var(--color-border-strong)] rounded px-2 py-1.5" />
+              </Field>
             </>
           )}
         </div>
@@ -478,7 +492,7 @@ function ModeButton({ active, onClick, label, sub }: { active: boolean; onClick:
       onClick={onClick}
       className={`flex-1 text-left p-3 border-2 rounded-lg ${active ? "border-[var(--color-text)] bg-[var(--color-surface-2)] ring-1 ring-[var(--color-text)]" : "border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-border-strong)]"}`}
     >
-      <div className="text-sm font-medium text-[var(--color-text)]">{label}</div>
+      <div className="text-body font-medium text-[var(--color-text)]">{label}</div>
       <div className="text-body text-[var(--color-text-muted)] mt-0.5">{sub}</div>
     </button>
   );
@@ -547,12 +561,12 @@ function Step3TagsAndConfirm(props: {
           onChange={(e) => props.setReason(e.target.value)}
           rows={2}
           placeholder='e.g. "Consolidated overhead sheets 3 and 4: equipment count after relief redesign no longer justifies two sheets."'
-          className="mt-1 w-full text-sm border border-[var(--color-border-strong)] rounded px-2.5 py-1.5"
+          className="mt-1 w-full text-body border border-[var(--color-border-strong)] rounded px-2.5 py-1.5"
         />
       </label>
       <label className="block">
         <span className="text-body font-medium text-[var(--color-text)] ">MOC Reference</span>
-        <input value={props.moc} onChange={(e) => props.setMoc(e.target.value)} className="mt-1 w-full text-sm border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 font-display tabular-nums" />
+        <input value={props.moc} onChange={(e) => props.setMoc(e.target.value)} className="mt-1 w-full text-body border border-[var(--color-border-strong)] rounded px-2.5 py-1.5 font-display tabular-nums" />
       </label>
 
       <div className="border border-[var(--color-border)] rounded-lg p-3 bg-[var(--color-surface)]">

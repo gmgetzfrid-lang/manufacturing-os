@@ -35,7 +35,7 @@ export default function ExecutionGuide({ open: openProp, onOpenChange, buttonCla
       {/* Toolbar trigger. */}
       <button
         onClick={() => setOpen(true)}
-        className={`inline-flex items-center justify-center w-9 h-9 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors ${buttonClass}`}
+        className={`ui-hit inline-flex items-center justify-center w-9 h-9 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-colors ${buttonClass}`}
         title="How this view works" aria-label="How this view works"
       >
         <HelpCircle className="w-4 h-4" />
@@ -49,7 +49,7 @@ export default function ExecutionGuide({ open: openProp, onOpenChange, buttonCla
             <div className="px-5 py-4 border-b border-[var(--color-border)] flex items-center gap-2">
               <HelpCircle className="w-5 h-5 text-[var(--color-text-muted)]" />
               <h2 className="text-reading font-medium text-[var(--color-text)]">How this view works</h2>
-              <button onClick={() => setOpen(false)} aria-label="Close" className="ml-auto p-1.5 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors"><XIcon className="w-4 h-4" /></button>
+              <button onClick={() => setOpen(false)} aria-label="Close" className="ui-hit ml-auto p-1.5 rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] transition-colors"><XIcon className="w-4 h-4" /></button>
             </div>
 
             <div className="overflow-y-auto p-5 space-y-5 text-body text-[var(--color-text)]">
@@ -63,7 +63,7 @@ export default function ExecutionGuide({ open: openProp, onOpenChange, buttonCla
               </Section>
 
               <Section title="Mark what's done (or doing, on-hold, blocked)">
-                <Row icon={<span className="w-3.5 h-3.5 rounded-full bg-slate-400 border border-black/10 inline-block" />} label="The status dot">
+                <Row icon={<span className="w-3.5 h-3.5 rounded-full bg-[var(--color-border-control)] border border-[var(--color-border)] inline-block" />} label="The status dot">
                   Click the colored dot on any task or sub-item. A menu lets you set <b>Planned · In progress · Done · On hold · Blocked · Missed</b>, the same everywhere. On-hold and Blocked let you type a quick reason.
                 </Row>
               </Section>
@@ -97,7 +97,7 @@ export default function ExecutionGuide({ open: openProp, onOpenChange, buttonCla
             </div>
 
             <div className="px-5 py-3 border-t border-[var(--color-border)] flex justify-end">
-              <button onClick={() => setOpen(false)} className="h-10 text-body font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-5 rounded-xl transition-colors">Got it</button>
+              <button onClick={() => setOpen(false)} className="h-10 pointer-coarse:h-11 text-body font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-5 rounded-xl transition-colors">Got it</button>
             </div>
           </div>
         </div>

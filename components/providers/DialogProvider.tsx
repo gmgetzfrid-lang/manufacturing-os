@@ -17,6 +17,7 @@ import { AlertTriangle, HelpCircle, Info, X } from "lucide-react";
 import { readDraft, clearDraft } from "@/hooks/useDraft";
 import { Modal, ModalFooter } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
+import { controlClass } from "@/components/ui/Field";
 
 type Tone = "default" | "danger";
 
@@ -141,7 +142,7 @@ export function DialogHost() {
                   try { if (v.trim()) localStorage.setItem(`draft:${draftKey}`, JSON.stringify(v)); else clearDraft(draftKey); } catch { /* private mode */ }
                 }}
                 placeholder={current.placeholder}
-                className="mt-3 w-full h-9 px-3 text-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]"
+                className={`mt-3 ${controlClass}`}
               />
             )}
           </div>

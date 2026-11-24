@@ -200,7 +200,7 @@ export default function ModifyDocumentRouter(props: ModifyDocumentRouterProps) {
               {doc.documentNumber || doc.title || doc.id} · Rev {doc.rev || "-"} · {doc.status || "-"}
             </div>
           </div>
-          <button aria-label="Close" onClick={onClose} className="p-1.5 rounded hover:bg-slate-200 text-[var(--color-text-muted)]">
+          <button aria-label="Close" onClick={onClose} className="ui-hit p-1.5 rounded hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -282,7 +282,7 @@ function RouterChoice({
         <Icon className="w-4 h-4" />
       </div>
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium text-[var(--color-text)]">{label}</div>
+        <div className="text-body font-medium text-[var(--color-text)]">{label}</div>
         <div className="text-body text-[var(--color-text-muted)] mt-0.5">{sub}</div>
       </div>
       <ChevronRight className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />

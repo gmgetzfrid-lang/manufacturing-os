@@ -207,7 +207,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
         {lines.map((l, i) => <div key={l} className={i === 0 ? `font-medium ${tone ?? "text-[var(--color-text)]"}` : "text-[var(--color-text-muted)]"}>{l}</div>)}
       </div>
     );
-    const toneOf = (k: string) => (k === "added" ? "text-[var(--color-text)] dark:text-[var(--color-text)]" : k === "discovery" ? "text-[var(--color-text)] dark:text-[var(--color-text)]" : undefined);
+    const toneOf = (k: string) => (k === "added" ? "text-[var(--color-text)]" : k === "discovery" ? "text-[var(--color-text)]" : undefined);
     return (
       <div className="ml-9 mt-2 space-y-1.5">
         <div className="text-caption font-medium text-[var(--color-text-faint)]">Where it came from</div>
@@ -266,7 +266,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
           <Search className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="WO #, equipment, step, crew…" aria-label="Search work orders"
             className="flex-1 min-w-0 bg-transparent text-body" />
-          {query && <button type="button" onClick={() => setQuery("")} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Clear</button>}
+          {query && <button type="button" onClick={() => setQuery("")} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Clear</button>}
         </label>
         <select value={who ?? "__all"} onChange={(e) => setWho(e.target.value === "__all" ? null : e.target.value)} aria-label="Who"
           className={`h-9 pointer-coarse:h-11 rounded-lg border px-2 text-body font-medium text-[var(--color-text)] ${who != null ? "border-[var(--color-text)] bg-[var(--color-surface)]" : "border-transparent bg-[var(--color-surface-2)]"}`}>
@@ -464,7 +464,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
                             onDone={() => { setCancelling(null); toggle(o.key); onCancelled?.(); }} />
                         ) : (
                           <button type="button" onClick={() => setCancelling(o.key)} title="Planned, but not done here: kept on record as cancelled, with why (and where it moved)"
-                            className="inline-flex items-center gap-1.5 text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)] px-2 py-1 rounded-md">
+                            className="inline-flex items-center gap-1.5 text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)] px-2 py-1 pointer-coarse:min-h-11 rounded-md">
                             <Ban className="w-3.5 h-3.5" /> Cancel work order
                           </button>
                         )}
@@ -485,7 +485,7 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
       {!showCancelled && shown.length > listed.length && (
         <div className="px-3 sm:px-4 py-3 border-t border-[var(--color-border)] flex flex-wrap items-center gap-2">
           <button type="button" onClick={() => setLimit((n) => n + WO_STEP)} className={QUIET}>Show {Math.min(WO_STEP, shown.length - listed.length)} more</button>
-          <button type="button" onClick={() => setLimit(Infinity)} className="h-9 px-3 rounded-lg text-body font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Show all {shown.length}</button>
+          <button type="button" onClick={() => setLimit(Infinity)} className="h-9 pointer-coarse:h-11 px-3 rounded-lg text-body font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Show all {shown.length}</button>
         </div>
       )}
       <div className="px-3 sm:px-4 py-3 border-t border-[var(--color-border)] text-caption text-[var(--color-text-muted)]">{shown.length} of {orders.length} work orders · tap one to update its steps</div>

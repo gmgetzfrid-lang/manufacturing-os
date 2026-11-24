@@ -288,7 +288,7 @@ function FolderTree({
                 tabIndex={-1}
                 aria-label={r.open ? `Close ${f.name}` : `Open ${f.name}`}
                 onClick={(e) => { e.stopPropagation(); toggle(f.id!); }}
-                className={`relative w-4 h-4 shrink-0 grid place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] ${r.hasKids ? "" : "invisible"}`}
+                className={`pointer-coarse:size-11 relative w-4 h-4 shrink-0 grid place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)] ${r.hasKids ? "" : "invisible"}`}
               >
                 <ChevronRight className={`ui-chevron w-3.5 h-3.5 ${r.open ? "rotate-90" : ""}`} />
                 {springing === f.id && (
@@ -354,7 +354,7 @@ export default function FolderRail({
           {...railDropHandlers(null, onDropItems)}
           aria-label={libraryName}
           aria-current={!currentFolderId ? "page" : undefined}
-          className={`relative w-9 h-9 rounded-lg grid place-items-center transition-colors ${
+          className={`pointer-coarse:size-11 relative w-9 h-9 rounded-lg grid place-items-center transition-colors ${
             !currentFolderId
               ? "bg-[var(--color-surface-2)] text-[var(--color-text)]"
               : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]"
@@ -379,7 +379,7 @@ export default function FolderRail({
               {...railDropHandlers(folder.id ?? null, onDropItems)}
               aria-label={folder.name}
               aria-current={currentFolderId === folder.id ? "page" : undefined}
-              className={`relative w-9 h-9 rounded-lg grid place-items-center transition-colors ${
+              className={`pointer-coarse:size-11 relative w-9 h-9 rounded-lg grid place-items-center transition-colors ${
                 isActive
                   ? "bg-[var(--color-surface-2)] text-[var(--color-text)]"
                   : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]"
@@ -399,7 +399,7 @@ export default function FolderRail({
             type="button"
             onClick={onCreateFolder}
             aria-label="New folder"
-            className="w-9 h-9 rounded-lg grid place-items-center text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)] transition-colors"
+            className="pointer-coarse:size-11 w-9 h-9 rounded-lg grid place-items-center text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)] transition-colors"
             title="New folder"
           >
             <FolderPlus className="w-4 h-4" />

@@ -113,7 +113,7 @@ function AiInstructionsInner() {
   };
 
   const remove = async (r: AiInstruction) => {
-    if (!(await appConfirm({ message: `Delete "${r.title}"? The AI stops following it right away. To pause it instead, turn it off.`, tone: "danger", confirmLabel: "Delete" }))) return;
+    if (!(await appConfirm({ title: `Delete "${r.title}"?`, message: "The AI stops following it right away. To pause it instead, turn it off.", tone: "danger", confirmLabel: "Delete instruction" }))) return;
     try { await deleteAiInstruction(r.id); await refresh(); }
     catch (e) { setError(said(e, "Couldn't delete the instruction.")); }
   };
@@ -256,7 +256,7 @@ function AiInstructionsInner() {
           </ModalBody>
           <ModalFooter>
             <Button variant="secondary" onClick={closeEditor} disabled={busy}>Cancel</Button>
-            <Button onClick={() => void save()} loading={busy}>{editing.id ? "Save" : "Teach it"}</Button>
+            <Button onClick={() => void save()} loading={busy}>{busy ? "Saving" : editing.id ? "Save" : "Teach it"}</Button>
           </ModalFooter>
         </Modal>
       )}

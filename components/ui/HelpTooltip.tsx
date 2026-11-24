@@ -56,7 +56,7 @@ export default function HelpTooltip({
       <button
         type="button"
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen((v) => !v); }}
-        className="text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] transition-colors focus:outline-none"
+        className="ui-hit rounded-full text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] transition-colors"
         aria-label="More info"
       >
         <HelpCircle className={iconSize} />

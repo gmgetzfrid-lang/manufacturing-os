@@ -12,7 +12,7 @@ import HelpTooltip from "@/components/ui/HelpTooltip";
 import { Card } from "@/components/ui/PageHero";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Search, Plus, X } from "lucide-react";
+import { Search, Plus, X, CircleAlert } from "lucide-react";
 
 /** A document's status as a pill: issued green, in review amber, draft grey. */
 function docPill(status: string): string {
@@ -39,8 +39,8 @@ interface LinkedDoc {
 }
 
 const SOURCE_BADGE: Record<string, { label: string; cls: string; hint: string }> = {
-  checkout: { label: "via checkout", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)] border-[var(--color-border-strong)]", hint: "Linked automatically when someone checked it out under this project" },
-  manual: { label: "attached", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] dark:text-[var(--color-text)] border-[var(--color-border-strong)]", hint: "Attached by hand (or adopted from intake)" },
+  checkout: { label: "via checkout", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border-strong)]", hint: "Linked automatically when someone checked it out under this project" },
+  manual: { label: "attached", cls: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border-strong)]", hint: "Attached by hand (or adopted from intake)" },
 };
 
 export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid, userEmail }: {
@@ -169,7 +169,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
         </button>
       ) : undefined}>
 
-      {err && <div role="alert" className="mx-4 sm:mx-5 mt-3 text-body font-medium text-[var(--state-overdue)]">{err}</div>}
+      {err && <div role="alert" className="mx-4 sm:mx-5 mt-3 text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-0.5" /><span>{err}</span></div>}
 
       {attachOpen && canManage && (
         <div className="px-4 sm:px-5 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
@@ -245,7 +245,7 @@ export default function ProjectDocumentsCard({ orgId, projectId, canManage, uid,
                         disabled={busy === r.linkId}
                         title={r.source === "checkout" ? "Remove (it will re-link on the next checkout under this project)" : "Remove from project"}
                         aria-label={`Remove ${r.label} from the project`}
-                        className="w-9 h-9 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--state-overdue)] hover:bg-[var(--color-surface-2)] transition-colors disabled:opacity-40"
+                        className="ui-hit w-9 h-9 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)] transition-colors disabled:opacity-40"
                       >
                         <X className="w-4 h-4" />
                       </button>

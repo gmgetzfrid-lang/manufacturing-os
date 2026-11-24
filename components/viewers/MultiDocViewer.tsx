@@ -49,6 +49,7 @@ import { badgeText } from "@/lib/badge";
 import { escapeStackBusy } from "@/components/documents/useEscapeClose";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
+import { FieldError } from "@/components/ui/Field";
 import CopyId from "@/components/ui/CopyId";
 import { vDim, vPanel, vKicker, vTitle, vIcon, vTool, vQuiet, vGroup, vPrimary, vClose, vNote } from "@/components/viewers/viewerChrome";
 
@@ -1017,7 +1018,7 @@ export default function MultiDocViewer({ docs, onClose, embedded = false, action
         <div className="px-3 py-2.5 border-b border-[var(--color-border)] flex items-center gap-2 shrink-0">
           <BookOpen className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
           <span className="text-body font-medium text-[var(--color-text)] truncate">{badgeText(docs.length)} sheet{docs.length === 1 ? "" : "s"}</span>
-          <button type="button" onClick={() => setSidebarOpen(false)} className="ml-auto w-8 h-8 shrink-0 rounded-lg grid place-items-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]" title="Hide the sheets (B)" aria-label="Hide the sheets"><PanelLeftClose className="w-4 h-4" /></button>
+          <button type="button" onClick={() => setSidebarOpen(false)} className="ui-hit ml-auto w-8 h-8 shrink-0 rounded-lg grid place-items-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]" title="Hide the sheets (B)" aria-label="Hide the sheets"><PanelLeftClose className="w-4 h-4" /></button>
         </div>
         {/* Focus controls — review just the sheets you pin. */}
         <div className="px-3 py-2 flex items-center gap-2 shrink-0 border-b border-[var(--color-border)]">
@@ -1053,7 +1054,7 @@ export default function MultiDocViewer({ docs, onClose, embedded = false, action
                     {lines[1] && <span className="shrink-0 text-body font-medium text-[var(--color-text-muted)]">{lines[1]}</span>}
                   </div>
                 </button>
-                <button type="button" onClick={() => togglePick(idx)} title={isPicked ? "Remove from focus set" : "Pin to focus set"} className={`absolute top-1 right-1 w-7 h-7 grid place-items-center rounded-md transition-opacity bg-[color-mix(in_srgb,var(--color-ink)_75%,transparent)] ${isPicked ? "text-[var(--color-ink-fg)]" : "text-[var(--color-text-muted)] opacity-60 sm:opacity-0 group-hover:opacity-100"}`} aria-pressed={isPicked} aria-label={isPicked ? "Remove from focus set" : "Pin to focus set"}>
+                <button type="button" onClick={() => togglePick(idx)} title={isPicked ? "Remove from focus set" : "Pin to focus set"} className={`ui-hit absolute top-1 right-1 w-7 h-7 grid place-items-center rounded-md transition-opacity bg-[color-mix(in_srgb,var(--color-ink)_75%,transparent)] ${isPicked ? "text-[var(--color-ink-fg)]" : "text-[var(--color-text-muted)] opacity-60 sm:opacity-0 group-hover:opacity-100"}`} aria-pressed={isPicked} aria-label={isPicked ? "Remove from focus set" : "Pin to focus set"}>
                   <Pin className={`w-3.5 h-3.5 ${isPicked ? "fill-current" : ""}`} />
                 </button>
               </div>
@@ -1137,7 +1138,7 @@ export default function MultiDocViewer({ docs, onClose, embedded = false, action
               />
               {searchMsg && <span className={`text-body font-medium shrink-0 ${searchMsg === "No match" ? "text-rose-400" : "text-[var(--color-text-muted)]"}`}>{searchMsg}</span>}
               {search ? (
-                <button type="button" onMouseDown={(e) => { e.preventDefault(); setSearch(""); setSearchMsg(null); setShowSuggest(false); searchInputRef.current?.focus(); }} title="Clear" aria-label="Clear the search" className="shrink-0 w-6 h-6 grid place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
+                <button type="button" onMouseDown={(e) => { e.preventDefault(); setSearch(""); setSearchMsg(null); setShowSuggest(false); searchInputRef.current?.focus(); }} title="Clear" aria-label="Clear the search" className="ui-hit shrink-0 w-6 h-6 grid place-items-center rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
               ) : (
                 <kbd className="hidden lg:inline shrink-0 text-caption font-medium text-[var(--color-text-muted)] border border-[var(--color-ink-line)] rounded px-1 py-px">↵</kbd>
               )}
@@ -1182,7 +1183,7 @@ export default function MultiDocViewer({ docs, onClose, embedded = false, action
           <div className={embedded ? "hidden @min-[640px]:block shrink-0" : "contents"}>
           <div className={`${vGroup} ${embedded ? "" : "max-md:hidden"}`}>
             <button type="button" onClick={() => setZoom((z) => Math.max(0.4, Math.round((z - 0.15) * 100) / 100))} className={vIcon} title="Zoom out" aria-label="Zoom out"><ZoomOut className="w-4 h-4" /></button>
-            <button type="button" onClick={() => setZoom(1)} className="h-9 px-1 min-w-[2.75rem] text-center rounded-lg hover:bg-[var(--color-ink-2)]" title="Fit to width: reset zoom to 100%">{Math.round(zoom * 100)}%</button>
+            <button type="button" onClick={() => setZoom(1)} className="pointer-coarse:h-11 h-9 px-1 min-w-[2.75rem] text-center rounded-lg hover:bg-[var(--color-ink-2)]" title="Fit to width: reset zoom to 100%">{Math.round(zoom * 100)}%</button>
             <button type="button" onClick={() => setZoom((z) => Math.min(3, Math.round((z + 0.15) * 100) / 100))} className={vIcon} title="Zoom in (or Ctrl + scroll)" aria-label="Zoom in"><ZoomIn className="w-4 h-4" /></button>
             <div className="w-px h-5 bg-[var(--color-ink-line)] mx-0.5" aria-hidden="true" />
             <button type="button" onClick={() => setRotation((r) => r + 90)} className={vIcon} title="Rotate 90°" aria-label="Rotate 90 degrees"><RotateCw className="w-4 h-4" /></button>
@@ -1303,7 +1304,7 @@ export default function MultiDocViewer({ docs, onClose, embedded = false, action
             <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
             <span className="min-w-0">{note}</span>
             {onDismissNote && (
-              <button type="button" onClick={onDismissNote} aria-label="Dismiss" className="ml-auto shrink-0 w-7 h-7 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]"><X className="w-3.5 h-3.5" /></button>
+              <button type="button" onClick={onDismissNote} aria-label="Dismiss" className="ui-hit ml-auto shrink-0 w-7 h-7 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]"><X className="w-3.5 h-3.5" /></button>
             )}
           </p>
         )}
@@ -1312,7 +1313,7 @@ export default function MultiDocViewer({ docs, onClose, embedded = false, action
           <p role="alert" className={`${vNote} text-rose-300`}>
             <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
             <span className="min-w-0">{actionError}</span>
-            <button type="button" onClick={() => setActionError(null)} aria-label="Dismiss" className="ml-auto shrink-0 w-7 h-7 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]"><X className="w-3.5 h-3.5" /></button>
+            <button type="button" onClick={() => setActionError(null)} aria-label="Dismiss" className="ui-hit ml-auto shrink-0 w-7 h-7 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]"><X className="w-3.5 h-3.5" /></button>
           </p>
         )}
 
@@ -1446,7 +1447,7 @@ export default function MultiDocViewer({ docs, onClose, embedded = false, action
           ))}
           <div className="w-px h-5 shrink-0 bg-[var(--color-ink-line)] mx-0.5" aria-hidden="true" />
           {(["red", "blue", "green", "orange", "yellow", "black"] as ColorKey[]).map((ck) => (
-            <button type="button" key={ck} onClick={() => setMarkColor(ck)} title={`Colour: ${ck}`} aria-label={`${ck} pen`} aria-pressed={markColor === ck} className={`w-5 h-5 shrink-0 rounded-full border-2 ring-1 ring-[var(--color-ink-line)] transition-transform ${markColor === ck ? "border-[var(--color-ink-fg)] scale-110" : "border-transparent"}`} style={{ backgroundColor: COLOR_HEX[ck] }} />
+            <button type="button" key={ck} onClick={() => setMarkColor(ck)} title={`Colour: ${ck}`} aria-label={`${ck} pen`} aria-pressed={markColor === ck} className={`pointer-coarse:size-11 w-5 h-5 shrink-0 rounded-full border-2 ring-1 ring-[var(--color-ink-line)] transition-transform ${markColor === ck ? "border-[var(--color-ink-fg)] scale-110" : "border-transparent"}`} style={{ backgroundColor: COLOR_HEX[ck] }} />
           ))}
           <div className="w-px h-5 shrink-0 bg-[var(--color-ink-line)] mx-0.5" aria-hidden="true" />
           {[2, 4, 6].map((w) => (
@@ -1455,8 +1456,8 @@ export default function MultiDocViewer({ docs, onClose, embedded = false, action
             </button>
           ))}
           <div className="w-px h-5 shrink-0 bg-[var(--color-ink-line)] mx-0.5" aria-hidden="true" />
-          <button type="button" onClick={() => clearActiveMarkup(activeEntry?.doc.id)} title="Clear this sheet's markup" aria-label="Clear this sheet's markup" className="w-9 h-9 shrink-0 rounded-lg grid place-items-center text-[var(--color-text-muted)] hover:text-rose-400 hover:bg-[var(--color-ink-2)] transition-colors"><Trash2 className="w-4 h-4" /></button>
-          <button type="button" onClick={() => setMarkupMode(false)} title="Done marking up" className="ml-1 shrink-0 h-8 px-3 rounded-lg bg-[var(--color-ink-2)] hover:bg-[var(--color-ink-line)] text-[var(--color-text)] text-body font-medium">Done</button>
+          <button type="button" onClick={() => clearActiveMarkup(activeEntry?.doc.id)} title="Clear this sheet's markup" aria-label="Clear this sheet's markup" className="pointer-coarse:w-11 pointer-coarse:h-11 w-9 h-9 shrink-0 rounded-lg grid place-items-center text-[var(--color-text-muted)] hover:text-rose-400 hover:bg-[var(--color-ink-2)] transition-colors"><Trash2 className="w-4 h-4" /></button>
+          <button type="button" onClick={() => setMarkupMode(false)} title="Done marking up" className="pointer-coarse:h-11 ml-1 shrink-0 h-8 px-3 rounded-lg bg-[var(--color-ink-2)] hover:bg-[var(--color-ink-line)] text-[var(--color-text)] text-body font-medium">Done</button>
         </div>
       )}
 
@@ -1467,10 +1468,10 @@ export default function MultiDocViewer({ docs, onClose, embedded = false, action
             <div className="min-w-0 overflow-x-auto">
               <EquipmentTagsStrip metadata={activeEntry.doc.metadata as Record<string, unknown>} customColumns={customColumns} orgId={orgId} userId={currentUserId} canManage={false} variant="ribbon" />
             </div>
-            <button type="button" onClick={() => setTagsBarOpen(false)} title="Hide tags for this sheet" aria-label="Hide tags for this sheet" className="shrink-0 w-7 h-7 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]"><X className="w-3.5 h-3.5" /></button>
+            <button type="button" onClick={() => setTagsBarOpen(false)} title="Hide tags for this sheet" aria-label="Hide tags for this sheet" className="ui-hit shrink-0 w-7 h-7 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]"><X className="w-3.5 h-3.5" /></button>
           </div>
         ) : (
-          <button type="button" onClick={() => setTagsBarOpen(true)} className="absolute top-11 left-1/2 -translate-x-1/2 z-30 inline-flex items-center gap-1.5 h-8 px-3 rounded-full bg-[color-mix(in_srgb,var(--color-ink)_88%,transparent)] backdrop-blur border border-[var(--color-border)] text-[var(--color-text)] text-caption font-medium shadow-xl" title="Show tags for this sheet">
+          <button type="button" onClick={() => setTagsBarOpen(true)} className="ui-hit absolute top-11 left-1/2 -translate-x-1/2 z-30 inline-flex items-center gap-1.5 h-8 px-3 rounded-full bg-[color-mix(in_srgb,var(--color-ink)_88%,transparent)] backdrop-blur border border-[var(--color-border)] text-[var(--color-text)] text-caption font-medium shadow-xl" title="Show tags for this sheet">
             <Camera className="w-3.5 h-3.5" /> Tags
           </button>
         )
@@ -1506,7 +1507,7 @@ export default function MultiDocViewer({ docs, onClose, embedded = false, action
         <Modal onClose={closeConfirm} dismissable={!(docBusy || bookBusy)} size="sm">
           <ModalHeader
             icon={ShieldAlert}
-            iconClassName="bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
+            iconClassName="bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] text-[var(--state-held-text)]"
             title="This copy will be stamped uncontrolled"
             subtitle={isBook ? "Reference books are always uncontrolled." : "You don't have this document checked out."}
             onClose={docBusy || bookBusy ? undefined : closeConfirm}
@@ -1519,7 +1520,7 @@ export default function MultiDocViewer({ docs, onClose, embedded = false, action
                 <>Every page will be stamped with a diagonal &quot;UNCONTROLLED - FOR REVIEW ONLY&quot; watermark plus a footer with your email and the time. It&apos;s logged.</>
               )}
             </p>
-            {actionError && <p role="alert" className="text-body font-medium text-rose-700 dark:text-rose-300">{actionError}</p>}
+            {actionError && <FieldError>{actionError}</FieldError>}
           </ModalBody>
           <ModalFooter>
             <Button variant="secondary" onClick={closeConfirm} disabled={docBusy || bookBusy}>Cancel</Button>

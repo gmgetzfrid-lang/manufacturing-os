@@ -152,7 +152,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
               <p className="text-body text-[var(--color-text-muted)] font-medium">Manage Document Sets & P&ID Packs</p>
             </div>
           </div>
-          <button aria-label="Close" onClick={onClose}><X className="w-5 h-5 text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]" /></button>
+          <button aria-label="Close" onClick={onClose} className="ui-hit"><X className="w-5 h-5 text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]" /></button>
         </div>
 
         <div className="flex flex-1 overflow-hidden">
@@ -179,8 +179,8 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                   className={`p-3 rounded-lg cursor-pointer border transition-all ${activeSet?.id === set.id ? 'bg-[var(--color-surface)] border-[var(--color-main)]/30 shadow-sm ring-1 ring-[var(--color-main)]/20' : 'bg-transparent border-transparent hover:bg-[var(--color-surface-2)]'}`}
                 >
                   <div className="flex items-center justify-between mb-1">
-                    <span className="font-medium text-sm text-[var(--color-text)] truncate">{set.title}</span>
-                    <span className="text-body bg-slate-200 px-1.5 rounded text-[var(--color-text-muted)]">Rev {set.currentSetRev}</span>
+                    <span className="font-medium text-body text-[var(--color-text)] truncate">{set.title}</span>
+                    <span className="text-body bg-[var(--color-surface-2)] px-1.5 rounded text-[var(--color-text-muted)]">Rev {set.currentSetRev}</span>
                   </div>
                   <div className="flex items-center text-body text-[var(--color-text-faint)]">
                     <Layers className="w-3 h-3 mr-1" /> {set.sheetCount || 0} Sheets
@@ -199,7 +199,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                 <div className="w-full max-w-sm">
                   <h3 className="text-body font-medium text-[var(--color-text)] mb-4">Create a new document set</h3>
                   <label className="text-body font-medium text-[var(--color-text-muted)] mb-1 block">Set Title</label>
-                  <input 
+                  <input aria-label="Set title" 
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     className="w-full p-3 border border-[var(--color-border)] rounded-lg mb-4 focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none"
@@ -207,8 +207,8 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                     autoFocus
                   />
                   <div className="flex space-x-2">
-                    <button onClick={() => setMode('list')} className="flex-1 py-3 border rounded-lg font-medium text-sm text-[var(--color-text-muted)]">Cancel</button>
-                    <button onClick={handleCreateSet} className="flex-1 py-3 bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] rounded-lg font-medium text-sm">Create</button>
+                    <button onClick={() => setMode('list')} className="flex-1 py-3 border rounded-lg font-medium text-body text-[var(--color-text-muted)]">Cancel</button>
+                    <button onClick={handleCreateSet} className="flex-1 py-3 bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] rounded-lg font-medium text-body">Create</button>
                   </div>
                 </div>
               </div>
@@ -223,8 +223,8 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                   <div className="relative group">
                     <div className="flex items-center border border-[var(--color-border)] rounded-lg px-3 py-1.5 bg-[var(--color-surface-2)] focus-within:bg-[var(--color-surface)] focus-within:ring-2 ring-[var(--color-accent-ring)] transition-all">
                       <Search className="w-4 h-4 text-[var(--color-text-faint)] mr-2" />
-                      <input 
-                        className="bg-transparent outline-none text-sm w-64" 
+                      <input type="search" aria-label="Search to add sheet" 
+                        className="bg-transparent outline-none text-body w-64" 
                         placeholder="Search to add sheet..." 
                         value={searchTerm}
                         onChange={(e) => handleSearchDocs(e.target.value)}
@@ -279,7 +279,7 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                             </td>
                             <td className="px-4 py-3">
                               <div className="flex flex-col">
-                                <span className="text-sm font-medium text-[var(--color-text)]">{doc.documentNumber}</span>
+                                <span className="text-body font-medium text-[var(--color-text)]">{doc.documentNumber}</span>
                                 <span className="text-body text-[var(--color-text-muted)]">{doc.title}</span>
                               </div>
                             </td>
@@ -287,10 +287,10 @@ export default function SetManager({ isOpen, onClose, libraryId }: SetManagerPro
                               <span className="bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-0.5 rounded text-body font-medium border border-[var(--color-border)]">{doc.rev}</span>
                             </td>
                             <td className="px-4 py-3">
-                              {doc.status === 'Locked' ? <span className="text-[var(--state-overdue)] text-xs font-medium flex items-center"><AlertCircle className="w-3 h-3 mr-1" /> Locked</span> : <span className="text-[var(--state-released)] text-xs font-medium flex items-center"><CheckCircle2 className="w-3 h-3 mr-1" /> Active</span>}
+                              {doc.status === 'Locked' ? <span className="text-[var(--state-overdue)] text-caption font-medium flex items-center"><AlertCircle className="w-3 h-3 mr-1" /> Locked</span> : <span className="text-[var(--state-released)] text-caption font-medium flex items-center"><CheckCircle2 className="w-3 h-3 mr-1" /> Active</span>}
                             </td>
                             <td className="px-4 py-3 text-right">
-                              <button onClick={() => removeFromSet(doc)} className="p-2 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] transition-colors"><Trash2 className="w-4 h-4" /></button>
+                              <button onClick={() => removeFromSet(doc)} aria-label={`Remove ${doc.documentNumber || doc.title || "this document"} from the set`} className="ui-hit p-2 text-[var(--color-text-faint)] hover:text-[var(--state-overdue)] transition-colors"><Trash2 className="w-4 h-4" /></button>
                             </td>
                           </tr>
                         ))}

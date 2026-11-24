@@ -383,8 +383,9 @@ export default function InboxPage() {
               {nudges.map((n) => (
                 <li key={n.id} className="px-4 py-3 flex items-baseline gap-3 text-reading text-[var(--color-text)]">
                   <span aria-hidden className={`w-[7px] h-[7px] shrink-0 rounded-full -translate-y-px ${n.severity === "high" ? "bg-[var(--state-overdue)]" : "bg-[var(--state-held)]"}`} />
+                  {n.severity === "high" && <span className="shrink-0 text-body font-medium text-[var(--state-overdue-text)]">Urgent</span>}
                   <span className="flex-1 min-w-0">{n.message}</span>
-                  {n.actionLabel && n.href && <Link href={n.href} className={`shrink-0 text-body font-medium ${link}`}>{n.actionLabel}</Link>}
+                  {n.actionLabel && n.href && <Link href={n.href} className={`ui-hit shrink-0 text-body font-medium ${link}`}>{n.actionLabel}</Link>}
                 </li>
               ))}
             </ul>

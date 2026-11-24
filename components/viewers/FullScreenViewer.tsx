@@ -49,6 +49,7 @@ import QrBadge from "@/components/ui/QrBadge";
 import MoreMenu, { type MoreItem } from "@/components/ui/MoreMenu";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
+import { FieldError } from "@/components/ui/Field";
 import { useEscapeClose } from "@/hooks/useEscapeClose";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import CopyId from "@/components/ui/CopyId";
@@ -1160,7 +1161,7 @@ export default function FullScreenViewer({
       <Icon className="w-5 h-5" />
     </button>
   );
-  const railBtn = "w-9 h-9 sm:w-10 sm:h-10 shrink-0 rounded-lg grid place-items-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)] transition-colors";
+  const railBtn = "w-9 h-9 sm:w-10 sm:h-10 pointer-coarse:w-11 pointer-coarse:h-11 shrink-0 rounded-lg grid place-items-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)] transition-colors";
   const railLine = <div className="w-7 h-px shrink-0 bg-[var(--color-border)] my-1" aria-hidden="true" />;
 
   // Detect whether the doc has any equipment tags worth showing — if
@@ -1277,7 +1278,7 @@ export default function FullScreenViewer({
               <MoreMenu label="More" iconOnly triggerClass={vQuiet} items={moreItems} />
               {phoneQrOpen && docRecord?.id && docRecord.libraryId && (
                 <div className="absolute right-0 top-full mt-2 z-[60] w-[184px] flex justify-center rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl p-3 pt-8">
-                  <button type="button" onClick={() => setPhoneQrOpen(false)} aria-label="Hide the phone code" className="absolute top-1 right-1 w-7 h-7 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]"><X className="w-4 h-4" /></button>
+                  <button type="button" onClick={() => setPhoneQrOpen(false)} aria-label="Hide the phone code" className="ui-hit absolute top-1 right-1 w-7 h-7 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]"><X className="w-4 h-4" /></button>
                   <QrBadge
                     value={`${window.location.origin}/documents/${docRecord.libraryId}?doc=${docRecord.id}`}
                     size={150}
@@ -1318,7 +1319,7 @@ export default function FullScreenViewer({
             </span>
             {onCheckout && (
               <button type="button" onClick={() => onCheckout(docRecord)}
-                className="ml-auto shrink-0 h-7 px-2.5 rounded-lg bg-[var(--color-ink-2)] text-[var(--color-text)] hover:bg-[var(--color-ink-line)] text-body font-medium">
+                className="pointer-coarse:h-11 ml-auto shrink-0 h-7 px-2.5 rounded-lg bg-[var(--color-ink-2)] text-[var(--color-text)] hover:bg-[var(--color-ink-line)] text-body font-medium">
                 Open checkout thread
               </button>
             )}
@@ -1330,7 +1331,7 @@ export default function FullScreenViewer({
             <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
             <span className="truncate">{chromeError}</span>
             <button type="button" onClick={() => { setActionError(null); setMarkupError(null); }} aria-label="Dismiss"
-              className="ml-auto shrink-0 w-7 h-7 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]"><X className="w-3.5 h-3.5" /></button>
+              className="ui-hit ml-auto shrink-0 w-7 h-7 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]"><X className="w-3.5 h-3.5" /></button>
           </p>
         )}
 
@@ -1368,7 +1369,7 @@ export default function FullScreenViewer({
                     <button
                       type="button"
                       onClick={() => stampFileInputRef.current?.click()}
-                      className="text-body font-medium h-7 px-2.5 rounded-lg bg-[var(--color-ink-2)] hover:bg-[var(--color-ink-line)] text-[var(--color-text)]"
+                      className="pointer-coarse:h-11 text-body font-medium h-7 px-2.5 rounded-lg bg-[var(--color-ink-2)] hover:bg-[var(--color-ink-line)] text-[var(--color-text)]"
                     >+ Upload</button>
                     <input
                       ref={stampFileInputRef}
@@ -1400,7 +1401,7 @@ export default function FullScreenViewer({
                           <button
                             type="button"
                             onClick={() => removeCustomStamp(s.id)}
-                            className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 text-white rounded-full text-caption font-medium opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity"
+                            className="ui-hit absolute -top-1 -right-1 w-4 h-4 bg-[var(--state-overdue)] text-[var(--color-ink-fg)] rounded-full text-caption font-medium opacity-60 sm:opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100 transition-opacity"
                             title="Remove" aria-label={`Remove ${s.name}`}
                           >×</button>
                         </div>
@@ -1425,7 +1426,7 @@ export default function FullScreenViewer({
               <div className="flex items-center gap-1.5 shrink-0" role="radiogroup" aria-label="Markup color">
                 {(Object.keys(COLOR_HEX) as ColorKey[]).map((c) => (
                   <button type="button" key={c} onClick={() => setColor(c)} role="radio" aria-checked={color === c} aria-label={`${c} pen`}
-                    className={`w-5 h-5 rounded-full border-2 ring-1 ring-[var(--color-ink-line)] transition-transform ${color === c ? "border-[var(--color-ink-fg)] scale-110" : "border-transparent hover:scale-105"}`}
+                    className={`pointer-coarse:size-11 w-5 h-5 rounded-full border-2 ring-1 ring-[var(--color-ink-line)] transition-transform ${color === c ? "border-[var(--color-ink-fg)] scale-110" : "border-transparent hover:scale-105"}`}
                     style={{ backgroundColor: COLOR_HEX[c] }} title={c} />
                 ))}
               </div>
@@ -1457,7 +1458,7 @@ export default function FullScreenViewer({
                   onClick={(e) => { e.stopPropagation(); setTagsBarOpen(false); }}
                   title="Hide equipment tags"
                   aria-label="Hide equipment tags"
-                  className="shrink-0 w-7 h-7 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]"
+                  className="ui-hit shrink-0 w-7 h-7 grid place-items-center rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-ink-2)]"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
@@ -1579,7 +1580,7 @@ export default function FullScreenViewer({
         <Modal onClose={closePending} dismissable={!pendingBusy} size="sm" zIndex={400}>
           <ModalHeader
             icon={ShieldAlert}
-            iconClassName="bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300"
+            iconClassName="bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] text-[var(--state-held-text)]"
             title="This copy will be stamped uncontrolled"
             subtitle="You don't have this document checked out."
             onClose={pendingBusy ? undefined : closePending}
@@ -1587,7 +1588,7 @@ export default function FullScreenViewer({
           <ModalBody className="space-y-3">
             <p className="text-body text-[var(--color-text-muted)]">Each page gets an &quot;UNCONTROLLED - FOR REVIEW ONLY&quot; mark and a footer with your email and the time. It&apos;s logged.</p>
             {(pending.type === "markup" ? markupError : actionError) && (
-              <p role="alert" className="text-body font-medium text-rose-700 dark:text-rose-300">{pending.type === "markup" ? markupError : actionError}</p>
+              <FieldError>{pending.type === "markup" ? markupError : actionError}</FieldError>
             )}
           </ModalBody>
           <ModalFooter>

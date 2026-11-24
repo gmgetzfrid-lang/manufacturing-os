@@ -325,7 +325,7 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
       action={company.qualityManualReviewedAt ? <span className="text-body text-[var(--color-text-muted)]">Confirmed {fmtDay(company.qualityManualReviewedAt)}</span> : undefined}>
       <div className="px-4 py-3 flex items-baseline gap-2">
         {company.qualityManualScore != null ? (
-          <><span className="text-[22px]"><ScoreFigure score={company.qualityManualScore} />%</span><span className="text-reading text-[var(--color-text-muted)]">covered</span></>
+          <><span className="text-section"><ScoreFigure score={company.qualityManualScore} />%</span><span className="text-reading text-[var(--color-text-muted)]">covered</span></>
         ) : (
           <span className="text-reading text-[var(--color-text-muted)]">Not checked yet.</span>
         )}
@@ -355,7 +355,7 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
                 {doc ? (
                   <span className="inline-flex items-center gap-1.5 h-10 rounded-md border border-[var(--color-border-strong)] px-3 text-reading font-medium text-[var(--color-text)]">
                     <FileText className="w-4 h-4 text-[var(--color-text-muted)]" /> {doc.label}
-                    <button type="button" onClick={() => setDoc(null)} aria-label={`Remove ${doc.label}`} className="w-7 h-7 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
+                    <button type="button" onClick={() => setDoc(null)} aria-label={`Remove ${doc.label}`} className="ui-hit w-7 h-7 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]"><X className="w-3.5 h-3.5" /></button>
                   </span>
                 ) : (
                   <span className="relative flex-1 min-w-64">
@@ -374,7 +374,7 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
                 <ul className="rounded-md border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
                   {results.map((d) => (
                     <li key={d.id}>
-                      <button type="button" onClick={() => setDoc(d)} className="w-full px-3 h-10 text-left text-reading text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2">
+                      <button type="button" onClick={() => setDoc(d)} className="w-full px-3 h-10 pointer-coarse:h-11 text-left text-reading text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2">
                         <FileText className="w-4 h-4 text-[var(--color-text-faint)]" /> {d.label}
                       </button>
                     </li>

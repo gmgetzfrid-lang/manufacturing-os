@@ -514,7 +514,7 @@ function ActivityFeed({ adminView }: { adminView: boolean }) {
                     <td className={`${td} whitespace-nowrap text-[var(--color-text-muted)] tabular-nums`} title={r.timestamp ? new Date(r.timestamp).toLocaleString("en-US") : undefined}>{when(r.timestamp)}</td>
                     <td className={`${td} whitespace-nowrap text-[var(--color-text)]`}>{who}</td>
                     <td className={`${td} whitespace-nowrap text-[var(--color-text)]`}>
-                      <span className="inline-flex items-center gap-2"><span className="ui-tag is-more !h-6 !text-[12.5px]">{KIND_WORD[KIND_OF(r)]}</span>{humanize(r.action)}</span>
+                      <span className="inline-flex items-center gap-2"><span className="ui-tag is-more !h-6 !text-caption">{KIND_WORD[KIND_OF(r)]}</span>{humanize(r.action)}</span>
                     </td>
                     <td className={`${td} max-w-0 w-full`}>
                       {href
@@ -702,7 +702,7 @@ export function AdminUsersBody() {
       {segments.length > 0 && <SegmentBar segments={segments} className="mt-2 shrink-0" />}
       <div className="mt-3 shrink-0 flex items-center gap-2">
         <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} aria-label="Role"
-          className="shrink-0 h-9 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body text-[var(--color-text)]">
+          className="shrink-0 h-9 pointer-coarse:h-11 px-2.5 rounded-md border border-[var(--color-border-control)] bg-[var(--color-surface)] text-body pointer-coarse:text-reading text-[var(--color-text)]">
           <option value="all">All roles</option>
           {entries.map(([r]) => <option key={r} value={r}>{r}</option>)}
         </select>

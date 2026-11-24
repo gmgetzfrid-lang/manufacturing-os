@@ -176,7 +176,7 @@ export default function PillCell({
             type="button"
             onClick={(e) => { e.stopPropagation(); setEditing(true); }}
             onDoubleClick={(e) => e.stopPropagation()}
-            className="absolute -right-1.5 top-1/2 -translate-y-1/2 w-7 h-7 grid place-items-center rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-sm text-[var(--color-text-muted)] hover:text-[var(--color-main)] hover:bg-[var(--color-accent-soft)] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity"
+            className="ui-hit absolute -right-1.5 top-1/2 -translate-y-1/2 w-7 h-7 grid place-items-center rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-sm text-[var(--color-text-muted)] hover:text-[var(--color-main)] hover:bg-[var(--color-accent-soft)] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity"
             title={pills.length === 0 ? `Add ${label}` : `Edit ${label}`}
             aria-label={pills.length === 0 ? `Add ${label}` : `Edit ${label}`}
           >
@@ -206,7 +206,7 @@ export default function PillCell({
                 type="button"
                 onClick={() => removePill(pill)}
                 aria-label={`Remove ${pill}`}
-                className="w-5 h-5 grid place-items-center rounded hover:text-[var(--state-overdue)] hover:bg-[var(--color-surface)] transition-colors"
+                className="ui-hit w-5 h-5 grid place-items-center rounded hover:text-[var(--state-overdue)] hover:bg-[var(--color-surface)] transition-colors"
               >
                 <X className="w-3 h-3" />
               </button>
@@ -216,7 +216,7 @@ export default function PillCell({
       )}
 
       <div className="flex items-center gap-1">
-        <input
+        <input aria-label={`Add ${label}`}
           ref={inputRef}
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -245,7 +245,7 @@ export default function PillCell({
             type="button"
             onClick={(e) => { e.stopPropagation(); addPill(); }}
             aria-label={`Add ${input.trim()}`}
-            className="shrink-0 w-8 h-8 grid place-items-center border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] rounded-md transition-colors"
+            className="ui-hit shrink-0 w-8 h-8 grid place-items-center border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] rounded-md transition-colors"
           >
             <Plus className="w-3.5 h-3.5" />
           </button>

@@ -16,6 +16,7 @@ import { tryUpload } from "@/lib/uploadRetry";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 import { friendlyError } from "@/lib/friendlyError";
+import { FieldError } from "@/components/ui/Field";
 const COLOR_SWATCHES = ["#4f46e5", "#2563eb", "#0ea5e9", "#0d9488", "#059669", "#65a30d", "#ea580c", "#dc2626", "#e11d48", "#db2777", "#7c3aed", "#475569"];
 
 export interface CustomizeValue {
@@ -109,7 +110,7 @@ export default function CustomizeNodeModal({
       <div className="w-full max-w-lg rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-[var(--color-border)]">
           <h2 className="font-medium text-[var(--color-text)]">{title}</h2>
-          <button aria-label="Close" onClick={onClose} className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
+          <button aria-label="Close" onClick={onClose} className="ui-hit p-1.5 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
         </div>
 
         <div className="p-5 space-y-4 max-h-[70vh] overflow-auto">
@@ -119,9 +120,9 @@ export default function CustomizeNodeModal({
           {/* description */}
           <div>
             <label className="text-body font-medium text-[var(--color-text-faint)]">Description</label>
-            <textarea value={v.description ?? ""} onChange={(e) => set({ description: e.target.value })} rows={2}
+            <textarea aria-label="Description" value={v.description ?? ""} onChange={(e) => set({ description: e.target.value })} rows={2}
               placeholder="What lives in this folder?"
-              className="mt-1 w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-sm text-[var(--color-text)] resize-none" />
+              className="mt-1 w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-body text-[var(--color-text)] resize-none" />
           </div>
 
           {/* color */}
@@ -129,10 +130,10 @@ export default function CustomizeNodeModal({
             <label className="text-body font-medium text-[var(--color-text-faint)]">Color</label>
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
               <button onClick={() => set({ color: undefined })} title="Match theme"
-                className={`px-2.5 h-7 rounded-full text-body font-medium border ${!v.color ? "border-transparent ring-2 ring-offset-2 ring-[var(--color-text-muted)] ring-offset-[var(--color-surface)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`} style={!v.color ? { background: "var(--brand-gradient)", color: "#fff" } : undefined}>Theme</button>
+                className={`pointer-coarse:h-11 px-2.5 h-7 rounded-full text-body font-medium border ${!v.color ? "border-transparent ring-2 ring-offset-2 ring-[var(--color-text-muted)] ring-offset-[var(--color-surface)]" : "border-[var(--color-border)] text-[var(--color-text-muted)]"}`} style={!v.color ? { background: "var(--brand-gradient)", color: "#fff" } : undefined}>Theme</button>
               {COLOR_SWATCHES.map((c) => (
-                <button key={c} onClick={() => set({ color: c })} title={c}
-                  className={`w-7 h-7 rounded-full ${v.color === c ? "ring-2 ring-offset-2 ring-[var(--color-text-muted)] ring-offset-[var(--color-surface)]" : ""}`} style={{ backgroundColor: c }}>
+                <button key={c} onClick={() => set({ color: c })} title={c} aria-label={`Color ${c}`} aria-pressed={v.color === c}
+                  className={`pointer-coarse:size-11 w-7 h-7 rounded-full ${v.color === c ? "ring-2 ring-offset-2 ring-[var(--color-text-muted)] ring-offset-[var(--color-surface)]" : ""}`} style={{ backgroundColor: c }}>
                   {v.color === c && <Check className="w-3.5 h-3.5 text-white mx-auto drop-shadow" />}
                 </button>
               ))}
@@ -146,7 +147,7 @@ export default function CustomizeNodeModal({
               {NODE_ICON_KEYS.map((k) => {
                 const active = v.icon === k;
                 return (
-                  <button key={k} onClick={() => set({ icon: active ? undefined : k })} title={k}
+                  <button key={k} onClick={() => set({ icon: active ? undefined : k })} title={k} aria-label={k} aria-pressed={active}
                     className={`aspect-square grid place-items-center rounded-lg border transition-colors ${active ? "border-[var(--color-text-muted)] bg-[var(--color-surface)] text-[var(--color-text)] ring-1 ring-[var(--color-text-muted)] shadow-sm" : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"}`}>
                     <NodeIcon name={k} className="w-4 h-4" />
                   </button>
@@ -159,16 +160,16 @@ export default function CustomizeNodeModal({
           <div>
             <label className="text-body font-medium text-[var(--color-text-faint)] flex items-center gap-1.5"><ImageIcon className="w-3 h-3" /> Cover image</label>
             <div className="mt-1 flex gap-2">
-              <input value={v.coverImageUrl ?? ""} onChange={(e) => set({ coverImageUrl: e.target.value || undefined })}
+              <input aria-label="Cover image URL" value={v.coverImageUrl ?? ""} onChange={(e) => set({ coverImageUrl: e.target.value || undefined })}
                 placeholder={storagePrefix ? "Paste a URL or upload →" : "https://…/photo.jpg"}
-                className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-sm text-[var(--color-text)]" />
+                className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] text-body text-[var(--color-text)]" />
               {storagePrefix && (
                 <>
                   <input ref={fileRef} type="file" accept="image/*" className="hidden"
                     onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleUpload(f); e.target.value = ""; }} />
                   <button onClick={() => fileRef.current?.click()} disabled={uploading}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 shrink-0">
-                    {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />} Upload
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-body font-medium border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 shrink-0">
+                    {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}{" "}{uploading ? "Uploading" : "Upload"}
                   </button>
                 </>
               )}
@@ -258,10 +259,10 @@ export default function CustomizeNodeModal({
         </div>
 
         <div className="px-5 py-3.5 border-t border-[var(--color-border)] flex items-center justify-end gap-2">
-          {saveErr && <p role="alert" className="mr-auto text-body text-[var(--state-overdue)]">{saveErr}</p>}
-          <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Cancel</button>
-          <button onClick={handleSave} disabled={saving} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium text-[var(--color-accent-fg)] disabled:opacity-50" style={{ background: "var(--color-main)" }}>
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save
+          {saveErr && <div className="mr-auto"><FieldError>{saveErr}</FieldError></div>}
+          <button onClick={onClose} className="px-4 py-2 rounded-xl text-body font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Cancel</button>
+          <button onClick={handleSave} disabled={saving} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-body font-medium text-[var(--color-accent-fg)] disabled:opacity-50" style={{ background: "var(--color-main)" }}>
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}{" "}{saving ? "Saving" : "Save"}
           </button>
         </div>
       </div>

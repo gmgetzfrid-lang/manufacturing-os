@@ -27,7 +27,7 @@ export function TempPasswordNotice({ email, password, expiresAt, onClose }: {
       <ModalBody>
         <div className="space-y-4">
           <div className="flex items-center gap-2">
-            <code className="flex-1 min-w-0 break-all select-all rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] px-3 py-2.5 font-display text-[22px] tracking-wide text-[var(--color-heading)] tabular-nums">{password}</code>
+            <code className="flex-1 min-w-0 break-all select-all rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] px-3 py-2.5 font-display text-section tracking-wide text-[var(--color-heading)] tabular-nums">{password}</code>
             <Button variant="secondary" onClick={() => void copy()} aria-label="Copy the password">
               {copied ? <><Check className="w-4 h-4" /> Copied</> : <><Copy className="w-4 h-4" /> Copy</>}
             </Button>

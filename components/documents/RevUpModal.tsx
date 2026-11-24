@@ -48,6 +48,7 @@ import { appAlert } from "@/components/providers/DialogProvider";
 import { useEscapeClose } from "@/components/documents/useEscapeClose";
 
 import { friendlyError } from "@/lib/friendlyError";
+import { FieldError } from "@/components/ui/Field";
 interface RevUpModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -408,22 +409,22 @@ export default function RevUpModal({
           <div className="px-6 py-4 border-b border-[var(--color-border)] flex items-center gap-3">
             {/* Arrow = one step back (to the form). X = close the flow. */}
             <button onClick={() => setConflict(null)} disabled={submitting} aria-label="Back to the form" title="Back to the form"
-              className="p-2 -ml-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg">
+              className="ui-hit p-2 -ml-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg">
               <ChevronRight className="w-4 h-4 rotate-180" />
             </button>
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-[var(--state-held)] inline-flex items-center gap-1.5"><AlertTriangle className="w-4 h-4" /> This document changed while you were working</div>
+              <div className="text-body font-medium text-[var(--state-held)] inline-flex items-center gap-1.5"><AlertTriangle className="w-4 h-4" /> This document changed while you were working</div>
               <div className="text-body text-[var(--color-text-muted)] truncate">
                 {doc.documentNumber || doc.title || doc.name}
               </div>
             </div>
-            <button aria-label="Close" onClick={() => { setConflict(null); onClose(); }} disabled={submitting} title="Close" className="p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg">
+            <button aria-label="Close" onClick={() => { setConflict(null); onClose(); }} disabled={submitting} title="Close" className="ui-hit p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg">
               <X className="w-4 h-4" />
             </button>
           </div>
 
           <div className="px-6 py-5 space-y-4">
-            <div className="text-sm text-[var(--color-text)] leading-relaxed">
+            <div className="text-body text-[var(--color-text)] leading-relaxed">
               <b>{conflict.currentByName || "Another user"}</b> published{" "}
               <b>Rev {conflict.currentRev ?? "?"}</b>
               {conflict.currentAt ? <> on <b>{new Date(conflict.currentAt).toLocaleString()}</b></> : null}
@@ -463,7 +464,7 @@ export default function RevUpModal({
                   <div className="mt-2 text-body font-medium text-[var(--state-released)]">Sent to the document thread.</div>
                 ) : (
                   <div className="mt-2 flex gap-1.5">
-                    <input
+                    <input aria-label="Your note (optional)"
                       value={conflictMsg}
                       onChange={(e) => setConflictMsg(e.target.value)}
                       placeholder="Your note, or leave blank for a short heads-up"
@@ -500,13 +501,14 @@ export default function RevUpModal({
                     Your file is saved but does <b>not</b> become the current revision. It stays an open item for
                     Doc Control and both of you until it is merged into a later revision or withdrawn.
                   </div>
-                  <textarea
-                    value={branchReason}
-                    onChange={(e) => setBranchReason(e.target.value)}
-                    rows={2}
-                    placeholder="Why it can't wait (required)"
-                    className={`${inputClass} resize-y`}
-                  />
+                  <Field label="Why it can't wait">
+                    <textarea
+                      value={branchReason}
+                      onChange={(e) => setBranchReason(e.target.value)}
+                      rows={2}
+                      className={`${inputClass} resize-y`}
+                    />
+                  </Field>
                   <div className="flex justify-end gap-2">
                     <button
                       onClick={() => { setShowBranchInput(false); setBranchReason(""); }}
@@ -528,7 +530,7 @@ export default function RevUpModal({
             </div>
 
             {error && (
-              <p role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 text-body text-[var(--state-overdue)]">{error}</p>
+              <FieldError>{error}</FieldError>
             )}
           </div>
 
@@ -565,12 +567,12 @@ export default function RevUpModal({
             <ArrowUpFromLine className="w-5 h-5 text-[var(--color-text-muted)]" />
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-[var(--color-text)]">Publish a new revision</div>
+            <div className="text-body font-medium text-[var(--color-text)]">Publish a new revision</div>
             <div className="text-body text-[var(--color-text-muted)] truncate">
               {doc.documentNumber || doc.title || doc.name}, now at Rev {doc.rev || "-"}
             </div>
           </div>
-          <button aria-label="Close" onClick={onClose} disabled={submitting} className="p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg">
+          <button aria-label="Close" onClick={onClose} disabled={submitting} className="ui-hit p-2 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] rounded-lg">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -589,17 +591,17 @@ export default function RevUpModal({
               } ${pdfDrag.ring}`}
             >
               {pdfDrag.over ? (
-                <div className="text-sm font-medium text-[var(--color-text)] text-center">{pdfDrag.say}</div>
+                <div className="text-body font-medium text-[var(--color-text)] text-center">{pdfDrag.say}</div>
               ) : file ? (
                 <div className="flex items-center gap-3 text-left">
                   <FileThumb file={file} />
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium text-[var(--color-text)] truncate">{file.name}</div>
+                    <div className="text-body font-medium text-[var(--color-text)] truncate">{file.name}</div>
                     <div className="text-body text-[var(--color-text-muted)]">{formatSize(file.size)} · tap to pick another</div>
                   </div>
                 </div>
               ) : (
-                <div className="flex items-center justify-center gap-2 text-sm text-[var(--color-text-muted)]">
+                <div className="flex items-center justify-center gap-2 text-body text-[var(--color-text-muted)]">
                   <Upload className="w-4 h-4" />
                   Drop the PDF here, or tap to pick it
                 </div>
@@ -796,7 +798,7 @@ export default function RevUpModal({
                   </span>
                   <button aria-label="Remove file"
                     onClick={(e) => { e.stopPropagation(); setSourceFile(null); }}
-                    className="ml-1 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                    className="ui-hit ml-1 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                     title="Remove"
                   ><X className="w-3 h-3" /></button>
                 </div>
@@ -833,7 +835,7 @@ export default function RevUpModal({
                 <label className="text-body font-medium text-[var(--color-text)] ">
                   Note to {doc.checkedOutByName || "the checkout holder"} *
                 </label>
-                <textarea
+                <textarea aria-label={`Note to ${doc.checkedOutByName || "the checkout holder"}`}
                   value={overrideReason}
                   onChange={(e) => setOverrideReason(e.target.value)}
                   rows={2}
@@ -845,7 +847,7 @@ export default function RevUpModal({
           )}
 
           {error && (
-            <p role="alert" className="border-l-2 border-[var(--state-overdue)] pl-3 text-body text-[var(--state-overdue)]">{error}</p>
+            <FieldError>{error}</FieldError>
           )}
         </div>
 

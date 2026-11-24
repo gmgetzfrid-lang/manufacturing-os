@@ -18,6 +18,7 @@ import type {
 import { NodeIcon } from "@/lib/nodeIcons";
 
 import { friendlyError } from "@/lib/friendlyError";
+import { FieldError } from "@/components/ui/Field";
 const PART_META: Record<WebPartType, { label: string; icon: React.ComponentType<{ className?: string }>; defaultTitle: string; defaultWidth: WebPart["width"] }> = {
   about:        { label: "About",            icon: Info,      defaultTitle: "About this library", defaultWidth: "full" },
   quickFolders: { label: "Quick folders",    icon: FolderOpen, defaultTitle: "Folders",            defaultWidth: "half" },
@@ -169,13 +170,13 @@ export default function LibraryHomeBoard({
         <div className="text-body font-medium text-[var(--color-text-muted)]">Customizing home</div>
         <div className="flex items-center gap-2">
           <button onClick={disableHome} disabled={saving} className="px-3 py-1.5 rounded-lg text-body font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]">Turn off home</button>
-          <button onClick={() => setEditing(false)} disabled={saving} className="px-3 py-1.5 rounded-lg text-xs font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-3.5 h-3.5 inline -mt-0.5" /> Cancel</button>
+          <button onClick={() => setEditing(false)} disabled={saving} className="px-3 py-1.5 rounded-lg text-caption font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><X className="w-3.5 h-3.5 inline -mt-0.5" /> Cancel</button>
           <button onClick={save} disabled={saving} className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-body font-medium text-[var(--color-accent-fg)] disabled:opacity-50" style={{ background: "var(--color-main)" }}>
-            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Save
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}{" "}{saving ? "Saving" : "Save"}
           </button>
         </div>
       </div>
-      {saveErr && <p role="alert" className="mb-3 border-l-2 border-[var(--state-overdue)] pl-3 text-body text-[var(--state-overdue)]">{saveErr}</p>}
+      {saveErr && <div className="mb-3"><FieldError>{saveErr}</FieldError></div>}
 
       {/* add-part palette */}
       <div className="flex flex-wrap gap-1.5 mb-3">
@@ -190,7 +191,7 @@ export default function LibraryHomeBoard({
       </div>
 
       {draft.parts.length === 0 ? (
-        <div className="py-8 text-center text-sm text-[var(--color-text-muted)]">Add a part above to begin.</div>
+        <div className="py-8 text-center text-body text-[var(--color-text-muted)]">Add a part above to begin.</div>
       ) : (
         <div className="grid grid-cols-6 gap-3">
           {draft.parts.map((p) => {
@@ -207,29 +208,29 @@ export default function LibraryHomeBoard({
                 <div className="flex items-center gap-2 mb-2">
                   <GripVertical className="w-4 h-4 text-[var(--color-text-faint)] cursor-grab shrink-0" />
                   <M.icon className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
-                  <input
+                  <input aria-label="Section title"
                     value={p.title ?? ""}
                     onChange={(e) => update(p.id, { title: e.target.value })}
                     placeholder={M.defaultTitle}
-                    className="flex-1 min-w-0 bg-transparent text-sm font-medium text-[var(--color-text)] outline-none border-b border-transparent focus:border-[var(--color-border)]"
+                    className="flex-1 min-w-0 bg-transparent text-body font-medium text-[var(--color-text)] outline-none border-b border-transparent focus:border-[var(--color-border)]"
                   />
-                  <button onClick={() => movePart(p.id, -1)} title="Move earlier" className="p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><ChevronUp className="w-3.5 h-3.5" /></button>
-                  <button onClick={() => movePart(p.id, 1)} title="Move later" className="p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><ChevronDown className="w-3.5 h-3.5" /></button>
-                  <button onClick={() => cycleWidth(p.id, p.width)} title="Resize" className="p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><Maximize2 className="w-3.5 h-3.5" /></button>
-                  <button onClick={() => remove(p.id)} title="Remove" className="p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]"><Trash2 className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => movePart(p.id, -1)} title="Move earlier" aria-label="Move earlier" className="inline-flex items-center justify-center pointer-coarse:size-11 p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><ChevronUp className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => movePart(p.id, 1)} title="Move later" aria-label="Move later" className="inline-flex items-center justify-center pointer-coarse:size-11 p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><ChevronDown className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => cycleWidth(p.id, p.width)} title="Resize" aria-label="Resize" className="inline-flex items-center justify-center pointer-coarse:size-11 p-1 rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"><Maximize2 className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => remove(p.id)} title="Remove" aria-label="Remove" className="inline-flex items-center justify-center pointer-coarse:size-11 p-1 rounded text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)]"><Trash2 className="w-3.5 h-3.5" /></button>
                 </div>
                 <div className="text-body text-[var(--color-text-faint)] font-medium mb-1">{M.label} · {(p.width ?? "half")}</div>
                 {p.type === "recentDocs" && (
                   <label className="flex items-center gap-2 text-body text-[var(--color-text-muted)]">
                     Show
-                    <input type="number" min={1} max={20} value={p.settings?.count ?? 6}
+                    <input inputMode="numeric" type="number" min={1} max={20} value={p.settings?.count ?? 6}
                       onChange={(e) => update(p.id, { settings: { ...p.settings, count: Math.max(1, Math.min(20, Number(e.target.value) || 6)) } })}
                       className="w-16 px-2 py-1 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]" />
                     documents
                   </label>
                 )}
                 {p.type === "text" && (
-                  <textarea rows={3} value={p.settings?.body ?? ""}
+                  <textarea aria-label="Text" rows={3} value={p.settings?.body ?? ""}
                     onChange={(e) => update(p.id, { settings: { ...p.settings, body: e.target.value } })}
                     placeholder="Write a notice for everyone who opens this library…"
                     className="w-full px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] text-body text-[var(--color-text)] resize-none" />
@@ -266,15 +267,15 @@ function PartGrid({
         <section key={p.id} className={`${WIDTH_SPAN[p.width ?? "half"]} rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm overflow-hidden`}>
           {p.type === "about" ? (
             <div className="p-5">
-              <h3 className="text-sm font-medium text-[var(--color-text)] flex items-center gap-2 mb-2">
+              <h3 className="text-body font-medium text-[var(--color-text)] flex items-center gap-2 mb-2">
                 {node.icon ? <NodeIcon name={node.icon} className="w-4 h-4 text-[var(--color-text-muted)]" /> : <Info className="w-4 h-4 text-[var(--color-text-muted)]" />}
                 {p.title || `About ${node.name}`}
               </h3>
-              <p className="text-sm text-[var(--color-text-muted)] whitespace-pre-line">{node.description || "No description provided."}</p>
+              <p className="text-body text-[var(--color-text-muted)] whitespace-pre-line">{node.description || "No description provided."}</p>
             </div>
           ) : p.type === "stats" ? (
             <div className="p-5">
-              <h3 className="text-sm font-medium text-[var(--color-text)] mb-3">{p.title || "At a glance"}</h3>
+              <h3 className="text-body font-medium text-[var(--color-text)] mb-3">{p.title || "At a glance"}</h3>
               <div className="grid grid-cols-2 gap-3">
                 <Stat label="Folders" value={folders.length} />
                 <Stat label="Documents" value={documents.length} />
@@ -282,19 +283,19 @@ function PartGrid({
             </div>
           ) : p.type === "text" ? (
             <div className="p-5">
-              {p.title && <h3 className="text-sm font-medium text-[var(--color-text)] mb-2">{p.title}</h3>}
-              <p className="text-sm text-[var(--color-text-muted)] whitespace-pre-line">{p.settings?.body || ""}</p>
+              {p.title && <h3 className="text-body font-medium text-[var(--color-text)] mb-2">{p.title}</h3>}
+              <p className="text-body text-[var(--color-text-muted)] whitespace-pre-line">{p.settings?.body || ""}</p>
             </div>
           ) : p.type === "quickFolders" ? (
             <div className="p-5">
-              <h3 className="text-sm font-medium text-[var(--color-text)] flex items-center gap-2 mb-3"><FolderOpen className="w-4 h-4 text-[var(--color-text-muted)]" /> {p.title || "Folders"}</h3>
+              <h3 className="text-body font-medium text-[var(--color-text)] flex items-center gap-2 mb-3"><FolderOpen className="w-4 h-4 text-[var(--color-text-muted)]" /> {p.title || "Folders"}</h3>
               {rootFolders.length === 0 ? (
                 <p className="text-body text-[var(--color-text-muted)]">No folders yet.</p>
               ) : (
                 <div className="flex flex-wrap gap-2">
                   {pickFolders(rootFolders, p.settings?.folderIds).map((f) => (
                     <button key={f.id} onClick={() => onOpenFolder(f.id!)}
-                      className="group inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-main)] hover:bg-[var(--color-surface-2)] text-sm font-medium text-[var(--color-text)] transition-colors hover-lift">
+                      className="group inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-main)] hover:bg-[var(--color-surface-2)] text-body font-medium text-[var(--color-text)] transition-colors hover-lift">
                       <span className="w-5 h-5 rounded-md grid place-items-center text-white shrink-0 shadow-sm" style={{ background: f.color || "var(--brand-gradient)" }}>
                         <NodeIcon name={f.icon} className="w-3 h-3" />
                       </span>
@@ -308,7 +309,7 @@ function PartGrid({
           ) : (
             // recentDocs
             <div className="p-5">
-              <h3 className="text-sm font-medium text-[var(--color-text)] flex items-center gap-2 mb-3"><Clock className="w-4 h-4 text-[var(--color-text-muted)]" /> {p.title || "Recent documents"}</h3>
+              <h3 className="text-body font-medium text-[var(--color-text)] flex items-center gap-2 mb-3"><Clock className="w-4 h-4 text-[var(--color-text-muted)]" /> {p.title || "Recent documents"}</h3>
               {recent.length === 0 ? (
                 <p className="text-body text-[var(--color-text-muted)]">No documents yet.</p>
               ) : (
@@ -318,7 +319,7 @@ function PartGrid({
                       <button onClick={() => onOpenDoc(d)} className="w-full flex items-center gap-3 py-2 text-left hover:bg-[var(--color-surface-2)] rounded-lg px-1 -mx-1">
                         <FileText className="w-4 h-4 text-[var(--color-text-faint)] shrink-0" />
                         <span className="min-w-0 flex-1">
-                          <span className="block text-sm font-medium text-[var(--color-text)] truncate">{d.title || d.name || d.documentNumber || "Untitled"}</span>
+                          <span className="block text-body font-medium text-[var(--color-text)] truncate">{d.title || d.name || d.documentNumber || "Untitled"}</span>
                           <span className="block text-body text-[var(--color-text-muted)] truncate">{d.documentNumber}{d.rev ? ` · Rev ${d.rev}` : ""}{d.status ? ` · ${d.status}` : ""}</span>
                         </span>
                       </button>

@@ -377,7 +377,7 @@ export default function GlobalCommandPalette() {
           <ul className="max-h-[60vh] overflow-y-auto py-1">
             {visible.length === 0 ? (
               <li className="px-4 py-8 text-center text-body text-[var(--color-text-muted)]">
-                {query.trim().length < 2 ? "Type two letters to search. 'g i' goes to the Inbox, '?' lists shortcuts." : busy ? "Searching…" : searchError ? <span className="font-medium text-red-700 dark:text-red-400">Search didn&apos;t work: {searchError}</span> : "No matches"}
+                {query.trim().length < 2 ? "Type two letters to search. 'g i' goes to the Inbox, '?' lists shortcuts." : busy ? "Searching…" : searchError ? <span className="font-medium text-[var(--state-overdue-text)]">Search didn&apos;t work: {searchError}</span> : "No matches"}
               </li>
             ) : (
               visible.map((it, i) => {
@@ -437,7 +437,7 @@ function Shortcuts() {
   return (
     <div className="p-4 max-h-[60vh] overflow-y-auto">
       <div className="text-body font-medium text-[var(--color-text-muted)] mb-2">Quick Navigation</div>
-      <ul className="space-y-1 text-xs mb-4">
+      <ul className="space-y-1 text-caption mb-4">
         {QUICK_NAV.map((n) => (
           <li key={n.href} className="flex items-center gap-2">
             <kbd className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] font-mono text-caption">{n.keys}</kbd>
@@ -446,7 +446,7 @@ function Shortcuts() {
         ))}
       </ul>
       <div className="text-body font-medium text-[var(--color-text-muted)] mb-2">Global</div>
-      <ul className="space-y-1 text-xs">
+      <ul className="space-y-1 text-caption">
         <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] font-mono text-caption">⌘ K</kbd><span>Open this palette</span></li>
         <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] font-mono text-caption">/</kbd><span>Open this palette (when not typing)</span></li>
         <li className="flex items-center gap-2"><kbd className="px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] font-mono text-caption">esc</kbd><span>Close any modal</span></li>

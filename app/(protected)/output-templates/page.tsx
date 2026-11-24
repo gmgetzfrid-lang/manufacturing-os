@@ -61,7 +61,7 @@ export default function OutputTemplatesPage() {
     const ok = await appConfirm({
       title: "Delete this template?",
       message: `"${t.name}" and its saved fill points will be removed. Documents already generated are unaffected.`,
-      confirmLabel: "Delete",
+      confirmLabel: "Delete template",
       tone: "danger",
     });
     if (!ok || !activeOrgId) return;

@@ -64,16 +64,16 @@ export default function VerifyPage() {
 
   return (
     <div className={`min-h-dvh flex flex-col items-center justify-center p-6 transition-colors duration-500 ${
-      loading || error ? "bg-[var(--color-ink)]" : result?.notYetEffective ? "bg-[var(--state-held)]" : result?.isCurrent ? "bg-[var(--state-released)]" : "bg-[var(--state-overdue)]"
+      loading || error ? "bg-[var(--color-ink)]" : result?.notYetEffective ? "bg-[color-mix(in_srgb,var(--state-held)_78%,black)]" : result?.isCurrent ? "bg-[color-mix(in_srgb,var(--state-released)_78%,black)]" : "bg-[color-mix(in_srgb,var(--state-overdue)_78%,black)]"
     }`}>
       <div className="w-full max-w-sm text-center">
         {loading ? (
-          <div className="text-white/90">
+          <div className="text-[var(--color-ink-fg)]/90">
             <Loader2 className="w-14 h-14 mx-auto animate-spin mb-4" />
             <div className="text-body font-medium ">Checking revision…</div>
           </div>
         ) : error ? (
-          <div className="text-white/90">
+          <div className="text-[var(--color-ink-fg)]/90">
             <ShieldQuestion className="w-16 h-16 mx-auto mb-4 opacity-80" />
             <h1 className="text-[34px] leading-[1.05] tracking-[-0.02em] font-bold mb-3">Can&apos;t verify this code</h1>
             <p className="text-reading opacity-90">{error}</p>
@@ -82,7 +82,7 @@ export default function VerifyPage() {
             </p>
             <button
               onClick={() => void check()}
-              className="mt-6 inline-flex items-center gap-2 h-11 px-4 rounded-lg bg-white/15 hover:bg-white/25 text-reading font-medium"
+              className="mt-6 inline-flex items-center gap-2 h-11 px-4 rounded-lg bg-[var(--color-ink-fg)]/15 hover:bg-[var(--color-ink-fg)]/25 text-reading font-medium"
             >
               <RefreshCw className="w-4 h-4" /> Try again
             </button>
@@ -91,16 +91,16 @@ export default function VerifyPage() {
           <>
             {/* THE VERDICT — readable at arm's length in a plant. */}
             {result.notYetEffective ? (
-              <ShieldQuestion className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
+              <ShieldQuestion className="w-24 h-24 mx-auto text-[var(--color-ink-fg)] mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
             ) : result.isCurrent ? (
-              <CheckCircle2 className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
+              <CheckCircle2 className="w-24 h-24 mx-auto text-[var(--color-ink-fg)] mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
             ) : (
-              <XCircle className="w-24 h-24 mx-auto text-white mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
+              <XCircle className="w-24 h-24 mx-auto text-[var(--color-ink-fg)] mb-4 animate-in zoom-in duration-300" strokeWidth={2.5} />
             )}
-            <h1 className="text-[40px] font-bold text-white leading-[1.03] tracking-[-0.03em] mb-3">
+            <h1 className="text-[40px] font-bold text-[var(--color-ink-fg)] leading-[1.03] tracking-[-0.03em] mb-3">
               {result.notYetEffective ? "Not in effect yet" : result.isCurrent ? "Current" : "Do not use"}
             </h1>
-            <p className="text-white/90 text-reading font-medium mb-6">
+            <p className="text-[var(--color-ink-fg)]/90 text-reading font-medium mb-6">
               {result.notYetEffective
                 ? `This is the latest revision, but it comes into force ${result.effectiveDate ? new Date(result.effectiveDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "later"}. Until then, keep working to the prior in-force revision.`
                 : result.isCurrent
@@ -139,12 +139,12 @@ export default function VerifyPage() {
               )}
             </div>
 
-            <div className="mt-5 text-caption text-white/70">
+            <div className="mt-5 text-caption text-[var(--color-ink-fg)]/90">
               Checked {new Date(result.checkedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} by document control.
             </div>
             <button
               onClick={() => void check()}
-              className="mt-3 inline-flex items-center gap-1.5 h-11 px-4 rounded-lg bg-white/15 hover:bg-white/25 text-white text-reading font-medium"
+              className="mt-3 inline-flex items-center gap-1.5 h-11 px-4 rounded-lg bg-[var(--color-ink-fg)]/15 hover:bg-[var(--color-ink-fg)]/25 text-[var(--color-ink-fg)] text-reading font-medium"
             >
               <RefreshCw className="w-4 h-4" /> Check again
             </button>

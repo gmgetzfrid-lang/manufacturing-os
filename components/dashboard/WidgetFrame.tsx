@@ -143,7 +143,7 @@ export default function WidgetFrame({ widget, editing, size, onRemove, onOpenSet
             </button>
           )}
           <Link href={meta.href} aria-label={meta.cta} title={meta.cta}
-            className="ml-2 text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">
+            className="ml-2 inline-flex items-center pointer-coarse:min-h-11 text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">
             Open
           </Link>
           {isExpanded && (
@@ -159,7 +159,7 @@ export default function WidgetFrame({ widget, editing, size, onRemove, onOpenSet
     <p role="alert" className="mb-3 flex flex-wrap items-baseline gap-x-2 text-body">
       <span className="font-medium text-[var(--state-overdue-text)]">This didn&apos;t load.</span>
       <span className="text-[var(--color-text-muted)]">{friendlyError(loadError)}</span>
-      <button type="button" onClick={refresh} className="font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Try again</button>
+      <button type="button" onClick={refresh} className="ui-hit font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Try again</button>
     </p>
   ) : null;
 

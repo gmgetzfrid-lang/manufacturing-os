@@ -1686,7 +1686,7 @@ function makeCtx(tz: string, byId: Map<string, Milestone>, progress?: Map<string
 /** Breaks and lunch for each shift: blocked off in the notes by the hour.
  *  Picked, not typed: the shift, the time, how long, and what it is. */
 function BreaksEditor({ breaks, onChange, times }: { breaks: ShiftBreak[]; onChange: (b: ShiftBreak[]) => void; times: ShiftTimes }) {
-  const sel = "h-7 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-caption";
+  const sel = "h-7 pointer-coarse:h-11 rounded border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-caption";
   const set = (i: number, v: Partial<ShiftBreak>) => onChange(breaks.map((b, j) => (j === i ? { ...b, ...v } : b)));
   // A break outside its shift never shows: said, with the shift's hours.
   const min = (hm: string) => Number(hm.slice(0, 2)) * 60 + Number(hm.slice(3, 5));
@@ -1710,7 +1710,7 @@ function BreaksEditor({ breaks, onChange, times }: { breaks: ShiftBreak[]; onCha
           <select value={b.minutes} onChange={(e) => set(i, { minutes: Number(e.target.value) })} aria-label="How long" className={sel}>
             {[10, 15, 20, 30, 45, 60].map((m) => <option key={m} value={m}>{m} min</option>)}
           </select>
-          <button type="button" onClick={() => onChange(breaks.filter((_, j) => j !== i))} aria-label="Remove this break" className="p-1 text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)]"><X className="w-3.5 h-3.5" /></button>
+          <button type="button" onClick={() => onChange(breaks.filter((_, j) => j !== i))} aria-label="Remove this break" className="ui-hit p-1 text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)]"><X className="w-3.5 h-3.5" /></button>
           {outside(b) && <span className="basis-full text-caption font-medium text-[var(--state-held-text)]">{c12(b.start)} isn&apos;t on the {b.shift} shift ({c12(b.shift === "day" ? ds : ns)} to {c12(b.shift === "day" ? ns : ds)}): it won&apos;t show. AM or PM, or the other shift?</span>}
         </div>
       ))}
@@ -2227,7 +2227,7 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
             </div>
           )}
           {checkText && <div className="text-caption font-medium text-[var(--color-text)]">{checkText}</div>}
-          {askedText && <div className="text-caption font-medium text-slate-700 dark:text-slate-200">{askedText}</div>}
+          {askedText && <div className="text-caption font-medium text-[var(--color-text)]">{askedText}</div>}
           {doneRows.length > 0 && putBack(print, "done")}
           {doneRows.length > 0 ? (
             <DoneTasks rows={doneTasks} print={print} stamps={!!sh?.stamps} T={c.T} sort={sortOf(print, "done")} onEdit={print ? undefined : editRow} />
@@ -2362,7 +2362,7 @@ function FollowUpsBox({ open, edit, T, onAdd, onDone }: {
         <div className="flex gap-2">
           <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="Add a follow-up item"
             aria-label="Add a follow-up item" className="flex-1 min-w-0 h-9 pointer-coarse:h-11 px-2.5 rounded-lg border border-transparent bg-[var(--color-surface-2)] text-body text-[var(--color-text)] focus:bg-[var(--color-surface)]" />
-          <button type="button" onClick={add} disabled={!text.trim()} className="h-9 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-body font-medium disabled:opacity-50">Add</button>
+          <button type="button" onClick={add} disabled={!text.trim()} className="h-9 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-body font-medium disabled:opacity-50">Add</button>
         </div>
       )}
     </div>
@@ -2443,7 +2443,7 @@ function DiscoveryList({ list, c, print, now = false }: { list: Discovery[]; c: 
   return (
     <>
       {!print && (
-        <div className="sm:hidden rounded-md border border-slate-300 dark:border-slate-700 divide-y divide-slate-200 dark:divide-slate-700/60">
+        <div className="sm:hidden rounded-md border border-[var(--color-border-strong)] divide-y divide-[var(--color-border)]">
           {list.map((d) => (
             <div key={d.record.id} className="px-3 py-2 text-caption space-y-0.5">
               <div className="flex items-start justify-between gap-2">
@@ -2460,13 +2460,13 @@ function DiscoveryList({ list, c, print, now = false }: { list: Discovery[]; c: 
       <div className={print ? "" : "hidden sm:block"}>
         <table className={`w-full border-collapse ${print ? "text-[8pt]" : "text-caption"}`}>
           <thead>
-            <tr className="border-b border-slate-300 dark:border-slate-600 text-caption font-medium text-slate-500 dark:text-slate-400 text-left">
+            <tr className="border-b border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text-muted)] text-left">
               <th className={`${cell} w-[92px]`}>When</th><th className={`${cell} w-[18%]`}>Task</th><th className={cell}>What</th><th className={`${cell} w-[30%]`}>Work it added</th><th className={`${cell} w-[22%]`}>What it did</th>
             </tr>
           </thead>
           <tbody>
             {list.map((d) => (
-              <tr key={d.record.id} className="border-b border-slate-100 dark:border-slate-800 align-top">
+              <tr key={d.record.id} className="border-b border-[var(--color-border)] align-top">
                 <td className={`${cell} font-display tabular-nums text-caption whitespace-nowrap`}>{c.DTs(d.record.foundAt)}</td>
                 <td className={`${cell} font-medium break-words`}>{d.task?.name}{d.task?.workOrderRef && <div className="ui-id text-caption">WO {d.task.workOrderRef}</div>}</td>
                 <td className={`${cell} break-words`}><div className="text-caption font-medium text-[var(--color-text-muted)]">{ADDED[kindOf(d.record)].word}</div>{d.record.what}{d.record.approvedBy && <div className="text-caption text-[var(--color-text-muted)]">Approved by {d.record.approvedBy}</div>}</td>
@@ -2789,7 +2789,7 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx): Sec[] {
               {lb.byCause.map((x) => (
                 <div key={x.cause} className="grid grid-cols-[minmax(0,15rem)_1fr_auto] items-center gap-2 max-sm:grid-cols-[1fr_auto]">
                   <span className="text-[var(--color-text)] break-words max-sm:col-span-2">{CAUSE_LABEL[x.cause]}</span>
-                  <span className="h-2.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden"><span className="block h-full rounded-full bg-[var(--state-held)]" style={{ width: `${Math.round((x.hours / max) * 100)}%` }} /></span>
+                  <span className="h-2.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden"><span className="block h-full rounded-full bg-[var(--state-held)]" style={{ width: `${Math.round((x.hours / max) * 100)}%` }} /></span>
                   <span className="tabular-nums text-[var(--color-text-muted)]"><b className="text-[var(--color-text)]">{c.hrs(x.hours)}</b> · {x.steps} step{x.steps === 1 ? "" : "s"}</span>
                 </div>
               ))}
@@ -2837,7 +2837,7 @@ function lookBackSections(lb: LookBack, report: ShiftReport, c: Ctx): Sec[] {
             const tone = l.addedH >= 1 ? "text-[var(--state-overdue-text)]" : l.addedH <= -1 ? "text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]";
             return (
               <li key={s.id} className="keep pl-5 py-1 border-l-2 border-[var(--color-border-strong)] ml-1.5 relative">
-                <span className={`absolute -left-[5px] top-[9px] h-2 w-2 rounded-full ${l.addedH >= 1 ? "bg-[var(--state-overdue)]" : l.addedH <= -1 ? "bg-[var(--state-released)]" : "bg-slate-400"}`} />
+                <span className={`absolute -left-[5px] top-[9px] h-2 w-2 rounded-full ${l.addedH >= 1 ? "bg-[var(--state-overdue)]" : l.addedH <= -1 ? "bg-[var(--state-released)]" : "bg-[var(--color-border-control)]"}`} />
                 <div className="flex flex-wrap items-baseline gap-x-2">
                   <b className="text-[var(--color-text)] break-words">{name(s)}</b>
                   <span className={`font-medium tabular-nums ${tone}`}>{l.addedH >= 1 ? `added ${signed(l.addedH)}` : l.addedH <= -1 ? `made up ${c.hrs(-l.addedH)}` : "passed it on"}</span>
@@ -2949,11 +2949,11 @@ function closeSection(title: string, signers: string[], sub = "Notes, actions an
       // On paper two framed boxes; on screen two plain columns on the card.
       <div className={`grid grid-cols-1 sm:grid-cols-2 keep ${print ? "gap-2" : "gap-x-6 gap-y-4"}`}>
         <div className={print ? "rounded-md border border-[var(--color-border)] px-2.5 py-1.5" : ""}>
-          <div className={print ? "text-caption font-medium text-slate-600 dark:text-slate-300" : "mb-1 text-body font-medium text-[var(--color-text-muted)]"}>Notes &amp; actions</div>
+          <div className={print ? "text-caption font-medium text-[var(--color-text-muted)]" : "mb-1 text-body font-medium text-[var(--color-text-muted)]"}>Notes &amp; actions</div>
           {notes ? notes(print) : Array.from({ length: print ? 4 : 3 }).map((_, i) => <div key={i} className="h-5 border-b border-dotted border-[var(--color-border-strong)]" />)}
         </div>
         <div className={print ? "rounded-md border border-[var(--color-border)] px-2.5 py-1.5 space-y-2" : "space-y-2"}>
-          <div className={print ? "text-caption font-medium text-slate-600 dark:text-slate-300" : "text-body font-medium text-[var(--color-text-muted)]"}>Sign-off</div>
+          <div className={print ? "text-caption font-medium text-[var(--color-text-muted)]" : "text-body font-medium text-[var(--color-text-muted)]"}>Sign-off</div>
           {signers.map((who) => (
             <div key={who} className="flex items-end gap-2 text-caption text-[var(--color-text-muted)]">
               <span className="w-40 shrink-0">{who}</span>
@@ -3043,7 +3043,7 @@ function SectionHead({ n, s, collapsed, big, print, onPath }: { n: number; s: Se
     </div>
   );
   return (
-    <div className={`flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5 ${print ? "pb-[2px] border-b-[1.5px] border-slate-900" : "pb-1.5 border-b-2 border-slate-900 dark:border-slate-500"}`}>
+    <div className={`flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5 ${print ? "pb-[2px] border-b-[1.5px] border-slate-900" : "pb-1.5 border-b-2 border-[var(--color-text)]"}`}>
       <span className={`${big ? "w-7 h-7 text-body" : print ? "w-4 h-4 text-[7.5pt]" : "w-5 h-5 text-caption"} self-center rounded-full bg-slate-900 text-white dark:bg-slate-200 dark:text-slate-900 font-medium flex items-center justify-center shrink-0`}>{n}</span>
       <span className={`${big ? "text-section" : print ? "text-[11pt]" : "text-body"} min-w-0 font-bold tracking-tight`}>{s.title}</span>
       {s.sub && <span className={`min-w-0 ${big ? "text-body" : print ? "text-[8pt]" : "text-caption"} text-[var(--color-text-muted)]`}>{s.sub}</span>}
@@ -3059,11 +3059,11 @@ function StandTiles({ actual, planned, standing, gap, done, total, pastDue, past
   actual: number; planned: number; standing: "ahead" | "behind" | "on track"; gap: { label: string; value: string };
   done: number; total: number; pastDue: number; pastDueHeld?: number; pastDueLabel: string; print: boolean;
 }) {
-  const tile = `rounded-lg border border-slate-200 dark:border-slate-700 ${print ? "px-2 py-1" : "px-3 py-2"}`;
-  const label = `font-medium text-slate-500 dark:text-slate-400 ${print ? "text-[7.5pt]" : "text-caption"}`;
-  const value = `font-bold tracking-tight tabular-nums leading-tight ${print ? "text-[14pt]" : "text-[22px]"}`;
-  const small = `font-medium text-slate-600 dark:text-slate-300 ${print ? "text-[8pt]" : "text-body"}`;
-  const sub = `text-slate-500 dark:text-slate-400 ${print ? "text-[7pt]" : "text-caption"}`;
+  const tile = `rounded-lg border border-[var(--color-border)] ${print ? "px-2 py-1" : "px-3 py-2"}`;
+  const label = `font-medium text-[var(--color-text-muted)] ${print ? "text-[7.5pt]" : "text-caption"}`;
+  const value = `font-bold tracking-tight tabular-nums leading-tight ${print ? "text-[14pt]" : "text-section"}`;
+  const small = `font-medium text-[var(--color-text-muted)] ${print ? "text-[8pt]" : "text-body"}`;
+  const sub = `text-[var(--color-text-muted)] ${print ? "text-[7pt]" : "text-caption"}`;
   const gapTone = standing === "behind" ? "text-[var(--state-overdue-text)]" : standing === "ahead" ? "text-[var(--state-released-text)]" : "";
   // On screen: one compact row, no tiles (no big numbers in the content).
   if (!print) return (
@@ -3098,9 +3098,9 @@ function StandTiles({ actual, planned, standing, gap, done, total, pastDue, past
       <div className={tile}>
         <div className={label}>Progress</div>
         <div className={value}>{actual}% <span className={small}>of {planned}% planned</span></div>
-        <div className="relative mt-1.5 h-1.5 rounded-full bg-slate-200 dark:bg-slate-700" aria-hidden>
+        <div className="relative mt-1.5 h-1.5 rounded-full bg-[var(--color-border)]" aria-hidden>
           <div className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-main)]" style={{ width: `${Math.min(100, actual)}%` }} />
-          <div className={`absolute -top-[3px] w-0.5 h-3 ${standing === "behind" ? "bg-[var(--state-overdue)]" : "bg-slate-500"}`} style={{ left: `calc(${Math.min(100, planned)}% - 1px)` }} />
+          <div className={`absolute -top-[3px] w-0.5 h-3 ${standing === "behind" ? "bg-[var(--state-overdue)]" : "bg-[var(--color-text-muted)]"}`} style={{ left: `calc(${Math.min(100, planned)}% - 1px)` }} />
         </div>
       </div>
       <div className={tile}>
@@ -3139,7 +3139,7 @@ function WhyBehind({ why, c, print }: { why: BehindWhy; c: Ctx; print: boolean }
   const tag = (flag: boolean) => (flag ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]");
   const dot = (flag: boolean) => <span aria-hidden className="w-1.5 h-1.5 rounded-full shrink-0 print:hidden" style={{ background: flag ? "var(--state-overdue)" : "var(--color-text-faint)" }} />;
   return (
-    <div className={print ? "mt-2 rounded-lg border border-slate-200 dark:border-slate-700 px-2 py-1.5 keep" : "mt-4 pt-3 border-t border-[var(--color-border)] keep"}>
+    <div className={print ? "mt-2 rounded-lg border border-[var(--color-border)] px-2 py-1.5 keep" : "mt-4 pt-3 border-t border-[var(--color-border)] keep"}>
       <div className={`font-medium ${print ? "text-[9pt]" : "text-body"}`}>{whyTitle(why, c.hrs)}</div>
       {/* Hours behind by cause, as labelled figures. */}
       <dl className={`mt-1.5 flex flex-wrap gap-x-6 gap-y-1 ${print ? small : "text-body"}`}>
@@ -3281,7 +3281,7 @@ function StatusLine({ tags, print }: { tags: TagT[]; print?: boolean }) {
     <div className={`mt-0.5 leading-snug ${print ? "text-[7.5pt]" : "text-caption"}`}>
       {tags.map((t, i) => (
         <span key={`${t.t}${i}`} className={TONE_TEXT[t.tone]}>
-          {i > 0 && <span className="mx-1.5 font-normal text-slate-400" aria-hidden>·</span>}
+          {i > 0 && <span className="mx-1.5 font-normal text-[var(--color-text-faint)]" aria-hidden>·</span>}
           {t.tone === "wait" && <Hourglass className="inline w-3 h-3 -mt-0.5 mr-0.5" aria-hidden />}
           {i === 0 ? t.t.charAt(0).toUpperCase() + t.t.slice(1) : t.t}
         </span>
@@ -3327,23 +3327,23 @@ interface TRow {
 function GroupTitle({ title }: { title: string }) {
   const m = /^([A-Z0-9][A-Z0-9./-]{0,14})\s+[-–—]\s+(.+)$/i.exec(title.trim());
   return m && /\d/.test(m[1])
-    ? <><b className="font-medium text-slate-900 dark:text-slate-100">{m[1]}</b> · {m[2]}</>
-    : <b className="font-medium text-slate-900 dark:text-slate-100">{title}</b>;
+    ? <><b className="font-medium text-[var(--color-text)]">{m[1]}</b> · {m[2]}</>
+    : <b className="font-medium text-[var(--color-text)]">{title}</b>;
 }
 
 /** "25% · goal 100%": where it is, a thin bar, and the shift's goal marked. */
 function Progress({ right, print }: { right: string; print?: boolean }) {
   const m = /^(\d+)%(?: · goal (\d+)%)?$/.exec(right.trim());
-  if (!m) return <span className={`font-display tabular-nums font-semibold text-slate-700 dark:text-slate-200 ${print ? "text-[8pt]" : "text-caption"}`}>{right}</span>;
+  if (!m) return <span className={`font-display tabular-nums font-semibold text-[var(--color-text)] ${print ? "text-[8pt]" : "text-caption"}`}>{right}</span>;
   const pct = Math.min(100, +m[1]), goal = m[2] != null ? Math.min(100, +m[2]) : null;
   return (
     <span className="inline-flex flex-col items-end gap-1">
-      <span className={`font-display tabular-nums font-semibold text-slate-900 dark:text-slate-100 whitespace-nowrap ${print ? "text-[8pt]" : "text-caption"}`}>
-        {pct}%{goal != null && <span className="font-normal text-slate-500 dark:text-slate-400"> → {goal}%</span>}
+      <span className={`font-display tabular-nums font-semibold text-[var(--color-text)] whitespace-nowrap ${print ? "text-[8pt]" : "text-caption"}`}>
+        {pct}%{goal != null && <span className="font-normal text-[var(--color-text-muted)]"> → {goal}%</span>}
       </span>
-      <span className={`relative block h-1 rounded-full bg-slate-200 dark:bg-slate-700 ${print ? "w-16" : "w-20"}`} aria-hidden>
+      <span className={`relative block h-1 rounded-full bg-[var(--color-border)] ${print ? "w-16" : "w-20"}`} aria-hidden>
         <span className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-main)]" style={{ width: `${pct}%` }} />
-        {goal != null && <span className="absolute -top-[3px] w-0.5 h-2.5 bg-slate-500" style={{ left: `calc(${goal}% - 1px)` }} />}
+        {goal != null && <span className="absolute -top-[3px] w-0.5 h-2.5 bg-[var(--color-text-muted)]" style={{ left: `calc(${goal}% - 1px)` }} />}
       </span>
     </span>
   );
@@ -3391,10 +3391,10 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
   const statusOf = (r: TRow) => (r.tags ?? []).filter((t): t is TagT => !!t && t.t !== "critical");
   const nameOf = (r: TRow, cls: string) => open && !print ? (
     <button type="button" onClick={() => open(r.id)} title="When it's due, the goal for the shift, what comes next"
-      className={`text-left hover:underline decoration-dotted underline-offset-2 ${r.done ? "line-through text-slate-400" : cls}`}>{r.name}</button>
-  ) : <span className={r.done ? "line-through text-slate-400" : cls}>{r.name}</span>;
+      className={`text-left hover:underline decoration-dotted underline-offset-2 ${r.done ? "line-through text-[var(--color-text-faint)]" : cls}`}>{r.name}</button>
+  ) : <span className={r.done ? "line-through text-[var(--color-text-faint)]" : cls}>{r.name}</span>;
   const cell = print ? "px-1 py-[3px]" : "px-2 py-2";
-  const taskCls = `font-medium text-slate-900 dark:text-slate-50 ${print ? "text-[9pt]" : "text-body"}`;
+  const taskCls = `font-medium text-[var(--color-text)] ${print ? "text-[9pt]" : "text-body"}`;
   return (
     <div ref={sortBox} className="relative">
     {sortLine}
@@ -3405,28 +3405,28 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
         {groups.map(({ g, rows: list, key }) => (
           <div key={key} className="mt-3 first:mt-0">
             {g.title && (
-              <div className="group/sort pb-1 border-b border-slate-300 dark:border-slate-600 text-caption font-medium text-slate-700 dark:text-slate-300">
+              <div className="group/sort pb-1 border-b border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text)]">
                 <Grip props={grip(list.map((x) => x.id), g.title)} />
                 <GroupTitle title={g.title} />
-                {g.meta && <div className="text-caption font-normal text-slate-500 dark:text-slate-400">{g.meta}</div>}
+                {g.meta && <div className="text-caption font-normal text-[var(--color-text-muted)]">{g.meta}</div>}
               </div>
             )}
             {list.map((r) => (
-              <div key={r.id} data-sort-id={r.id} className={`group/sort py-2.5 border-b border-slate-100 dark:border-slate-800 ${moving(r.id) ? "opacity-40" : ""}`}>
+              <div key={r.id} data-sort-id={r.id} className={`group/sort py-2.5 border-b border-[var(--color-border)] ${moving(r.id) ? "opacity-40" : ""}`}>
                 <div className="flex items-start gap-2">
                   <Grip props={grip([r.id], r.name)} className="mt-0.5 ml-0" />
                   {box && <span className="pt-1"><Box /></span>}
                   {r.n && <span className="pt-0.5"><Num n={r.n.num} /></span>}
                   <div className="flex-1 min-w-0">
                     <div className="text-body leading-snug">
-                      {flat && r.group.title && <span className="text-slate-500 dark:text-slate-400">{r.group.title} › </span>}
-                      {nameOf(r, "font-medium text-slate-900 dark:text-slate-50")}{critical(r) && <CriticalTag />}{edit(r)}
+                      {flat && r.group.title && <span className="text-[var(--color-text-muted)]">{r.group.title} › </span>}
+                      {nameOf(r, "font-medium text-[var(--color-text)]")}{critical(r) && <CriticalTag />}{edit(r)}
                     </div>
                     <StatusLine tags={statusOf(r)} />
-                    <div className="mt-1 text-caption text-slate-600 dark:text-slate-300">
+                    <div className="mt-1 text-caption text-[var(--color-text-muted)]">
                       {[!crew && r.who ? r.who : null, r.when, r.wo ? `WO ${r.wo}` : null].filter(Boolean).join(" · ")}
                     </div>
-                    {r.note && <div className="text-caption italic text-slate-600 dark:text-slate-300 mt-0.5">{r.note}</div>}
+                    {r.note && <div className="text-caption italic text-[var(--color-text-muted)] mt-0.5">{r.note}</div>}
                     {r.why && <div className="text-caption italic font-medium text-[var(--state-held-text)] mt-0.5">Why behind: {r.why}</div>}
                     {r.inline && <div className="mt-1.5">{r.inline}</div>}
                   </div>
@@ -3442,7 +3442,7 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
     <div className={print ? "" : "hidden sm:block overflow-x-auto"}>
       <table className={`w-full border-collapse table-fixed ${print ? "text-[8pt]" : "text-caption"}`}>
         <thead>
-          <tr className={`text-left font-medium text-slate-500 dark:text-slate-400 border-b border-slate-300 dark:border-slate-600 ${print ? "text-[7.5pt]" : "text-caption"}`}>
+          <tr className={`text-left font-medium text-[var(--color-text-muted)] border-b border-[var(--color-border-strong)] ${print ? "text-[7.5pt]" : "text-caption"}`}>
             {box && <th className={`${cell} w-6 font-medium`} />}
             {hasN && <th className={`${cell} w-7 font-medium text-right`}>#</th>}
             <th className={`${cell} font-medium`}>Task</th>
@@ -3456,34 +3456,34 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
           {groups.map(({ g, rows: list, key }) => (
             <React.Fragment key={key}>
               {g.title && (
-                <tr className="group/sort border-b border-slate-300 dark:border-slate-600">
-                  <td colSpan={cols} className={`${print ? "px-1 pt-[7px] pb-[2px] text-[8pt]" : "px-2 pt-3.5 pb-1 text-caption"} font-medium text-slate-700 dark:text-slate-300`}>
+                <tr className="group/sort border-b border-[var(--color-border-strong)]">
+                  <td colSpan={cols} className={`${print ? "px-1 pt-[7px] pb-[2px] text-[8pt]" : "px-2 pt-3.5 pb-1 text-caption"} font-medium text-[var(--color-text)]`}>
                     <Grip props={grip(list.map((x) => x.id), g.title)} />
                     <GroupTitle title={g.title} />
-                    {g.meta && <span className={`float-right font-normal text-slate-500 dark:text-slate-400 ${print ? "text-[7.5pt]" : "text-caption"}`}>{g.meta}</span>}
+                    {g.meta && <span className={`float-right font-normal text-[var(--color-text-muted)] ${print ? "text-[7.5pt]" : "text-caption"}`}>{g.meta}</span>}
                   </td>
                 </tr>
               )}
               {list.map((r) => (
                 <React.Fragment key={r.id}>
-                  <tr data-sort-id={r.id} className={`group/sort border-b border-slate-100 dark:border-slate-800 align-top ${moving(r.id) ? "opacity-40" : ""}`}>
+                  <tr data-sort-id={r.id} className={`group/sort border-b border-[var(--color-border)] align-top ${moving(r.id) ? "opacity-40" : ""}`}>
                     {box && <td className={cell}><Box /></td>}
                     {hasN && <td className={`${cell} text-right`}>{r.n ? <Num n={r.n.num} /> : null}</td>}
                     <td className={cell}>
                       <div className="leading-snug">
-                        {flat && r.group.title && <span className="text-slate-500 dark:text-slate-400">{r.group.title} › </span>}
+                        {flat && r.group.title && <span className="text-[var(--color-text-muted)]">{r.group.title} › </span>}
                         <Grip props={grip([r.id], r.name)} />
                         {nameOf(r, taskCls)}{critical(r) && <CriticalTag print={print} />}{edit(r)}
                         {!print && r.inline && <span className="ml-2 align-middle">{r.inline}</span>}
                       </div>
                       <StatusLine tags={statusOf(r)} print={print} />
-                      {r.note && <div className={`italic text-slate-600 dark:text-slate-300 mt-0.5 ${print ? "text-[7.5pt]" : "text-caption"}`}>{r.note}</div>}
+                      {r.note && <div className={`italic text-[var(--color-text-muted)] mt-0.5 ${print ? "text-[7.5pt]" : "text-caption"}`}>{r.note}</div>}
                       {r.why && <div className={`italic font-medium text-[var(--state-held-text)] mt-0.5 ${print ? "text-[7.5pt]" : "text-caption"}`}>Why behind: {r.why}</div>}
                       {ownerLine && <div className="text-caption print:text-caption text-slate-500 mt-0.5">Owner / decision: <span className="inline-block w-44 border-b border-dotted border-slate-400 align-baseline">&nbsp;</span></div>}
                     </td>
-                    {hasWhen && <td className={`${cell} text-slate-700 dark:text-slate-300 break-words`}>{r.when}</td>}
-                    {hasWho && <td className={`${cell} font-medium text-slate-900 dark:text-slate-100 truncate`} title={r.who}>{r.who}</td>}
-                    {hasWo && <td className={`${cell} font-display tabular-nums text-slate-500 dark:text-slate-400 truncate ${print ? "text-[7.5pt]" : "text-caption"}`}>{r.wo}</td>}
+                    {hasWhen && <td className={`${cell} text-[var(--color-text)] break-words`}>{r.when}</td>}
+                    {hasWho && <td className={`${cell} font-medium text-[var(--color-text)] truncate`} title={r.who}>{r.who}</td>}
+                    {hasWo && <td className={`${cell} font-display tabular-nums text-[var(--color-text-muted)] truncate ${print ? "text-[7.5pt]" : "text-caption"}`}>{r.wo}</td>}
                     <td className={`${cell} text-right`}><Progress right={r.right} print={print} /></td>
                   </tr>
                   {/* The meeting's decision on this step — its own full-width line. */}
@@ -3505,7 +3505,7 @@ function StepTable({ rows, print, box, rightHead = "", whenHead = "When", ownerL
 function EditBtn({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <button type="button" onClick={onClick} aria-label={`Update ${label}`} title="Update this step - status, %, time, comment"
-      className="ml-1 inline-flex items-center justify-center w-5 h-5 align-middle rounded text-slate-400 opacity-50 group-hover/sort:opacity-100 pointer-coarse:opacity-100 hover:bg-slate-200/70 hover:text-slate-700 dark:hover:bg-slate-700/60 dark:hover:text-slate-200 focus:opacity-100 print:hidden">
+      className="ui-hit ml-1 inline-flex items-center justify-center w-5 h-5 align-middle rounded text-[var(--color-text-faint)] opacity-50 group-hover/sort:opacity-100 pointer-coarse:opacity-100 hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)] focus:opacity-100 print:hidden">
       <Pencil className="w-3 h-3" />
     </button>
   );
@@ -3524,14 +3524,14 @@ function DoneLines({ x, stamps, T, print, onEdit }: { x: DoneTask; stamps: boole
     const lead = [l.wo ? `WO ${l.wo}` : "", stamps && l.time != null ? T(l.time) : ""].filter(Boolean).join(" ");
     return (
       <div className="mt-0.5 first:mt-0">
-        <span className={`mr-1.5 font-medium text-slate-500 dark:text-slate-400 ${small}`}>{label}</span>
-        {lead && <span className={`font-display tabular-nums text-slate-600 dark:text-slate-300 mr-1.5 ${print ? "text-[7.5pt]" : "text-caption"}`}>{lead}</span>}
+        <span className={`mr-1.5 font-medium text-[var(--color-text-muted)] ${small}`}>{label}</span>
+        {lead && <span className={`font-display tabular-nums text-[var(--color-text-muted)] mr-1.5 ${print ? "text-[7.5pt]" : "text-caption"}`}>{lead}</span>}
         <span>{l.name}</span>
         {l.critical && <span className={`ml-1.5 font-medium text-[var(--state-overdue-text)] ${small}`}>critical path</span>}
         {l.discovery && <span className={`ml-1.5 font-medium text-[var(--color-text)] ${small}`}>{l.discovery}</span>}
-        {more > 0 && <span className={`ml-1.5 text-slate-500 dark:text-slate-400 ${small}`}>+{more} more {moreWord}</span>}
+        {more > 0 && <span className={`ml-1.5 text-[var(--color-text-muted)] ${small}`}>+{more} more {moreWord}</span>}
         {!print && onEdit && <EditBtn label={l.name} onClick={() => onEdit(l.id)} />}
-        {l.note && <div className={`italic text-slate-500 dark:text-slate-400 ml-3 ${print ? "text-[7.5pt]" : "text-caption"}`}>“{l.note}”</div>}
+        {l.note && <div className={`italic text-[var(--color-text-muted)] ml-3 ${print ? "text-[7.5pt]" : "text-caption"}`}>“{l.note}”</div>}
       </div>
     );
   };
@@ -3559,7 +3559,7 @@ function DoneTasks({ rows, print, stamps = false, T, sort, onEdit }: { rows: Don
     <div ref={sortBox} className="relative">
       {sortLine}
       {!print && (
-        <div className="sm:hidden rounded-md border border-slate-300 dark:border-slate-700 divide-y divide-slate-200 dark:divide-slate-700/60">
+        <div className="sm:hidden rounded-md border border-[var(--color-border-strong)] divide-y divide-[var(--color-border)]">
           {rows.map((x) => (
             <div key={x.ids.join(",")} data-sort-id={x.key} className={`group/sort px-3 py-2 text-caption space-y-0.5 ${moving(x.key) ? "opacity-40" : ""}`}>
               <div className="flex items-start justify-between gap-2">
@@ -3578,15 +3578,15 @@ function DoneTasks({ rows, print, stamps = false, T, sort, onEdit }: { rows: Don
       <div className={print ? "" : "hidden sm:block"}>
         <table className={`w-full border-collapse ${print ? "text-[8pt]" : "text-caption"}`}>
           <thead>
-            <tr className="border-b border-slate-300 dark:border-slate-600 text-caption font-medium text-slate-500 dark:text-slate-400 text-left">
+            <tr className="border-b border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text-muted)] text-left">
               <th className={`${cell} w-[18%]`}>Task</th>{hasWo && <th className={`${cell} w-[62px]`}>WO</th>}<th className={cell}>Last done · In progress</th><th className={`${cell} w-[13%]`}>Who</th>
               <th className={`${cell} w-[20%]`}>What it means</th><th className={`${cell} w-[64px] text-right`}>vs plan</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((x) => (
-              <tr key={x.ids.join(",")} data-sort-id={x.key} className={`group/sort border-b border-slate-100 dark:border-slate-800 align-top ${moving(x.key) ? "opacity-40" : ""}`}>
-                <td className={`${cell} font-medium break-words`}><Grip props={grip([x.key], x.task)} />{x.task}{x.critical && <CriticalTag print={print} />}{pctLine(x) && <div className={`font-normal text-slate-500 dark:text-slate-400 ${print ? "text-[7.5pt]" : "text-caption"}`}>{pctLine(x)}</div>}</td>
+              <tr key={x.ids.join(",")} data-sort-id={x.key} className={`group/sort border-b border-[var(--color-border)] align-top ${moving(x.key) ? "opacity-40" : ""}`}>
+                <td className={`${cell} font-medium break-words`}><Grip props={grip([x.key], x.task)} />{x.task}{x.critical && <CriticalTag print={print} />}{pctLine(x) && <div className={`font-normal text-[var(--color-text-muted)] ${print ? "text-[7.5pt]" : "text-caption"}`}>{pctLine(x)}</div>}</td>
                 {hasWo && <td className={`${cell} font-display tabular-nums text-caption break-words`}>{x.woShown.split(/,\s*/).map((w, i) => <span key={i} className="block">{w}</span>)}</td>}
                 <td className={`${cell} break-words`}><DoneLines x={x} stamps={stamps} T={T} print={print} onEdit={onEdit} /></td>
                 <td className={`${cell} text-caption text-[var(--color-text-muted)] break-words`}>{x.who}</td>
@@ -3605,16 +3605,16 @@ function DoneTasks({ rows, print, stamps = false, T, sort, onEdit }: { rows: Don
 function SimpleTable({ head, rows, print }: { head: string[]; rows: Array<{ id: string; cells: React.ReactNode[] }>; print: boolean }) {
   const cell = print ? "px-1 py-[1px]" : "px-1.5 py-[3px]";
   return (
-    <div className={`rounded-md border border-slate-300 dark:border-slate-700 ${print ? "" : "overflow-x-auto"}`}>
+    <div className={`rounded-md border border-[var(--color-border-strong)] ${print ? "" : "overflow-x-auto"}`}>
       <table className={`w-full border-collapse ${print ? "text-[8.5pt]" : "text-caption"}`}>
         <thead>
-          <tr className="border-b border-slate-300 dark:border-slate-600 text-caption font-medium text-slate-500 dark:text-slate-400 text-left">
+          <tr className="border-b border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text-muted)] text-left">
             {head.map((h) => <th key={h} className={cell}>{h}</th>)}
           </tr>
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr key={r.id} className="border-t border-slate-200 dark:border-slate-700/60 align-top">
+            <tr key={r.id} className="border-t border-[var(--color-border)] align-top">
               {r.cells.map((c, i) => <td key={i} className={`${cell} ${i === 0 ? "" : "whitespace-nowrap font-display tabular-nums text-caption print:text-caption"}`}>{c}</td>)}
             </tr>
           ))}

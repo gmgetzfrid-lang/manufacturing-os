@@ -125,7 +125,7 @@ export function CommandDeck({
           const v = pillars.loaded ? t.value ?? 0 : null;
           return (
             <li key={t.href}>
-              <Link href={t.href} className="group inline-flex items-baseline gap-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+              <Link href={t.href} className="group inline-flex items-baseline gap-1.5 pointer-coarse:py-3 pointer-coarse:-my-3 text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
                 <span className="group-hover:underline underline-offset-2">{t.label}</span>
                 <span className={`font-medium tabular-nums ${v === null || v === 0 ? "text-[var(--color-text-faint)]" : t.bad ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>{v === null ? "–" : v.toLocaleString()}</span>
                 {t.note && <span className={t.bad ? "text-[var(--state-overdue-text)]" : ""}>({t.note})</span>}

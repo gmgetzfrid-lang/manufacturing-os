@@ -150,7 +150,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
   const addBtn = (key: string, cls = "w-5 h-5") => canAdd ? (
     <button type="button" onClick={(e) => { e.stopPropagation(); setAddOn(key); }}
       title="Add discovery or added scope on this day" aria-label="Add discovery or added scope on this day"
-      className={`shrink-0 inline-flex items-center justify-center rounded-md border border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] ${cls}`}>
+      className={`ui-hit shrink-0 inline-flex items-center justify-center rounded-md border border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] ${cls}`}>
       <Plus className="w-3 h-3" />
     </button>
   ) : null;
@@ -563,37 +563,37 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
       {/* Bulk action bar — appears when chips are selected. */}
       {canEdit && selected.size > 0 && (
         <div className="px-3 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] flex items-center gap-2 flex-wrap">
-          <span className="text-xs font-medium text-[var(--color-text)]">{selected.size} selected</span>
+          <span className="text-caption font-medium text-[var(--color-text)]">{selected.size} selected</span>
           <div className="inline-flex items-center gap-1">
             <span className="text-caption font-medium text-[var(--color-text-faint)]">Mark</span>
-            {([["completed", "Done", "bg-[var(--state-released)]"], ["in_progress", "Doing", "bg-slate-500"], ["on_hold", "Hold", "bg-[var(--state-held)]"], ["blocked", "Block", "bg-[var(--state-overdue)]"]] as const).map(([s, label, dot]) => (
-              <button key={s} onClick={() => { onBulkStatus?.(Array.from(selected), s); clearSelection(); }} className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-caption font-medium hover:bg-[var(--color-surface-2)]"><span aria-hidden className={`w-2 h-2 rounded-full ${dot}`} />{label}</button>
+            {([["completed", "Done", "bg-[var(--state-released)]"], ["in_progress", "Doing", "bg-[var(--color-text-muted)]"], ["on_hold", "Hold", "bg-[var(--state-held)]"], ["blocked", "Block", "bg-[var(--state-overdue)]"]] as const).map(([s, label, dot]) => (
+              <button key={s} onClick={() => { onBulkStatus?.(Array.from(selected), s); clearSelection(); }} className="inline-flex items-center gap-1 px-2 py-1 pointer-coarse:min-h-11 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-caption font-medium hover:bg-[var(--color-surface-2)]"><span aria-hidden className={`w-2 h-2 rounded-full ${dot}`} />{label}</button>
             ))}
           </div>
           <span className="w-px h-4 bg-[var(--color-border)]" />
           <div className="inline-flex items-center gap-1">
             <span className="text-caption font-medium text-[var(--color-text-faint)]">Move</span>
-            <button onClick={() => onBulkMove?.(Array.from(selected), -1)} className="px-1.5 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] text-caption font-medium">−1d</button>
-            <button onClick={() => onBulkMove?.(Array.from(selected), 1)} className="px-1.5 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] text-caption font-medium">+1d</button>
+            <button onClick={() => onBulkMove?.(Array.from(selected), -1)} aria-label="Move selected 1 day earlier" className="px-1.5 py-1 pointer-coarse:min-h-11 pointer-coarse:min-w-11 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] text-caption font-medium">−1d</button>
+            <button onClick={() => onBulkMove?.(Array.from(selected), 1)} aria-label="Move selected 1 day later" className="px-1.5 py-1 pointer-coarse:min-h-11 pointer-coarse:min-w-11 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] text-caption font-medium">+1d</button>
           </div>
-          <button onClick={clearSelection} className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-[var(--color-surface)] text-[var(--color-text)] text-caption font-medium transition-colors">
+          <button onClick={clearSelection} className="ml-auto inline-flex items-center gap-1 px-2 py-1 pointer-coarse:min-h-11 rounded-md hover:bg-[var(--color-surface)] text-[var(--color-text)] text-caption font-medium transition-colors">
             <XIcon className="w-3 h-3" /> Clear
           </button>
         </div>
       )}
       {/* Toolbar */}
       <div className="px-3 sm:px-4 py-2.5 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap bg-[var(--color-surface)]">
-        <button onClick={() => step(-1)} title={`Previous ${mode}`} aria-label={`Previous ${mode}`} className="w-9 h-9 inline-flex items-center justify-center rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] transition-colors"><ChevronLeft className="w-4 h-4" /></button>
+        <button onClick={() => step(-1)} title={`Previous ${mode}`} aria-label={`Previous ${mode}`} className="ui-hit w-9 h-9 inline-flex items-center justify-center rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] transition-colors"><ChevronLeft className="w-4 h-4" /></button>
         <div className="text-body font-medium text-[var(--color-text)] min-w-[150px] text-center">
           {mode === "month" ? fmtInTz(cursor, tz, { month: "long", year: "numeric" })
             : mode === "week" ? `${fmtInTz(weekDays[0], tz, { month: "short", day: "numeric" })} – ${fmtInTz(weekDays[6], tz, { month: "short", day: "numeric", year: "numeric" })}`
               : fmtInTz(focusDay, tz, { weekday: "short", month: "short", day: "numeric", year: "numeric" })}
         </div>
-        <button onClick={() => step(1)} title={`Next ${mode}`} aria-label={`Next ${mode}`} className="w-9 h-9 inline-flex items-center justify-center rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] transition-colors"><ChevronRight className="w-4 h-4" /></button>
+        <button onClick={() => step(1)} title={`Next ${mode}`} aria-label={`Next ${mode}`} className="ui-hit w-9 h-9 inline-flex items-center justify-center rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] transition-colors"><ChevronRight className="w-4 h-4" /></button>
         <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-lg p-0.5 gap-0.5" role="group" aria-label="Calendar view">
           {(["month", "week", "day"] as const).map((m) => (
             <button key={m} onClick={() => setMode(m)} aria-pressed={mode === m}
-              className={`h-8 px-2.5 rounded-lg text-caption font-medium capitalize transition-colors ${mode === m ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
+              className={`h-8 pointer-coarse:h-11 px-2.5 rounded-lg text-caption font-medium capitalize transition-colors ${mode === m ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>
               {m}
             </button>
           ))}
@@ -678,7 +678,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
           : <span><b className="text-[var(--color-text)]">{compact ? "Tap a day" : "Click a day\u2019s number"}</b> for its full list with progress entry.</span>}
         {/* What the marks on a card do — not on a phone, where a day opens its list. */}
         {!compact && <>
-          <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-400 border border-black/10" /> status</span>
+          <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-[var(--color-border-control)] border border-[var(--color-border)]" /> status</span>
           <span className="inline-flex items-center gap-1"><span className="text-caption font-medium px-1 rounded border border-[var(--color-border-strong)]">40%</span> set progress</span>
           {!showSubtasks && <span className="inline-flex items-center gap-1"><ChevronRight className="w-3 h-3" /> its steps that day</span>}
           <span className="inline-flex items-center gap-1"><GripVertical className="w-3 h-3" /> drag by the colored edge</span>
@@ -805,7 +805,7 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                     </div>
                   );
                 })}
-                <div style={{ gridColumn: "15 / span 1" }} className="bg-slate-50/40 dark:bg-transparent" aria-hidden />
+                <div style={{ gridColumn: "15 / span 1" }} className="bg-[color-mix(in_srgb,var(--color-surface-2)_40%,transparent)]" aria-hidden />
               </div>
             )}
             {crewFilter !== "day" && (
@@ -871,10 +871,10 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                 return (
                   <button key={key} type="button" data-daykey={key} onClick={() => (items.length || canAdd) && setAgendaDay(key)}
                     className={`min-w-0 border-r border-[var(--color-border)] last:border-r-0 p-1 flex flex-col items-start gap-0.5 text-left ${inMonth ? "bg-[var(--color-surface)]" : "bg-[var(--color-canvas)]/50 dark:bg-transparent"} ${isToday ? "ring-1 ring-inset ring-[var(--color-border)]" : ""}`}>
-                    <span className={`text-caption font-medium ${isToday ? "text-[var(--state-overdue-text)]" : inMonth ? "text-[var(--color-text)]" : "text-slate-300 dark:text-slate-600"}`}>{wallClock(day.getTime(), tz).day}</span>
+                    <span className={`text-caption font-medium ${isToday ? "text-[var(--state-overdue-text)]" : inMonth ? "text-[var(--color-text)]" : "text-[var(--color-text-faint)]"}`}>{wallClock(day.getTime(), tz).day}</span>
                     {items.length > 0 && <>
                       <span className="text-caption font-medium tabular-nums px-1.5 rounded-full bg-[var(--color-surface-2)] text-[var(--color-text)]">{badgeText(items.length)}</span>
-                      <span className="mt-auto w-full h-1 rounded-full bg-black/10 dark:bg-white/10 overflow-hidden"><span className={`block h-full ${avg >= 100 ? "bg-[var(--state-released)]" : "bg-[var(--color-text)]"}`} style={{ width: `${avg}%` }} /></span>
+                      <span className="mt-auto w-full h-1 rounded-full bg-[var(--color-border)] overflow-hidden"><span className={`block h-full ${avg >= 100 ? "bg-[var(--state-released)]" : "bg-[var(--color-text)]"}`} style={{ width: `${avg}%` }} /></span>
                     </>}
                   </button>
                 );
@@ -892,13 +892,13 @@ export default function ScheduleCalendarTileView({ planNow, userId, milestones, 
                       type="button"
                       onClick={() => setAgendaDay(key)}
                       title={`Open ${fmtInTz(day, tz, { weekday: "long", month: "long", day: "numeric" })} - every step due that day, with progress entry`}
-                      className={`inline-flex items-center gap-1 text-caption font-medium rounded px-1 -ml-1 hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-accent-text)] transition-colors ${isToday ? "text-[var(--state-overdue-text)]" : inMonth ? "text-[var(--color-text)]" : "text-slate-300"}`}
+                      className={`inline-flex items-center gap-1 text-caption font-medium rounded px-1 -ml-1 hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-accent-text)] transition-colors ${isToday ? "text-[var(--state-overdue-text)]" : inMonth ? "text-[var(--color-text)]" : "text-[var(--color-text-faint)]"}`}
                     >
                       {wallClock(day.getTime(), tz).day}
                       {items.length > 0 && <span className="text-body font-medium opacity-0 group-hover/tile:opacity-70">Open day</span>}
                     </button>
                     {items.length > 0 && (
-                      <span className={`ml-auto min-w-0 truncate whitespace-nowrap text-caption font-medium tabular-nums ${inMonth ? "text-[var(--color-text-faint)]" : "text-slate-300"}`}>
+                      <span className={`ml-auto min-w-0 truncate whitespace-nowrap text-caption font-medium tabular-nums ${inMonth ? "text-[var(--color-text-faint)]" : "text-[var(--color-text-faint)] opacity-70"}`}>
                         {items.length} task{items.length === 1 ? "" : "s"}{nightN > 0 && <span className="text-violet-700 dark:text-violet-300"> · {nightN} night</span>}{doneHere ? ` · ${doneHere} done` : ""}
                       </span>
                     )}
@@ -1214,7 +1214,7 @@ function Chip({
           onClick={(e) => e.stopPropagation()}
           title="Drag to move to another day"
           style={{ touchAction: "none" }}
-          className="absolute left-0 top-0 bottom-0 w-2.5 z-10 flex items-center justify-center cursor-grab active:cursor-grabbing text-[var(--color-text-faint)] opacity-0 group-hover/chip:opacity-100 pointer-coarse:opacity-100 hover:bg-black/10"
+          className="absolute left-0 top-0 bottom-0 w-2.5 z-10 flex items-center justify-center cursor-grab active:cursor-grabbing text-[var(--color-text-faint)] opacity-0 group-hover/chip:opacity-100 pointer-coarse:opacity-100 hover:bg-[color-mix(in_srgb,var(--color-text)_10%,transparent)]"
         >
           <GripVertical className="w-2.5 h-3" />
         </span>
@@ -1262,7 +1262,7 @@ function Chip({
                 </span>
               )}
               {critical && (
-                <span title="Critical-path work on this shift: it sets the finish date" className="shrink-0 rounded px-1 text-caption font-medium leading-[14px] bg-[color-mix(in_srgb,var(--state-overdue)_14%,transparent)] text-[var(--state-overdue)]">Crit</span>
+                <span title="Critical-path work on this shift: it sets the finish date" className="shrink-0 rounded px-1 text-caption font-medium leading-[14px] bg-[color-mix(in_srgb,var(--state-overdue)_14%,transparent)] text-[var(--state-overdue-text)]">Crit</span>
               )}
               {aheadOf && (
                 <span title={`Worked ahead of plan: planned to start ${aheadOf}`} className="shrink-0 rounded px-1 text-caption font-medium leading-[14px] bg-transparent text-[var(--state-released-text)]">Ahead</span>
@@ -1288,7 +1288,7 @@ function Chip({
                   type="button"
                   onClick={(e) => { e.stopPropagation(); onToggleExpand?.(e); }}
                   title={isExpanded ? "Hide its steps" : "Show its steps for this day"}
-                  className={`inline-flex items-center justify-center w-4 h-4 pointer-coarse:w-6 pointer-coarse:h-6 rounded transition-colors ${isExpanded ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "text-[var(--color-text-muted)] hover:bg-black/10 hover:text-[var(--color-text)]"}`}
+                  className={`inline-flex items-center justify-center w-4 h-4 pointer-coarse:w-6 pointer-coarse:h-6 rounded transition-colors ${isExpanded ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "text-[var(--color-text-muted)] hover:bg-[color-mix(in_srgb,var(--color-text)_10%,transparent)] hover:text-[var(--color-text)]"}`}
                 >
                   <ChevronRight className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-90" : ""}`} strokeWidth={2.5} />
                 </button>
@@ -1298,7 +1298,7 @@ function Chip({
         </div>
       </div>
       {/* Progress as a hairline along the bottom edge. */}
-      <span className="absolute left-1 right-0 bottom-0 h-[2px] bg-black/5" aria-hidden>
+      <span className="absolute left-1 right-0 bottom-0 h-[2px] bg-[var(--color-border)]" aria-hidden>
         <span className={`block h-full ${pct >= 100 ? "bg-[var(--state-released)]" : "bg-[var(--color-text-muted)]"}`} style={{ width: `${pct}%` }} />
       </span>
     </div>

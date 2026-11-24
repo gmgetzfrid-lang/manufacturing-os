@@ -19,6 +19,7 @@ import { friendlyError } from "@/lib/friendlyError";
 import { Map as MapIcon, Loader2, FileText, ClipboardCheck, Table2, BookOpen, ChevronDown, Plus, RefreshCw, X, AlertTriangle } from "lucide-react";
 import { getLibraryCatalog, mapLibraryCatalog, markCatalog, unmarkCatalog, type CatalogSummaryEntry, type CatalogListingInfo } from "@/lib/knowledge";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
+import { FieldError } from "@/components/ui/Field";
 
 const TYPE_LABEL: Record<string, string> = {
   standard: "Standards", catalog: "Catalogs", form: "Forms", checklist: "Checklists",
@@ -117,7 +118,7 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
           {mapping.remaining > 0 ? `, ${mapping.remaining} to go` : ""}. You can keep working; it continues while this page is open.
         </div>
       )}
-      {error && <p role="alert" className="mt-3 text-body font-medium text-[var(--state-overdue-text)]">{error}</p>}
+      {error && <div className="mt-3"><FieldError>{error}</FieldError></div>}
 
       {entries.length > 0 && (
         <div className="mt-4 flex flex-wrap gap-1.5">
@@ -191,12 +192,12 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
                       <span className="shrink-0 text-body font-medium text-[var(--color-text)]">{c.mark.entries.toLocaleString()} entries</span>
                       {data?.canMap && here && (
                         <>
-                          <button type="button" onClick={() => void reread(c)} disabled={busy} title="Read it again"
-                            className="p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
+                          <button type="button" onClick={() => void reread(c)} disabled={busy} title="Read it again" aria-label="Read it again"
+                            className="inline-flex items-center justify-center pointer-coarse:size-11 p-1.5 rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
                             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
                           </button>
-                          <button type="button" onClick={() => void unmark(c)} disabled={busy} title="Unmark - it stays in the library as an ordinary document"
-                            className="p-1.5 rounded-lg hover:bg-[var(--state-overdue)]/10 text-[var(--color-text-muted)] hover:text-[var(--state-overdue)]">
+                          <button type="button" onClick={() => void unmark(c)} disabled={busy} title="Unmark - it stays in the library as an ordinary document" aria-label="Unmark"
+                            className="inline-flex items-center justify-center pointer-coarse:size-11 p-1.5 rounded-lg hover:bg-[var(--state-overdue)]/10 text-[var(--color-text-muted)] hover:text-[var(--state-overdue)]">
                             <X className="w-3.5 h-3.5" />
                           </button>
                         </>
@@ -292,13 +293,13 @@ function MarkCatalogModal({ orgId, libraryId, libraryName, docs, onClose, onDone
       <ModalBody className="space-y-4">
         {result ? (
           result.entries > 0 ? (
-            <div className="text-sm text-[var(--color-text)]">
+            <div className="text-body text-[var(--color-text)]">
               <b>{result.entries.toLocaleString()} entries</b> read from &ldquo;{name.trim()}&rdquo;.
               {(result.fields?.length ?? 0) > 0 && <div className="mt-1 text-caption text-[var(--color-text-muted)]">Fields found on them: {result.fields!.join(" · ")}</div>}
               <div className="mt-2 text-caption text-[var(--color-text-muted)]">Questions that name it, or ask which one to use, now filter every entry.</div>
             </div>
           ) : (
-            <div className="flex items-start gap-2 text-sm text-[var(--state-held)]"><AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />{result.problem ?? "No entries were found."}</div>
+            <div className="flex items-start gap-2 text-body text-[var(--state-held)]"><AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />{result.problem ?? "No entries were found."}</div>
           )
         ) : (
           <>
@@ -306,7 +307,7 @@ function MarkCatalogModal({ orgId, libraryId, libraryName, docs, onClose, onDone
               <span className="block text-body font-medium text-[var(--color-text-muted)] mb-1">What does your team call it?</span>
               <input value={name} onChange={(e) => setName(e.target.value)} autoFocus maxLength={60}
                 placeholder="e.g. Piping specs, Valve data sheets, Coating systems"
-                className="w-full h-9 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-border-strong)]" />
+                className="w-full h-9 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-body text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-border-strong)]" />
             </label>
             <div>
               <span className="block text-body font-medium text-[var(--color-text-muted)] mb-1">Where is it?</span>
@@ -323,7 +324,7 @@ function MarkCatalogModal({ orgId, libraryId, libraryName, docs, onClose, onDone
             </div>
             {scope === "document" && (
               <div>
-                <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find the document…"
+                <input type="search" aria-label="Find the document" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find the document…"
                   className="w-full h-8 px-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-body text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-border-strong)]" />
                 <ul className="mt-1.5 max-h-56 overflow-y-auto rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
                   {shown.map((d) => (
@@ -340,7 +341,7 @@ function MarkCatalogModal({ orgId, libraryId, libraryName, docs, onClose, onDone
                 </ul>
               </div>
             )}
-            {error && <p role="alert" className="text-body font-medium text-[var(--state-overdue-text)]">{error}</p>}
+            {error && <FieldError>{error}</FieldError>}
           </>
         )}
       </ModalBody>

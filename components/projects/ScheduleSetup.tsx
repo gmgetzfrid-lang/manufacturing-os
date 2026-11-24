@@ -323,16 +323,16 @@ function SetupWizard({ items: given, start, critical, onClose: close, ...rest }:
       </ModalBody>
       <ModalFooter>
         <div className="flex items-center w-full gap-2">
-          <button onClick={() => go(-1)} disabled={idx === 0} className="inline-flex items-center gap-1 h-9 text-body text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 disabled:opacity-30">
+          <button onClick={() => go(-1)} disabled={idx === 0} className="inline-flex items-center gap-1 h-9 pointer-coarse:h-11 text-body text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 disabled:opacity-30">
             <ChevronLeft className="w-4 h-4" /> Back
           </button>
           <span className="flex-1 text-center text-caption text-[var(--color-text-muted)]">{counted.filter((i) => i.done).length} of {counted.length} set</span>
           {idx < items.length - 1 ? (
-            <button onClick={() => go(1)} className="inline-flex items-center gap-1 h-9 text-body px-2 text-[var(--color-accent-text)] hover:underline">
+            <button onClick={() => go(1)} className="inline-flex items-center gap-1 h-9 pointer-coarse:h-11 text-body px-2 text-[var(--color-accent-text)] hover:underline">
               {item.done ? "Next" : "Skip for now"} <ChevronRight className="w-4 h-4" />
             </button>
           ) : (
-            <button onClick={onClose} className="h-9 text-body font-medium px-3 rounded-lg bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-border)]">
+            <button onClick={onClose} className="h-9 pointer-coarse:h-11 text-body font-medium px-3 rounded-lg bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-border)]">
               {allDone ? "All set: close" : "Close"}
             </button>
           )}
@@ -343,7 +343,7 @@ function SetupWizard({ items: given, start, critical, onClose: close, ...rest }:
 }
 
 const btn = "inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-caption font-medium px-3.5 py-2 shadow-sm disabled:opacity-50";
-const field = "h-9 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-body text-[var(--color-text)]";
+const field = "h-9 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-body text-[var(--color-text)]";
 
 function Msg({ err }: { err: string | null }) {
   return err ? <div className="text-caption text-[var(--state-overdue-text)]">{err}</div> : null;
@@ -459,7 +459,7 @@ function ShiftsStep({ projectId, canManage, done, checking, onSaved }: Props & {
         <label className="space-y-1"><span className="block text-body font-medium text-[var(--color-text-muted)]">Night shift starts</span>
           <input type="time" disabled={!canManage} value={t.nightStart} onChange={(e) => setDraft({ ...t, nightStart: e.target.value })} className={`${field} w-full`} /></label>
         <label className="space-y-1"><span className="block text-body font-medium text-[var(--color-text-muted)]">Turnover meeting</span>
-          <span className="flex items-center gap-1.5"><input type="number" min={0} max={180} step={5} disabled={!canManage} value={meetingLeadMin(t)} onChange={(e) => setDraft({ ...t, meetingBefore: Number(e.target.value) })} className={`${field} w-20`} />
+          <span className="flex items-center gap-1.5"><input type="number" inputMode="numeric" min={0} max={180} step={5} disabled={!canManage} value={meetingLeadMin(t)} onChange={(e) => setDraft({ ...t, meetingBefore: Number(e.target.value) })} className={`${field} w-20`} />
             <span className="text-caption text-[var(--color-text-muted)]">min before</span></span></label>
       </div>
       {!done && !draft && <p className="text-caption text-[var(--color-text-muted)]">These are filled in with what the app is using now. If they&apos;re right, just confirm.</p>}
@@ -618,7 +618,7 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
                     <div className="min-w-[160px] flex-1">
                       <div className="text-body font-medium text-[var(--color-text)]" title={j.crumbs}>{j.name}</div>
                       <div className="text-caption text-[var(--color-text-muted)]">
-                        {j.crews.map(crewName).join(", ")} · <span className="text-[var(--color-text)] dark:text-[var(--color-text)]">{j.nightSteps} of {j.steps} step{j.steps === 1 ? "" : "s"} in night hours</span>
+                        {j.crews.map(crewName).join(", ")} · <span className="text-[var(--color-text)]">{j.nightSteps} of {j.steps} step{j.steps === 1 ? "" : "s"} in night hours</span>
                       </div>
                     </div>
                     <div className="inline-flex rounded-lg bg-[var(--color-surface-2)] p-0.5 gap-0.5 text-caption font-medium" role="radiogroup" aria-label={`${j.name}: shifts`}>
@@ -663,9 +663,9 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
           <div className="flex items-center gap-2">
             <span className="text-body font-medium text-[var(--color-text-muted)]">The shifts</span>
             <span className="ml-auto inline-flex items-center gap-1">
-              <button type="button" onClick={() => setOffset((o) => o - 3)} className="w-8 h-8 inline-flex items-center justify-center rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]" aria-label="Earlier days"><ChevronLeft className="w-4 h-4" /></button>
-              {offset !== 0 && <button type="button" onClick={() => setOffset(0)} className="px-2.5 h-8 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium hover:bg-[var(--color-surface-2)]">Back</button>}
-              <button type="button" onClick={() => setOffset((o) => o + 3)} className="w-8 h-8 inline-flex items-center justify-center rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]" aria-label="Later days"><ChevronRight className="w-4 h-4" /></button>
+              <button type="button" onClick={() => setOffset((o) => o - 3)} className="w-8 h-8 pointer-coarse:size-11 inline-flex items-center justify-center rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]" aria-label="Earlier days"><ChevronLeft className="w-4 h-4" /></button>
+              {offset !== 0 && <button type="button" onClick={() => setOffset(0)} className="px-2.5 h-8 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-caption font-medium hover:bg-[var(--color-surface-2)]">Back</button>}
+              <button type="button" onClick={() => setOffset((o) => o + 3)} className="w-8 h-8 pointer-coarse:size-11 inline-flex items-center justify-center rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)]" aria-label="Later days"><ChevronRight className="w-4 h-4" /></button>
             </span>
           </div>
           {dayKeys.map((k) => {
@@ -739,11 +739,11 @@ function NightStep({ projectId, milestones: given, canManage, done, onSaved }: P
                 <option value="">Not set</option>
                 {crews.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
-              <input type="number" min={0} max={50} disabled={!canManage} value={helpers.hands} onChange={(e) => setHelpers({ ...helpers, hands: Math.max(0, Math.min(50, Number(e.target.value) || 0)) })} aria-label="Hands" className={`${field} w-16`} />
+              <input type="number" inputMode="numeric" min={0} max={50} disabled={!canManage} value={helpers.hands} onChange={(e) => setHelpers({ ...helpers, hands: Math.max(0, Math.min(50, Number(e.target.value) || 0)) })} aria-label="Hands" className={`${field} w-16`} />
               <span className="text-[var(--color-text-muted)]">hands ×</span>
-              <input type="number" min={0} max={24} step={0.5} disabled={!canManage} value={helpers.hours} onChange={(e) => setHelpers({ ...helpers, hours: Math.max(0, Math.min(24, Number(e.target.value) || 0)) })} aria-label="Hours each" className={`${field} w-16`} />
+              <input type="number" inputMode="decimal" min={0} max={24} step={0.5} disabled={!canManage} value={helpers.hours} onChange={(e) => setHelpers({ ...helpers, hours: Math.max(0, Math.min(24, Number(e.target.value) || 0)) })} aria-label="Hours each" className={`${field} w-16`} />
               <span className="text-[var(--color-text-muted)]">h</span>
-              {chosen && canManage && <button type="button" onClick={() => setEdited(null)} className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Clear</button>}
+              {chosen && canManage && <button type="button" onClick={() => setEdited(null)} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Clear</button>}
             </div>
           </div>
         )}

@@ -66,7 +66,7 @@ export default function AssistantAnswer({ answer, mentionedDocs }: {
     <div className="space-y-2.5">
       {hero && (
         // The answer first, in the biggest type on the page.
-        <div className="pb-2 font-display text-[24px] sm:text-[28px] leading-[1.2] font-semibold text-[var(--color-text)]">
+        <div className="pb-2 font-display text-title leading-[1.2] font-semibold text-[var(--color-text)]">
           <Inline text={hero.text} docs={docs} />
         </div>
       )}

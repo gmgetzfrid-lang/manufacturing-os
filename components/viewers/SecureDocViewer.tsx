@@ -12,6 +12,7 @@ import { previewKind, fileTypeName, sizeWords } from '@/lib/filePreview';
 import { downloadStoredFile } from '@/lib/fileDownload';
 import { logFileDownload } from '@/lib/audit';
 import { friendlyError } from '@/lib/friendlyError';
+import { FieldError } from "@/components/ui/Field";
 
 interface SecureDocViewerProps {
   url: string;
@@ -229,7 +230,7 @@ export default function SecureDocViewer({
       <div className="absolute inset-0 z-50 pointer-events-none overflow-hidden flex items-center justify-center">
         <div className="w-full h-full flex flex-col items-center justify-center opacity-[0.03] transform -rotate-12 select-none">
            {Array.from({ length: 10 }).map((_, i) => (
-             <div key={i} className="text-4xl font-medium text-[var(--color-text)] whitespace-nowrap mb-24">
+             <div key={i} className="text-hero font-medium text-[var(--color-text)] whitespace-nowrap mb-24">
                 {watermarkText || "UNCONTROLLED COPY"} | {viewerId} | {new Date().toLocaleDateString()}
              </div>
            ))}
@@ -292,7 +293,7 @@ export default function SecureDocViewer({
                 className="mt-3 inline-flex items-center justify-center gap-2 h-10 pointer-coarse:h-11 px-4 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-reading font-medium text-[var(--color-text)] disabled:opacity-60">
                 {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Download
               </button>
-              {saveErr != null && <p role="alert" className="mt-2 text-body text-[var(--state-overdue-text)]">The download didn&apos;t start. {friendlyError(saveErr)}</p>}
+              {saveErr != null && <div className="mt-2"><FieldError>The download didn&apos;t start. {friendlyError(saveErr)}</FieldError></div>}
             </div>
           </div>
         ) : archivedInfo ? (
@@ -339,14 +340,14 @@ export default function SecureDocViewer({
       <div className="hidden print:flex fixed inset-0 z-[9999] bg-white flex-col items-center justify-center p-10 text-center">
         <div className="border-2 border-slate-900 p-10 rounded-lg">
           <ShieldAlert className="w-16 h-16 text-slate-900 mb-6 mx-auto" />
-          <h1 className="font-display text-3xl font-semibold text-slate-900 mb-3">Controlled document</h1>
-          <p className="text-lg text-slate-700 mb-6">
+          <h1 className="font-display text-title font-semibold text-[var(--color-text)] mb-3">Controlled document</h1>
+          <p className="text-reading text-[var(--color-text-muted)] mb-6">
               This preview doesn&apos;t print. Open the full view and use Print: it stamps the copy.
           </p>
           <div className="text-left inline-block">
-             <p className="font-mono text-sm mb-1"><strong>User:</strong> {viewerId}</p>
-             <p className="font-mono text-sm mb-1"><strong>Date:</strong> {new Date().toLocaleString()}</p>
-             <p className="font-mono text-sm"><strong>Document:</strong> {docNumber}</p>
+             <p className="font-mono text-body mb-1"><strong>User:</strong> {viewerId}</p>
+             <p className="font-mono text-body mb-1"><strong>Date:</strong> {new Date().toLocaleString()}</p>
+             <p className="font-mono text-body"><strong>Document:</strong> {docNumber}</p>
           </div>
         </div>
       </div>

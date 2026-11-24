@@ -8,7 +8,7 @@
 // they are in the same library.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, Folder, FolderPlus, Library as LibraryIcon, Loader2, MapPin, MoveRight } from "lucide-react";
+import { Check, Folder, FolderPlus, Library as LibraryIcon, Loader2, MapPin, MoveRight, CircleAlert } from "lucide-react";
 import { createFolder, listLibraryFoldersOnce, type PickerFolder } from "@/lib/libraryCollections";
 import {
   moveStraysHere, placeWords, projectFileHome, saveProjectFilePlace, strayProjectFiles,
@@ -185,7 +185,7 @@ export default function ProjectFilePlace({ orgId, projectId, uid, canManage, hom
                 <FolderPlus className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />
                 <input value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void create(); }}
                   aria-label="New folder name" placeholder="New folder name"
-                  className="h-9 flex-1 min-w-40 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-base sm:text-caption" />
+                  className="h-9 flex-1 min-w-40 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-reading sm:text-caption" />
                 <button type="button" onClick={() => void create()} disabled={!newName.trim() || busy !== null} className={btn}>
                   {busy === "create" ? <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin" /> : <FolderPlus className="w-3.5 h-3.5 shrink-0" />} Make folder {picked ? `in ${picked.name}` : "at the top"}
                 </button>
@@ -193,7 +193,7 @@ export default function ProjectFilePlace({ orgId, projectId, uid, canManage, hom
             </div>
           )}
 
-          {err && <div className="text-caption font-medium text-[var(--state-overdue-text)]">{err}</div>}
+          {err && <div role="alert" className="text-caption font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{err}</span></div>}
           <div className="flex items-center gap-2 flex-wrap">
             <button type="button" onClick={() => void save()} disabled={!lib || !folders || busy !== null} className={pri}>
               {busy === "save" ? <Loader2 className="w-4 h-4 shrink-0 animate-spin" /> : <Check className="w-4 h-4 shrink-0" />} {lib ? `Files go to ${here}` : "Pick a library"}

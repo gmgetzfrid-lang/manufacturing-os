@@ -102,9 +102,9 @@ export function PullAheadPicker({ items, onLists, next, shiftHours, picked, coun
               {crews.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
             <label className="inline-flex items-center gap-1.5 text-[var(--color-text-muted)]">
-              <input type="number" min={0} max={50} step={1} disabled={locked} value={pull.hands} onChange={(e) => onPull({ ...pull, hands: num(e.target.value, 50) })}
+              <input type="number" inputMode="numeric" min={0} max={50} step={1} disabled={locked} value={pull.hands} onChange={(e) => onPull({ ...pull, hands: num(e.target.value, 50) })}
                 className="h-8 w-14 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-caption text-[var(--color-text)]" aria-label="Hands" /> hands ×
-              <input type="number" min={0} max={24} step={0.5} disabled={locked} value={pull.hours} onChange={(e) => onPull({ ...pull, hours: num(e.target.value, 24) })}
+              <input type="number" inputMode="decimal" min={0} max={24} step={0.5} disabled={locked} value={pull.hours} onChange={(e) => onPull({ ...pull, hours: num(e.target.value, 24) })}
                 className="h-8 w-16 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-caption text-[var(--color-text)]" aria-label="Hours each" /> h
             </label>
             {onSaveDefault && !locked && (
@@ -117,7 +117,7 @@ export function PullAheadPicker({ items, onLists, next, shiftHours, picked, coun
           </div>
           {cap > 0 ? (
             <div className="flex items-center gap-2.5">
-              <div className="flex-1 h-2.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden" role="meter" aria-valuemin={0} aria-valuemax={cap} aria-valuenow={Math.min(used, cap)} aria-valuetext={`${used} of ${cap} hours`} aria-label="Hours asked of the crew">
+              <div className="flex-1 h-2.5 rounded-full bg-[var(--color-border)] overflow-hidden" role="meter" aria-valuemin={0} aria-valuemax={cap} aria-valuenow={Math.min(used, cap)} aria-valuetext={`${used} of ${cap} hours`} aria-label="Hours asked of the crew">
                 <div className={`h-full rounded-full ${over ? "bg-[var(--state-overdue)]" : pct >= 85 ? "bg-[var(--state-held)]" : "bg-[var(--state-released)]"}`} style={{ width: `${pct}%` }} />
               </div>
               <span className={`shrink-0 text-caption font-medium tabular-nums ${over ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>
@@ -137,8 +137,8 @@ export function PullAheadPicker({ items, onLists, next, shiftHours, picked, coun
               onKeyDown={(e) => { if (e.key === "Enter" && query && only) onToggle(only.row, true); }}
               aria-label="Search the job for a step to add"
               placeholder="Search a work order #, equipment (E-17), step or crew, the whole job"
-              className="w-full h-10 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-8 text-body text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
-            {query && <button type="button" onClick={() => { setQuery(""); searchRef.current?.focus(); }} aria-label="Clear search" className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>}
+              className="w-full h-10 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] pl-8 pr-8 text-body text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]" />
+            {query && <button type="button" onClick={() => { setQuery(""); searchRef.current?.focus(); }} aria-label="Clear search" className="ui-hit absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>}
           </label>
           <div className="flex flex-wrap items-center gap-1.5 text-caption">
             {query ? (
@@ -148,7 +148,7 @@ export function PullAheadPicker({ items, onLists, next, shiftHours, picked, coun
                 <div className="inline-flex rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5" role="group" aria-label="How far ahead">
                   {WINDOWS.map((w) => (
                     <button key={w.id} type="button" onClick={() => { setWin(w.id); setMore(false); }} aria-pressed={win === w.id}
-                      className={`px-2 py-1 rounded-md font-medium ${win === w.id ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{w.label}</button>
+                      className={`px-2 py-1 pointer-coarse:min-h-11 rounded-md font-medium ${win === w.id ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"}`}>{w.label}</button>
                   ))}
                 </div>
                 <Chip on={readyOnly} onClick={() => setReadyOnly((v) => !v)}>Ready to start</Chip>
@@ -169,14 +169,14 @@ export function PullAheadPicker({ items, onLists, next, shiftHours, picked, coun
           )}
           {groups.map((g) => (
             <div key={g.key}>
-              <div className="sticky top-0 z-10 px-4 py-1 bg-slate-100 dark:bg-slate-800 text-caption font-medium text-slate-600 dark:text-slate-300">{g.day}</div>
+              <div className="sticky top-0 z-10 px-4 py-1 bg-[var(--color-surface-2)] text-caption font-medium text-[var(--color-text-muted)]">{g.day}</div>
               {g.rows.map((x) => {
                 const r = x.row, on = pickedIds.has(r.leaf.id);
                 const scope = scopeOf(x, pull.crew);
                 const cant = !addable(x);
                 const early = x.readiness === "waiting";
                 return (
-                  <div key={r.leaf.id} className={`flex items-start gap-3 px-4 py-2.5 ${on ? "bg-[var(--color-surface-2)] dark:bg-[var(--color-surface-2)]" : ""}`}>
+                  <div key={r.leaf.id} className={`flex items-start gap-3 px-4 py-2.5 ${on ? "bg-[var(--color-surface-2)]" : ""}`}>
                     <button type="button" disabled={locked || (cant && !on)} onClick={() => onToggle(r, !on)} aria-pressed={on}
                       aria-label={`${on ? "Remove" : "Add"} ${r.leaf.name}${r.parentName ? ` (${r.parentName})` : ""}`}
                       title={cant ? (x.blockedBy ? `Can't start: it waits on ${x.blockedBy}, which is blocked or on hold` : `Blocked or on hold${r.reason ? `: ${r.reason}` : ""}`) : on ? "Remove from the shift" : early ? "Not ready yet: add only if you know it can start" : "Add to the shift"}
@@ -209,7 +209,7 @@ export function PullAheadPicker({ items, onLists, next, shiftHours, picked, coun
           ))}
           {listedHits.length > 0 && (
             <div>
-              <div className="px-4 py-1 bg-slate-100 dark:bg-slate-800 text-caption font-medium text-slate-600 dark:text-slate-300">Already listed</div>
+              <div className="px-4 py-1 bg-[var(--color-surface-2)] text-caption font-medium text-[var(--color-text-muted)]">Already listed</div>
               {listedHits.map((x) => (
                 <div key={x.row.leaf.id} className="flex items-start gap-3 px-4 py-2 text-caption">
                   <span className="shrink-0 mt-0.5 rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-caption font-medium text-[var(--color-text-muted)] whitespace-nowrap">Listed</span>
@@ -250,7 +250,7 @@ function Tag({ tone, children }: { tone: "rose" | "amber" | "emerald" | "slate";
   const cls = tone === "rose" ? "bg-transparent text-[var(--state-overdue-text)] border-[var(--color-border)]"
     : tone === "amber" ? "bg-transparent text-[var(--state-held-text)] border-[var(--color-border)]"
       : tone === "emerald" ? "bg-transparent text-[var(--state-released-text)] border-[var(--color-border)]"
-        : "bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700";
+        : "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border-strong)]";
   return <span className={`inline-block max-w-full break-words px-1.5 py-px rounded border text-body font-medium ${cls}`}>{children}</span>;
 }
 
