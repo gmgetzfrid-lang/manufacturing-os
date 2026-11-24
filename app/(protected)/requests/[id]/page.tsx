@@ -1957,7 +1957,7 @@ export default function TicketDetailView() {
                             <span aria-hidden className={`shrink-0 ${r.issued ? 'text-[var(--state-released)]' : 'text-[var(--color-text-faint)]'}`}>
                               {r.issued ? <CheckSquare className="w-4 h-4" /> : r.kind.includes('draft') ? <FileText className="w-4 h-4" /> : <FileIcon className="w-4 h-4" />}
                             </span>
-                            <button type="button" onClick={() => setViewerFile(r.file)} title={`Open ${r.file.name}`} className={`min-w-0 text-left truncate hover:text-[var(--color-accent-text)] ${r.faded ? '' : 'font-medium'}`}>{r.file.name}</button>
+                            <button type="button" onClick={() => setViewerFile(r.file)} title={`Open ${r.file.name}`} className={`min-w-0 text-left truncate pointer-coarse:py-3 pointer-coarse:-my-3 hover:text-[var(--color-accent-text)] ${r.faded ? '' : 'font-medium'}`}>{r.file.name}</button>
                           </div>
                           <div className="sm:hidden pl-[26px] text-body text-[var(--color-text-muted)] flex flex-wrap items-center gap-x-2">{r.kind}{r.file.uploadedAt ? `, ${fmtDay(r.file.uploadedAt)}` : ''}{r.tag}</div>
                         </td>

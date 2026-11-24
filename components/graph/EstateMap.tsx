@@ -234,12 +234,12 @@ export default function EstateMap({ nodes, edges, query, selectedId, highlightId
         // sits under them, from the left.
         : "absolute top-2 left-1/2 -translate-x-1/2 flex items-center gap-1 text-body pointer-events-auto max-w-[70%] flex-wrap justify-center max-sm:top-14 max-sm:left-3 max-sm:right-3 max-sm:translate-x-0 max-sm:max-w-none max-sm:justify-start"}>
         {soleRoot
-          ? (rootUp ? <button onClick={rootUp.onUp} title="Up a folder" className="shrink-0 rounded-md border px-2 py-1 font-medium bg-[var(--color-surface)]/90 border-[var(--color-border)]">↑ {rootUp.label}</button> : null)
-          : <button onClick={() => setFocusId(null)} className={`shrink-0 rounded-md border px-2 py-1 font-medium ${focusId ? "bg-[var(--color-surface)]/90 border-[var(--color-border)]" : "bg-[var(--color-surface)] border-[var(--color-text-muted)] ring-1 ring-[var(--color-text-muted)]"}`}>Whole estate</button>}
+          ? (rootUp ? <button onClick={rootUp.onUp} title="Up a folder" className="shrink-0 rounded-md border px-2 py-1 pointer-coarse:min-h-11 font-medium bg-[var(--color-surface)]/90 border-[var(--color-border)]">↑ {rootUp.label}</button> : null)
+          : <button onClick={() => setFocusId(null)} className={`shrink-0 rounded-md border px-2 py-1 pointer-coarse:min-h-11 font-medium ${focusId ? "bg-[var(--color-surface)]/90 border-[var(--color-border)]" : "bg-[var(--color-surface)] border-[var(--color-text-muted)] ring-1 ring-[var(--color-text-muted)]"}`}>Whole estate</button>}
         {crumbs.map((c, i) => (
           <React.Fragment key={c.id}>
             {(!soleRoot || rootUp || i > 0) && <span className="text-[var(--color-text-faint)]">›</span>}
-            <button onClick={() => setFocusId(c.id)} className={`shrink-0 rounded-md border px-2 py-1 font-medium ${c.id === focusId ? "bg-[var(--color-surface)] border-[var(--color-text-muted)] ring-1 ring-[var(--color-text-muted)]" : "bg-[var(--color-surface)]/90 border-[var(--color-border)]"}`}>{c.label}</button>
+            <button onClick={() => setFocusId(c.id)} className={`shrink-0 rounded-md border px-2 py-1 pointer-coarse:min-h-11 font-medium ${c.id === focusId ? "bg-[var(--color-surface)] border-[var(--color-text-muted)] ring-1 ring-[var(--color-text-muted)]" : "bg-[var(--color-surface)]/90 border-[var(--color-border)]"}`}>{c.label}</button>
           </React.Fragment>
         ))}
         {compact ? null : !focusId

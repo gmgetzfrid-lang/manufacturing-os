@@ -809,7 +809,7 @@ function GraphPageInner() {
               <span className="grid place-items-center w-7 h-7 rounded-md bg-[var(--color-surface)]/95 border border-[var(--color-border)]">
                 <HelpTooltip placement="bottom">Click a folder to explore it, a file for details. Double-click to open. Arrow keys step through results; Esc goes up.</HelpTooltip>
               </span>
-              <button onClick={() => drill(null)} className={`rounded-md border px-2 py-1 inline-flex items-center gap-1 font-medium whitespace-nowrap ${focusId || unitView ? "bg-[var(--color-surface)]/90 border-[var(--color-border)]" : "bg-[var(--color-surface)] border-[var(--color-text-muted)] ring-1 ring-[var(--color-text-muted)]"}`}>
+              <button onClick={() => drill(null)} className={`rounded-md border px-2 py-1 pointer-coarse:min-h-11 inline-flex items-center gap-1 font-medium whitespace-nowrap ${focusId || unitView ? "bg-[var(--color-surface)]/90 border-[var(--color-border)]" : "bg-[var(--color-surface)] border-[var(--color-text-muted)] ring-1 ring-[var(--color-text-muted)]"}`}>
                 <Waypoints className="w-3.5 h-3.5" /> Whole estate
               </button>
               {unitView && homeUnit && !focusId && (
@@ -823,7 +823,7 @@ function GraphPageInner() {
               {crumbs.map((c, i) => (
                 <React.Fragment key={c.id}>
                   <ChevronRight className="w-3 h-3 opacity-50" />
-                  <button onClick={() => drill(c.id)} className={`rounded-md border px-2 py-1 inline-flex items-center gap-1 font-medium max-w-[220px] bg-[var(--color-surface)]/95 ${i === crumbs.length - 1 ? "border-[var(--color-text)] ring-1 ring-[var(--color-text)]" : "border-[var(--color-border)]"}`}>
+                  <button onClick={() => drill(c.id)} className={`rounded-md border px-2 py-1 pointer-coarse:min-h-11 inline-flex items-center gap-1 font-medium max-w-[220px] bg-[var(--color-surface)]/95 ${i === crumbs.length - 1 ? "border-[var(--color-text)] ring-1 ring-[var(--color-text)]" : "border-[var(--color-border)]"}`}>
                     <FileTypeIcon type={c.type} className="w-3.5 h-3.5" /> <span className="truncate">{c.label}</span>
                   </button>
                 </React.Fragment>
@@ -838,11 +838,11 @@ function GraphPageInner() {
               )}
               {controller && activeOrgId && focusId?.startsWith("lib:") && !selectedEntry && (
                 <button onClick={() => setSetupLib(focusId.slice(4))} title="Say what each level of folders is (operating area, equipment type, equipment) and everything filed underneath inherits it"
-                  className="ml-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] px-2 py-1 font-medium inline-flex items-center gap-1 hover:bg-[var(--color-surface-2)]"><Factory className="w-3 h-3" /> Set up as equipment library</button>
+                  className="ml-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] px-2 py-1 pointer-coarse:min-h-11 font-medium inline-flex items-center gap-1 hover:bg-[var(--color-surface-2)]"><Factory className="w-3 h-3" /> Set up as equipment library</button>
               )}
               {selectedEntry && (
                 <button onClick={() => { setSelectedId(null); setSelSat(null); }} title="Stop focusing on this file (Esc)"
-                  className="ml-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-1 font-medium inline-flex items-center gap-1">
+                  className="ml-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] text-[var(--color-text)] px-2 py-1 pointer-coarse:min-h-11 font-medium inline-flex items-center gap-1">
                   <ChevronLeft className="w-3 h-3" /> Back · Esc
                 </button>
               )}
@@ -864,19 +864,19 @@ function GraphPageInner() {
               {controller && <ConnectButton running={connect.running || connect.planLoading} disabled={data?.estateMissing} onClick={() => { setShowConnect(true); void connect.openPreview(); }} />}
               {controller && (
                 <button onClick={runResolver} disabled={resolving || data?.estateMissing} title={data?.estateMissing ? "Apply migration 20261020 first" : "Link every folder and file to its unit, project and equipment from names and ancestry"}
-                  className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1 disabled:opacity-50">
+                  className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 pointer-coarse:min-h-11 inline-flex items-center gap-1 disabled:opacity-50">
                   {resolving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Link2 className="w-3 h-3" />} Resolve links
                 </button>
               )}
               <button onClick={() => setShowEstate((v) => !v)} title="Green counts of equipment on every file and folder; click a file to see its equipment around it"
                 aria-pressed={showEstate}
-                className={`rounded-md border px-2 py-1 inline-flex items-center gap-1 ${showEstate ? "bg-[var(--color-surface-2)] border-[var(--color-text-muted)] ring-1 ring-[var(--color-text-muted)] font-medium" : "bg-[var(--color-surface)]/90 border-[var(--color-border)]"}`}>
+                className={`rounded-md border px-2 py-1 pointer-coarse:min-h-11 inline-flex items-center gap-1 ${showEstate ? "bg-[var(--color-surface-2)] border-[var(--color-text-muted)] ring-1 ring-[var(--color-text-muted)] font-medium" : "bg-[var(--color-surface)]/90 border-[var(--color-border)]"}`}>
                 <Factory className="w-3 h-3" /> Units &amp; equipment
               </button>
-              {focusId && <button onClick={up} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1"><Minus className="w-3 h-3" /> Up</button>}
-              <button onClick={() => graphRef.current?.fit()} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1"><Maximize2 className="w-3 h-3" /> Fit</button>
+              {focusId && <button onClick={up} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 pointer-coarse:min-h-11 inline-flex items-center gap-1"><Minus className="w-3 h-3" /> Up</button>}
+              <button onClick={() => graphRef.current?.fit()} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 pointer-coarse:min-h-11 inline-flex items-center gap-1"><Maximize2 className="w-3 h-3" /> Fit</button>
               <Link href={globalGraphHref(selectedId ?? focusId ?? "")} title="The same node on the Intelligence graph: equipment, units, projects and documents in one web"
-                className={`rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1 ${selectedId || focusId ? "" : "opacity-50 pointer-events-none"}`}><Globe className="w-3 h-3" /> Global view</Link>
+                className={`rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 pointer-coarse:min-h-11 inline-flex items-center gap-1 ${selectedId || focusId ? "" : "opacity-50 pointer-events-none"}`}><Globe className="w-3 h-3" /> Global view</Link>
               {!focusId && !unitView && (
                 <span className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1">
                   {data ? `${data.libraries.length} libraries, ${data.folders.size} folders, ${data.entries.length} files` : "…"}

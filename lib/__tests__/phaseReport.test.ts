@@ -3,7 +3,7 @@
 
 import { describe, it, expect } from "vitest";
 import type { Milestone } from "@/types/schema";
-import { phaseStats, phaseReportHtml, slipWords, shiftLines, runLabel, hoursDays, withDays, closeoutPrint, type CostLine, type CostEntry, type ShiftRow } from "@/lib/phaseReport";
+import { phaseStats, phaseReportHtml, slipWords, shiftLines, runLabel, hoursDays, withDays, closeoutPrint, foldSameRows, type CostLine, type CostEntry, type ShiftRow } from "@/lib/phaseReport";
 import { toEmailHtml, toPlainText, type ExportDoc } from "@/lib/reportExport";
 import { PHASE_ATTR, type ProjectPhase } from "@/lib/projectPhases";
 
@@ -249,5 +249,28 @@ describe("the close-out as printed", () => {
     for (const text of [toPlainText(out), toEmailHtml(out)]) {
       for (const w of ["3 jobs", "E-13: Hotshot", "Completed at Redman", "Oct 31 · Pat", "2027 turnaround", "waiting on material", "33.5 h (1.4 days)"]) expect(text).toContain(w);
     }
+  });  it("eight jobs that each say \"Completed at Redman\" are one line saying how many", () => {
+    const rows = Array.from({ length: 8 }, (_, i) => [`E-22: Step ${i + 1}`, "-", "Completed at Redman", `Nov 16 · Ian`]);
+    const one = closeoutPrint({ ...doc, sections: [{ id: "cancelled", title: "Cancelled", blocks: [{ k: "table", head: ["Job", "Moved to", "Note", "Cancelled"], rows }] }] });
+    const t = one.sections[0].blocks[0];
+    expect(t.k === "table" && t.rows).toHaveLength(1);
+    expect(t.k === "table" && t.rows[0]).toEqual(["Nov 16 · Ian", { t: "8 jobs", bold: true, sub: [{ t: rows.map((r) => r[0]).join("; ") }, { t: "Note: Completed at Redman", italic: true }] }, "-"]);
+    expect((toPlainText(one).match(/Completed at Redman/g) ?? []).length).toBe(1);
+  });
+  it("any other table: three or more rows in a row that say the same are one line; two alike stay two", () => {
+    const well = closeoutPrint({ ...doc, sections: [{ id: "well", title: "What went well", blocks: [{ k: "table", head: ["Step", "Crew", "Early"], rows: [
+      [{ t: "Pull plugs", note: "E-8" }, "Schultz", "8 h"], [{ t: "Set plugs", note: "E-8" }, "Schultz", "8 h"], ["Hydro", "Schultz", "8 h"], ["Hydro", "Schultz", "8 h"],
+      ["Clean", "Ancon", "2 h"], ["Vacuum", "Ancon", "2 h"],
+    ] }] }] });
+    const t = well.sections[0].blocks[0];
+    expect(t.k === "table" && t.rows).toEqual([
+      [{ t: "4 steps", bold: true, sub: [{ t: "E-8: Pull plugs; E-8: Set plugs; Hydro (2 times)" }] }, "Schultz", "8 h"],
+      ["Clean", "Ancon", "2 h"], ["Vacuum", "Ancon", "2 h"],
+    ]);
+  });
+  it("a time column is joined; a row carrying more than its name is never folded", () => {
+    const b = { k: "table" as const, head: ["Job", "When", "Note"], rows: [["A", "Nov 1", "Done"], ["B", "Nov 2", "Done"], ["C", "Nov 2", "Done"], [{ t: "D", sub: [{ t: "kept" }] }, "Nov 3", "Done"]] };
+    expect(foldSameRows(b, { loose: [1] }).rows).toEqual([[{ t: "3 jobs", bold: true, sub: [{ t: "A; B; C" }] }, "Nov 1; Nov 2", "Done"], b.rows[3]]);
+    expect(foldSameRows(b)).toBe(b);
   });
 });

@@ -23,7 +23,7 @@ export interface PrintStep {
   /** Finished (its status is done). */
   done: boolean;
   pct: number;
-  /** "Discovery" / "Added scope" — put in after the plan. */
+  /** "Discovery" / "Added scope": put in after the plan. */
   added?: string;
   latest?: { at: number; text: string } | null;
   history?: TimeLogRow[];
@@ -54,44 +54,65 @@ function cellTime(t: number, tz: string): string {
   return `<span class="nw">${esc(d)}</span> <span class="nw">${esc(c)}</span>`;
 }
 
-/** "Oct 26, 8:00 AM" in plant time; "—" when there's no time. */
+/** "Oct 26, 8:00 AM" in plant time; "-" when there's no time. */
 export function printTime(t: number, tz: string): string {
   if (!Number.isFinite(t)) return "-";
   return new Date(t).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true, timeZone: tz });
 }
 
+/** A status's dot (docs/design-rules.md S1, S2): green done, blue under
+ *  way, amber held, red blocked or missed, gray not started. The word
+ *  beside it always says it, so it reads in black and white too. */
+export function statusDot(word: string): string {
+  const w = word.toLowerCase();
+  const c = w === "done" ? "#16a34a" : w === "in progress" ? "#2563eb" : w === "held" || w === "on hold" ? "#d97706"
+    : w === "blocked" || w === "missed" ? "#dc2626" : "#64748b";
+  return `<span class="dot" style="background-color:${c}"></span>`;
+}
+
+// The app's type scale (docs/design-rules.md TY2, TY3), as the emailed
+// update has it (lib/reportExport): 12 caption, 14 body, 16 a work order's
+// name, 20 the title; nothing smaller, no tiny capitals (TY8). Radii by
+// size (SP3): 6 small parts, 8 bands. Each work order's heading sits on a
+// light band, its rows split by thin lines: bold, the band and the lines
+// carry the structure in black and white too.
 export const PRINT_CSS = `
-.wop{font-family:Arial,Helvetica,sans-serif;font-size:8.5pt;line-height:1.3;color:#0f172a}
-.wop h1{font-size:13pt;margin:0}
-.wop .sub{color:#475569;margin:2px 0 10px}
-.wop .wo{margin:0 0 12px;border-top:2px solid #0f172a;padding-top:5px}
-.wop .head{display:flex;justify-content:space-between;gap:12px;break-inside:avoid;break-after:avoid}
-.wop .num{font-family:"Courier New",monospace;font-weight:700;font-size:10pt}
-.wop .name{font-weight:700;font-size:10pt}
-.wop .desc{margin-top:1px}
-.wop .meta{color:#475569}
-.wop .when{display:grid;grid-template-columns:auto 1fr;column-gap:6px;margin-top:2px}
-.wop .when b{font-weight:700}
+.wop{font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.4;color:#0f172a}
+.wop .top{display:flex;justify-content:space-between;gap:12px;font-size:12px;color:#64748b}
+.wop h1{font-size:20px;line-height:1.3;font-weight:bold;margin:2px 0 0}
+.wop .sub{font-size:12px;color:#64748b;margin:2px 0 16px}
+.wop .wo{margin:0 0 16px}
+.wop .head{display:flex;justify-content:space-between;gap:12px;background-color:#f1f5f9;border-left:4px solid #f1f5f9;border-radius:8px;padding:8px 12px;break-inside:avoid;break-after:avoid}
+.wop .head.late{border-left-color:#e11d48}
+.wop .head.held{border-left-color:#d97706}
+.wop .chip{font-family:Consolas,Menlo,"Courier New",monospace;font-size:12px;font-weight:bold;color:#1e3a8a;background-color:#eef2ff;border-radius:6px;padding:1px 6px;white-space:nowrap}
+.wop .name{font-size:16px;font-weight:bold}
+.wop .desc{margin-top:2px}
+.wop .meta{font-size:12px;color:#64748b}
+.wop .when{display:grid;grid-template-columns:auto 1fr;column-gap:8px;margin-top:4px;font-size:12px}
+.wop .when .meta{line-height:1.6}
+.wop .when b{font-size:14px}
 .wop .right{text-align:right;white-space:nowrap}
-.wop .pill{display:inline-block;border:1px solid #94a3b8;border-radius:4px;padding:0 4px;font-weight:700}
-.wop .behind{color:#be123c;font-weight:700}
-.wop .ahead{color:#047857;font-weight:700}
-.wop .added{color:#6d28d9;font-weight:700}
+.wop .stand{font-weight:bold}
+.wop .pct{font-size:16px;font-weight:bold}
+.wop .dot{display:inline-block;width:8px;height:8px;border-radius:4px;margin-right:6px;vertical-align:1px}
+.wop .behind{color:#9f1239;font-weight:bold}
+.wop .ahead{color:#065f46;font-weight:bold}
+.wop .added{font-size:12px;font-weight:600;color:#5b21b6;background-color:#f5f3ff;border:1px solid #ddd6fe;border-radius:6px;padding:0 4px;white-space:nowrap}
 .wop table{width:100%;border-collapse:collapse;margin-top:4px;table-layout:fixed}
-.wop th{text-align:left;font-size:7.5pt;text-transform:uppercase;letter-spacing:.03em;color:#475569;border-bottom:1px solid #94a3b8;padding:2px 4px}
-.wop td{border-bottom:1px solid #e2e8f0;padding:3px 4px;vertical-align:top}
+.wop th{text-align:left;font-size:12px;font-weight:600;color:#64748b;background-color:#f8fafc;border-bottom:1px solid #cbd5e1;padding:4px 8px}
+.wop td{border-bottom:1px solid #e2e8f0;padding:6px 8px;vertical-align:top}
 .wop tr{break-inside:avoid}
 .wop thead{display:table-header-group}
-.wop .n{color:#64748b;width:16px}
-.wop .t{white-space:nowrap}
+.wop .n{font-size:12px;color:#64748b}
+.wop .t{white-space:nowrap;color:#64748b}
 .wop .nw{white-space:nowrap}
-.wop td.tm{line-height:1.25}
+.wop td.tm{font-size:12px;line-height:1.4}
 .wop td.tm div+div{margin-top:2px}
-.wop table{font-size:8pt}
-.wop .c{color:#334155}
-.wop .hist{margin:2px 0 0;padding:0;list-style:none;color:#334155}
-.wop .hist li{margin:1px 0}
-.wop .hist .t{color:#64748b;margin-right:4px}
+.wop .c{font-size:12px;color:#334155}
+.wop .hist{margin:4px 0 0;padding:0;list-style:none;font-size:12px;font-weight:normal;color:#334155}
+.wop .hist li{margin:2px 0}
+.wop .hist .t{margin-right:4px}
 `;
 
 export type PrintFormat = "report" | "history";
@@ -113,23 +134,25 @@ export function workOrdersHtml(input: {
   const span = (a: number, b: number, open = "…") => (Number.isFinite(a) ? `${T(a)} → ${Number.isFinite(b) ? T(b) : open}` : "not started");
   const steps = input.orders.reduce((n, o) => n + o.steps.length, 0);
   const parts: string[] = [];
-  parts.push(`<div class="wop"><h1>${esc(input.project)} - Work orders</h1>`);
-  parts.push(`<div class="sub">${esc(input.scope)} · ${input.orders.length} work order${input.orders.length === 1 ? "" : "s"}, ${steps} step${steps === 1 ? "" : "s"} · printed ${esc(T(printedAt))}</div>`);
+  parts.push(`<div class="wop"><div class="top"><span>Work orders</span><span>Printed ${esc(T(printedAt))}</span></div><h1>${esc(input.project)}</h1>`);
+  parts.push(`<div class="sub">${esc(input.scope)} · ${input.orders.length} work order${input.orders.length === 1 ? "" : "s"}, ${steps} step${steps === 1 ? "" : "s"}</div>`);
   for (const o of input.orders) {
-    const hrs = o.standing !== "Done" && Math.abs(o.hours) >= 0.1
+    const open = o.standing !== "Done";
+    const late = open && o.hours <= -0.1;
+    const hrs = open && Math.abs(o.hours) >= 0.1
       ? `<div class="${o.hours < 0 ? "behind" : "ahead"}">${Math.abs(o.hours)} h ${o.hours < 0 ? "behind" : "ahead"}</div>` : "";
     const meta = [o.crews.join(", "), o.steps.length > 1 ? `${o.done} of ${o.steps.length} steps done` : ""].filter(Boolean).join(" · ");
-    parts.push(`<section class="wo"><div class="head"><div>
-<div><span class="num">${o.wo ? `WO ${esc(o.wo)}` : "No WO"}</span> <span class="name">${esc(o.name)}</span></div>
+    parts.push(`<section class="wo"><div class="head${late ? " late" : o.standing === "Held" ? " held" : ""}"><div>
+<div><span class="chip">${o.wo ? `WO ${esc(o.wo)}` : "No WO"}</span>&nbsp; <span class="name">${esc(o.name)}</span></div>
 ${o.desc ? `<div class="desc">${esc(o.desc)}</div>` : ""}
 ${meta || o.added.length ? `<div class="meta">${esc(meta)}${o.added.map((a) => ` <span class="added">+ ${esc(a)}</span>`).join("")}</div>` : ""}
 <div class="when"><span class="meta">Plan</span><span>${esc(span(o.planStart, o.planFinish))}</span><span class="meta">Actual</span><b>${esc(span(o.actStart, o.actFinish))}</b></div>
-</div><div class="right"><span class="pill">${esc(o.standing)}</span><div><b>${o.pct}%</b>${o.standing !== "Done" ? ` <span class="meta">(plan ${o.plan}%)</span>` : ""}</div>${hrs}</div></div>`);
+</div><div class="right"><div class="stand">${statusDot(o.standing)}${esc(o.standing)}</div><div><span class="pct">${o.pct}%</span>${open ? ` <span class="meta">plan ${o.plan}%</span>` : ""}</div>${hrs}</div></div>`);
     // The same columns on every work order, so the tables line up down the
     // page; they fit a portrait letterhead as well as a landscape page.
     const heads = format === "history" ? ["", "Step", "Crew", "Plan", "Actual", "Status"]
       : ["", "Step", "Crew", "Plan", "Actual", "Status", "Latest comment"];
-    const cols = format === "history" ? [3, 41, 13, 16, 16, 11] : [3, 24, 12, 15, 15, 10, 21];
+    const cols = format === "history" ? [4, 38, 13, 15, 15, 15] : [4, 22, 12, 14, 14, 13, 21];
     parts.push(`<table><colgroup>${cols.map((w) => `<col style="width:${w}%">`).join("")}</colgroup><thead><tr>${heads.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>`);
     o.steps.forEach((s, i) => {
       const name = `<b>${esc(s.name)}</b>${s.added ? ` <span class="added">${esc(s.added)}</span>` : ""}`;
@@ -139,7 +162,7 @@ ${meta || o.added.length ? `<div class="meta">${esc(meta)}${o.added.map((a) => `
         : "";
       parts.push(`<tr><td class="n">${i + 1}</td><td>${name}${hist}</td><td class="c">${esc(s.crew)}</td>${plan}`
         + `<td class="tm">${Number.isFinite(s.actStart) ? `<div>${cellTime(s.actStart, tz)}</div><div>${Number.isFinite(s.actFinish) ? cellTime(s.actFinish, tz) : "…"}</div>` : "-"}</td>`
-        + `<td>${esc(s.status)}${!s.done && s.pct > 0 ? `<br><b>${s.pct}%</b>` : ""}</td>`
+        + `<td><span class="nw">${statusDot(s.status)}${esc(s.status)}</span>${!s.done && s.pct > 0 ? `<br><b>${s.pct}%</b>` : ""}</td>`
         + (format === "history" ? "" : `<td class="c">${s.latest ? `<span class="t">${esc(T(s.latest.at))}</span> ${esc(s.latest.text)}` : ""}</td>`)
         + `</tr>`);
     });

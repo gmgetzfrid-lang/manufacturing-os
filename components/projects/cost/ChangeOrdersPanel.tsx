@@ -10,7 +10,9 @@
 // says which.
 //
 // A proposed CO can be edited or withdrawn; an approved one can be voided
-// (its money comes off the line, the paper stays).
+// (its money comes off the line, the paper stays). Approve is the one
+// decision in sight on a row; reject, edit, withdraw and void sit in its
+// ⋯ menu (rule A3), each asking first in words that name the CO.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -30,6 +32,7 @@ import { sayError } from "@/components/projects/sayError";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 import { MoreDetails } from "@/components/ui/MoreDetails";
 import HelpTooltip from "@/components/ui/HelpTooltip";
+import MoreMenu, { type MoreItem } from "@/components/ui/MoreMenu";
 import { AnswerLine, money } from "@/components/projects/cost/Answer";
 
 export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, accounts, parties, onMoneyMoved, setErr }: {
@@ -82,12 +85,12 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
     }
     let note: string | null = null;
     if (decision === "rejected") {
-      note = await appPrompt({ title: `Reject ${co.coNumber}`, message: "Why? The reason goes on the record for the contractor and the audit trail.", placeholder: "e.g. Covered by the original scope, section 3.2" });
+      note = await appPrompt({ title: `Reject ${co.coNumber}?`, message: "Why? The reason goes on the record for the contractor and the audit trail.", placeholder: "e.g. Covered by the original scope, section 3.2", confirmLabel: `Reject ${co.coNumber}`, tone: "danger" });
       if (note === null) return;
     }
     if (decision === "void") {
       // Withdrawing a proposal: it stays on the list as void, with why.
-      note = await appPrompt({ title: `Withdraw ${co.coNumber}?`, message: "It stays on the record as void and never posts money. Say why (optional).", placeholder: "e.g. Folded into CO-004", confirmLabel: "Withdraw", tone: "danger" });
+      note = await appPrompt({ title: `Withdraw ${co.coNumber}?`, message: "It stays on the record as void and never posts money. Say why (optional).", placeholder: "e.g. Folded into CO-004", confirmLabel: `Withdraw ${co.coNumber}`, tone: "danger" });
       if (note === null) return;
     }
     setBusy(co.id); setErr(null);
@@ -106,7 +109,7 @@ export default function ChangeOrdersPanel({ orgId, projectId, canManage, actor, 
       title: `Void ${co.coNumber}?`,
       message: `This takes ${co.amount < 0 ? `the ${fmtMoney(Math.abs(co.amount))} credit` : fmtMoney(co.amount)} back off "${accountName.get(co.costAccountId ?? "") ?? "its budget line"}". The entry stays on the record, struck through, and the CO shows as void with your reason.`,
       placeholder: "Why? e.g. Approved on the wrong job",
-      confirmLabel: "Void it", tone: "danger",
+      confirmLabel: `Void ${co.coNumber}`, tone: "danger",
     });
     if (reason === null) return;
     setBusy(co.id); setErr(null); setNotice(null);
@@ -240,6 +243,14 @@ function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide,
 }) {
   const [accountPick, setAccountPick] = useState(co.costAccountId ?? "");
   const isOpen = co.status === "proposed";
+  // The row's other actions, named, in its ⋯ menu; each asks first.
+  const more: MoreItem[] = isOpen ? [
+    { icon: <Pencil className="w-4 h-4" />, label: "Edit", onClick: onEdit },
+    { icon: <XIcon className="w-4 h-4" />, label: `Reject ${co.coNumber}`, tone: "bad", line: true, onClick: () => decide(co, "rejected") },
+    { icon: <Ban className="w-4 h-4" />, label: `Withdraw ${co.coNumber}`, tone: "bad", onClick: () => decide(co, "void") },
+  ] : [
+    { icon: <Ban className="w-4 h-4" />, label: `Void ${co.coNumber} (approved in error)`, tone: "bad", onClick: onVoidApproved },
+  ];
   return (
     <li className={`px-4 py-2.5 text-body ${!isOpen && co.status !== "approved" ? "opacity-60" : ""}`}>
       <div className="flex items-center gap-2 flex-wrap">
@@ -256,39 +267,26 @@ function CoRow({ co, canManage, busy, partyName, accountLabel, accounts, decide,
           <span aria-hidden className="w-[7px] h-[7px] rounded-full shrink-0" style={{ background: co.status === "approved" ? "var(--state-released)" : co.status === "proposed" ? "var(--state-held)" : "var(--color-border-strong)" }} />
           {co.status === "proposed" ? "Waiting on a decision" : co.status.charAt(0).toUpperCase() + co.status.slice(1)}
         </span>
-        {isOpen && canManage && (
-          <span className="ml-auto inline-flex items-center gap-1.5">
-            {!co.costAccountId && (
+        {canManage && (isOpen || co.status === "approved") && (
+          <span className="ml-auto inline-flex flex-wrap items-center justify-end gap-1.5">
+            {isOpen && !co.costAccountId && (
               <select value={accountPick} onChange={(e) => setAccountPick(e.target.value)} aria-label="Budget line it posts to"
-                className="h-6 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1 text-caption max-w-40"
+                className="h-8 pointer-coarse:h-11 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-1.5 text-body max-w-44"
                 title="Approval posts money. Pick where it lands.">
                 <option value="">Posts to budget line…</option>
                 {accounts.map((a) => <option key={a.id} value={a.id}>{a.code ? `${a.code} ` : ""}{a.name}</option>)}
               </select>
             )}
-            <button onClick={() => void decide(co, "approved", accountPick || undefined)} disabled={busy}
-              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
-              {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} {busy ? "Approving" : "Approve"}
-            </button>
-            <button onClick={() => void decide(co, "rejected")} disabled={busy}
-              className="inline-flex items-center gap-1 px-2 py-0.5 pointer-coarse:min-h-11 rounded-lg border border-[var(--state-overdue)] text-[var(--state-overdue-text)] text-caption font-medium hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-50 transition-colors">
-              <XIcon className="w-3 h-3" /> Reject
-            </button>
-            <button onClick={onEdit} disabled={busy} title="Change the title, amount, reason or where it posts"
-              className="inline-flex items-center gap-1 px-2 py-0.5 pointer-coarse:min-h-11 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text-muted)] text-caption font-medium hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
-              <Pencil className="w-3 h-3" /> Edit
-            </button>
-            <button onClick={() => void decide(co, "void")} disabled={busy} title="Take the proposal back. It stays on the record as void."
-              className="inline-flex items-center gap-1 px-2 py-0.5 pointer-coarse:min-h-11 rounded-lg text-[var(--color-text-faint)] text-caption font-medium hover:text-[var(--state-overdue-text)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-50 transition-colors">
-              <Ban className="w-3 h-3" /> Withdraw
-            </button>
+            {isOpen && (
+              <button onClick={() => void decide(co, "approved", accountPick || undefined)} disabled={busy}
+                className="inline-flex items-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">
+                {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} {busy ? "Working" : "Approve"}
+              </button>
+            )}
+            {busy && !isOpen
+              ? <Loader2 aria-label="Voiding" className="w-4 h-4 m-2 animate-spin text-[var(--color-text-muted)]" />
+              : <MoreMenu iconOnly label={`More for ${co.coNumber}`} items={more} triggerClass="ui-press inline-flex items-center justify-center w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]" />}
           </span>
-        )}
-        {co.status === "approved" && canManage && (
-          <button onClick={onVoidApproved} disabled={busy} title="Approved in error: its money comes off the budget line and the CO shows as void"
-            className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 pointer-coarse:min-h-11 rounded-lg text-[var(--color-text-faint)] text-caption font-medium hover:text-[var(--state-overdue-text)] hover:bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] disabled:opacity-50 transition-colors">
-            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Ban className="w-3 h-3" />} {busy ? "Voiding" : "Void"}
-          </button>
         )}
       </div>
       <div className="mt-1 text-caption text-[var(--color-text-muted)]">

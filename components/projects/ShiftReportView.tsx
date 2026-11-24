@@ -1548,7 +1548,7 @@ async function copyText(text: string): Promise<boolean> {
 function OpenReportButton({ label, onClick, title }: { label: string; onClick: () => void; title?: string }) {
   return (
     <button type="button" onClick={onClick} title={title ?? `Open the ${label.toLowerCase()} in Reports, set to this shift`}
-      className="inline-flex items-center gap-1.5 text-caption font-medium px-3 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+      className="inline-flex items-center gap-1.5 text-caption font-medium px-3 py-1.5 pointer-coarse:min-h-11 rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
       <FileText className="w-3.5 h-3.5" /> {label}
     </button>
   );

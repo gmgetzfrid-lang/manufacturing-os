@@ -657,6 +657,45 @@ export function collapseCancelled(b: TableBlock): TableBlock {
   return { ...b, rows };
 }
 
+/** Rows that say the same: three or more in a row with every cell alike
+ *  but their name (the first column), and any `loose` column (a time)
+ *  joined, are one row that counts them and still names each ("8 jobs"),
+ *  never a column of identical rows. The rule the shift-by-shift chart is
+ *  drawn by (shiftLines): "Sun, Nov 1 to Mon, Nov 9: no change, 18
+ *  shifts". A name that carries more than a note (lines, short lines under
+ *  it) is never folded: nothing it says is lost. */
+export function foldSameRows(b: TableBlock, o: { noun?: string; loose?: number[]; min?: number } = {}): TableBlock {
+  const min = o.min ?? 3, loose = new Set(o.loose ?? []);
+  const plain = (c: ExportCell | undefined) => c != null && (typeof c === "string" || (!c.lines?.length && !c.sub?.length));
+  const nameOf = (c: ExportCell) => (typeof c === "string" ? c : c.note ? `${c.note}: ${c.t}` : c.t);
+  // What a row says, apart from its name and its loose columns (with its
+  // own note under it). A row that says nothing but its name isn't folded.
+  const said = (r: ExportCell[], i: number) => r.map((c, j) => (j === 0 || loose.has(j) ? "" : cellOf(c))).join("\u0000") + `\u0000${b.notes?.[i] ?? ""}`;
+  const saysSomething = (r: ExportCell[]) => r.some((c, j) => j > 0 && !loose.has(j) && cellOf(c) !== "" && cellOf(c) !== "-");
+  const foldable = (r: ExportCell[]) => !!cellOf(r[0]) && plain(r[0]) && saysSomething(r);
+  const noun = o.noun ?? (/^[A-Za-z]+$/.test(b.head[0] ?? "") ? `${b.head[0].toLowerCase()}s` : "rows");
+  const rows: ExportCell[][] = [];
+  const notes: Array<string | null | undefined> = [];
+  for (let i = 0; i < b.rows.length;) {
+    let j = i;
+    if (foldable(b.rows[i])) while (j + 1 < b.rows.length && foldable(b.rows[j + 1]) && said(b.rows[j + 1], j + 1) === said(b.rows[i], i)) j++;
+    if (j - i + 1 >= min) {
+      const run = b.rows.slice(i, j + 1);
+      const names = new Map<string, number>();
+      for (const r of run) names.set(nameOf(r[0]), (names.get(nameOf(r[0])) ?? 0) + 1);
+      const out = [...run[0]];
+      out[0] = { t: `${run.length} ${noun}`, bold: true, sub: [{ t: [...names].map(([n, c]) => (c > 1 ? `${n} (${c} times)` : n)).join("; ") }] };
+      for (const l of loose) out[l] = [...new Set(run.map((r) => cellOf(r[l])).filter(Boolean))].join("; ");
+      rows.push(out);
+      notes.push(b.notes?.[i]);
+    } else {
+      for (let k = i; k <= j; k++) { rows.push(b.rows[k]); notes.push(b.notes?.[k]); }
+    }
+    i = j + 1;
+  }
+  return rows.length === b.rows.length ? b : { ...b, rows, ...(b.notes ? { notes } : {}) };
+}
+
 /** A table whose notes run long: each note goes on a line of its own under
  *  its row's name (the wide column), not in a narrow column; a short column
  *  (the hours, the date) leads the row instead, so every row still starts
@@ -693,16 +732,20 @@ function blockForPrint(id: string | undefined, b: ExportBlock): ExportBlock {
       : /^(Late|Ahead) by$/.test(x.label) ? { ...x, label: forecast ? `Forecast ${x.label.toLowerCase()}` : x.label, value: withDays(x.value) } : x)) };
   }
   if (b.k !== "table") return b;
-  if (id === "lookback") return mapCol(b, "Hours lost", daysCell);
-  if (id === "setbacks") return noteUnder(mapCol(b, "Lost", daysCell), "Why", "Lost");
-  if (id === "chain") return noteUnder(mapCol(b, "Added", daysCell), "Why", "Added");
+  // Jobs cancelled the same way are one row however far apart they are;
+  // in any other table, three or more rows in a row that say the same.
   if (id === "cancelled") return noteUnder(collapseCancelled(b), "Note", "Cancelled", true);
-  return b;
+  const t = foldSameRows(b);
+  if (id === "lookback") return mapCol(t, "Hours lost", daysCell);
+  if (id === "setbacks") return noteUnder(mapCol(t, "Lost", daysCell), "Why", "Lost");
+  if (id === "chain") return noteUnder(mapCol(t, "Added", daysCell), "Why", "Added");
+  return t;
 }
 
 /** The close-out as printed, copied and sent: the answer first. Where the
  *  time went (late by, hours by cause) comes right under the opening
- *  tiles; jobs cancelled the same way are one counted row that lists them;
+ *  tiles; jobs cancelled the same way are one counted row that lists them,
+ *  and so is any run of three or more rows that say the same;
  *  a long note is a line under its row; hours over a day say days too.
  *  Nothing is left out: every section, table and word is still there. */
 export function closeoutPrint(d: ExportDoc): ExportDoc {

@@ -56,6 +56,20 @@ describe("buildAsBuilt", () => {
     expect(html).toContain("still going");
     expect(html).not.toMatch(/[—–]/);
   });
+  it("jobs taken off the same way are one row that counts them; type on the app's scale, no tiny capitals", () => {
+    const off = (name: string, min: number) => ({ name, where: "TA › E-22", steps: 1, at: Date.parse(at("2026-11-16", `15:${min}`)), note: "Completed at Redman" });
+    const cancelled = [off("Hydroblast", 26), off("Inspect", 26), off("Gasket", 26), off("Install", 27), off("Tube hydro", 27), off("Shell cover", 27), off("Shell hydro", 27),
+      { name: "Projects", where: "TA", steps: 3, at: null, note: "Wrong unit" }];
+    const html = asBuiltDocument({ ...a, cancelled }, { project: "Transmix", scope: "Whole project", tz, now: Date.parse(at("2026-11-18", "09:00")) });
+    expect(html).toContain("7 jobs");
+    expect(html.match(/Completed at Redman/g)).toHaveLength(1);
+    expect(html).toContain("Hydroblast; Inspect; Gasket; Install; Tube hydro; Shell cover; Shell hydro");
+    expect(html).toContain("7 steps");
+    expect(html).toContain("Wrong unit");
+    const sizes = [...html.matchAll(/font-size:(\d+(?:\.\d+)?)px/g)].map((m) => Number(m[1]));
+    expect(sizes.filter((x) => ![12, 14, 16, 20].includes(x))).toEqual([]);
+    expect(html).not.toMatch(/text-transform:uppercase/);
+  });
   it("variance words", () => {
     expect(varianceWords(33.5)).toBe("+33.5 h");
     expect(varianceWords(-2)).toBe("-2 h");

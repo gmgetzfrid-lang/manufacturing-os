@@ -53,7 +53,7 @@ export default function UnderlineTabs<K extends string>({
             aria-selected={on} aria-controls={idBase ? `${idBase}-panel` : undefined}
             tabIndex={on ? 0 : -1}
             onClick={() => pick(t.key)} onKeyDown={(e) => onKey(e, i)}
-            className={`shrink-0 whitespace-nowrap inline-flex items-center justify-center gap-1.5 pointer-coarse:min-w-11 ${size === "lg" ? "pb-1.5" : "h-10 pointer-coarse:h-11"} border-b-2 transition-colors ${text} ${
+            className={`shrink-0 whitespace-nowrap inline-flex items-center justify-center gap-1.5 pointer-coarse:min-w-11 ${size === "lg" ? "pb-1.5 pointer-coarse:min-h-11 pointer-coarse:items-end" : "h-10 pointer-coarse:h-11"} border-b-2 transition-colors ${text} ${
               on ? "border-[var(--color-current)] text-[var(--color-text)] font-medium" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)]"
             }`}>
             {Icon && <Icon className="w-4 h-4" />}

@@ -44,6 +44,7 @@ import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 import { sayError } from "@/components/projects/sayError";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { AnswerLine, money } from "@/components/projects/cost/Answer";
+import MoreMenu, { type MoreItem } from "@/components/ui/MoreMenu";
 
 async function authHeader(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
@@ -244,6 +245,20 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
     onChanged();
   };
 
+  // Void from the row's menu: the confirm names the invoice and the action.
+  const voidInvoice = async (doc: CostDocument) => {
+    const what = `${doc.vendorName ?? doc.fileName ?? "this"} invoice${doc.docNumber ? ` ${doc.docNumber}` : ""}`;
+    if (!(await appConfirm({
+      title: `Void the ${what}?`,
+      message: `${doc.totalAmount != null ? `${fmtMoney(doc.totalAmount, doc.currency ?? "USD")}. ` : ""}It stays on the record but leaves every list, and nothing is posted from it.`,
+      tone: "danger", confirmLabel: "Void invoice",
+    }))) return;
+    setBusy(doc.id); setErr(null);
+    const res = await voidCostDoc({ doc, actor });
+    setBusy(null);
+    if (!res.ok) setErr(res.error ?? "Couldn't void it."); else onChanged();
+  };
+
   const rows = useMemo(() => invoices.map((doc) => ({
     doc,
     lines: invoiceLines(doc),
@@ -323,44 +338,47 @@ function InvoicesSection({ orgId, projectId, canManage, actor, accounts, parties
               <CopyIcon className="w-2.5 h-2.5" /> possible duplicate
             </span>
           )}
-          {canManage && doc.status === "draft" && (
-            <>
-              <ReadButton busy={busy === doc.id} onClick={() => void readDoc(doc)} />
-              <button onClick={() => void typeTotal(doc)}
-                className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">type total</button>
-            </>
-          )}
-          {canManage && doc.status === "parsed" && (
-            <PostControls accounts={accounts} busy={busy === doc.id} suggested={suggestion}
-              onPost={async (accountId) => {
-                if (duplicate && !(await appConfirm({ title: "Post a possible duplicate?", message: `This looks like a duplicate of ${duplicate.fileName ?? "another invoice"} from the same vendor.`, tone: "danger", confirmLabel: "Post anyway" }))) return;
-                setBusy(doc.id);
-                const res = await postInvoice({ doc, costAccountId: accountId, actor });
-                setBusy(null);
-                if (!res.ok) setErr(res.error ?? "Couldn't post."); else onChanged();
-              }} label="Post as actual" />
-          )}
-          {canManage && doc.status === "parsed" && correcting !== doc.id && (
-            <CorrectButton onClick={() => setCorrecting(doc.id)} />
-          )}
           {doc.status === "posted" && onLine && (
             <span className="text-caption text-[var(--color-text-muted)]">on {accounts.find((a) => a.id === onLine)?.name ?? "a budget line"}</span>
           )}
-          {canManage && doc.status === "posted" && moving !== doc.id && accounts.length > 1 && (
-            <button onClick={() => setMoving(doc.id)} title="Posted to the wrong budget line? Move it. The old entry stays on the record, struck through."
-              className="inline-flex items-center gap-1 px-2 py-1 pointer-coarse:min-h-11 rounded-lg border border-[var(--color-border-strong)] text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-              <ArrowRightLeft className="w-3 h-3" /> Move to line
-            </button>
-          )}
-          {canManage && moving === doc.id && (
-            <span className="inline-flex items-center gap-1.5">
-              <PostControls accounts={accounts.filter((a) => a.id !== onLine)} busy={busy === doc.id}
-                onPost={(accountId) => move(doc, onLine, accountId)} label="Move here" />
-              <button onClick={() => setMoving(null)} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+          {/* The one next step in sight (read it, post it, or the line it
+              moves to); everything else on the invoice in its ⋯ menu (rule A3). */}
+          {canManage && (
+            <span className="ml-auto inline-flex flex-wrap items-center justify-end gap-1.5">
+              {doc.status === "draft" && <ReadButton busy={busy === doc.id} onClick={() => void readDoc(doc)} />}
+              {doc.status === "parsed" && (
+                <PostControls accounts={accounts} busy={busy === doc.id} suggested={suggestion}
+                  onPost={async (accountId) => {
+                    if (duplicate && !(await appConfirm({ title: "Post a possible duplicate?", message: `This looks like a duplicate of ${duplicate.fileName ?? "another invoice"} from the same vendor.`, tone: "danger", confirmLabel: "Post anyway" }))) return;
+                    setBusy(doc.id);
+                    const res = await postInvoice({ doc, costAccountId: accountId, actor });
+                    setBusy(null);
+                    if (!res.ok) setErr(res.error ?? "Couldn't post."); else onChanged();
+                  }} label="Post as actual" />
+              )}
+              {moving === doc.id && (
+                <>
+                  <PostControls accounts={accounts.filter((a) => a.id !== onLine)} busy={busy === doc.id}
+                    onPost={(accountId) => move(doc, onLine, accountId)} label="Move here" />
+                  <button onClick={() => setMoving(null)} className="inline-flex items-center justify-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors">Cancel</button>
+                </>
+              )}
+              {(() => {
+                const more: MoreItem[] = doc.status === "draft" ? [
+                  { icon: <Pencil className="w-4 h-4" />, label: "Type the total", onClick: () => typeTotal(doc) },
+                  { icon: <Ban className="w-4 h-4" />, label: "Void invoice", tone: "bad", line: true, onClick: () => voidInvoice(doc) },
+                ] : doc.status === "parsed" ? [
+                  ...(correcting !== doc.id ? [{ icon: <Pencil className="w-4 h-4" />, label: "Correct what was read", onClick: () => setCorrecting(doc.id) }] : []),
+                  { icon: <Ban className="w-4 h-4" />, label: "Void invoice", tone: "bad", line: true, onClick: () => voidInvoice(doc) },
+                ] : doc.status === "posted" && moving !== doc.id && accounts.length > 1 ? [
+                  { icon: <ArrowRightLeft className="w-4 h-4" />, label: "Move to another budget line", onClick: () => setMoving(doc.id) },
+                ] : [];
+                if (!more.length) return null;
+                return busy === doc.id && doc.status !== "draft" && doc.status !== "parsed"
+                  ? <Loader2 aria-label="Working" className="w-4 h-4 m-2 animate-spin text-[var(--color-text-muted)]" />
+                  : <MoreMenu iconOnly label={`More for the ${doc.vendorName ?? doc.fileName ?? "invoice"}${doc.docNumber ? ` ${doc.docNumber}` : ""} invoice`} triggerClass={ROW_MORE} items={more} />;
+              })()}
             </span>
-          )}
-          {canManage && (doc.status === "draft" || doc.status === "parsed") && (
-            <VoidButton doc={doc} actor={actor} busy={busy === doc.id} setBusy={setBusy} onChanged={onChanged} setErr={setErr} />
           )}
         </div>
         {correcting === doc.id && (
@@ -823,6 +841,9 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, parties, companie
 }
 
 // ── Shared bits ──────────────────────────────────────────────────────────
+
+/** A row's ⋯ menu button: 36 px, 44 on a touch screen. */
+const ROW_MORE = "ui-press inline-flex items-center justify-center w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]";
 
 /** Status as a dot and its words (rule S1): green done, amber waiting on
  *  someone, gray out of play. */

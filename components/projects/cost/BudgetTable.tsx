@@ -8,9 +8,12 @@
 // spending to another line, close it or delete it (with Undo). A line
 // with spending booked on it is closed rather than deleted, so no money
 // record is ever lost. Each line still opens to its entries and history.
+// Under 640 px the table is a list of cards (design rule T3): the code and
+// where the line stands on top, its name in bold, then budget, committed
+// and spent; over budget is said in red, in words.
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { MoreHorizontal, ChevronRight, Loader2, Undo2, Search } from "lucide-react";
+import { ChevronRight, Loader2, Undo2, Search, ListTree, ArrowRightLeft, Archive, RotateCcw, Trash2 } from "lucide-react";
 import type { Actor, CostAccount, CostEntry, CostParty } from "@/lib/costs";
 import { saveAccount } from "@/lib/costs";
 import { reviseAccount } from "@/lib/costRevisions";
@@ -22,6 +25,8 @@ import { sayError } from "@/components/projects/sayError";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { InlineAddRow } from "@/components/ui/InlineAddRow";
 import { SpendBar } from "@/components/projects/cost/Answer";
+import MoreMenu, { type MoreItem } from "@/components/ui/MoreMenu";
+import { useNarrow } from "@/components/requests/RequestBits";
 
 /** Whole dollars unless there are cents ("$0", "$8,000", "$1,250.50"). */
 function fmtMoney(n: number, cur = "USD"): string {
@@ -48,7 +53,8 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
   const [showClosed, setShowClosed] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [open, setOpen] = useState<string | null>(null);
-  const [menu, setMenu] = useState<string | null>(null);
+  // A phone: the lines as cards, not a table to scroll sideways.
+  const narrow = useNarrow();
   const [moving, setMoving] = useState<{ from: CostAccount; to: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [undo, setUndo] = useState<{ row: Record<string, unknown>; name: string } | null>(null);
@@ -113,6 +119,21 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
     closed ? `${list.length === 1 ? list[0].name : `${list.length} lines`} closed: kept for the record, out of the totals.` : `${list.length === 1 ? list[0].name : `${list.length} lines`} open again.`).then((ok) => { if (ok) setSel(new Set()); });
   const setPhase = (list: CostAccount[], phaseId: string | null) => run(() => setLinesPhase({ orgId, ids: list.map((a) => a.id), phaseId, actor }),
     `${list.length === 1 ? list[0].name : `${list.length} lines`}: ${phaseId ? `${phaseName(phaseId)} only` : "split by the phases"}.`).then((ok) => { if (ok) setSel(new Set()); });
+  // A line's actions, in its ⋯ menu (the table's last column, a card's foot).
+  const lineMenu = (a: CostAccount): MoreItem[] => {
+    const closed = a.status === "closed";
+    return [
+      { icon: <ListTree className="w-4 h-4" />, label: "Entries, history and full edit", onClick: () => setOpen(a.id) },
+      ...(!closed ? [{ icon: <ArrowRightLeft className="w-4 h-4" />, label: "Move its spending to another line…", onClick: () => setMoving({ from: a, to: "" }) }] : []),
+      closed
+        ? { icon: <RotateCcw className="w-4 h-4" />, label: "Open again", onClick: () => void close([a], false) }
+        : { icon: <Archive className="w-4 h-4" />, label: "Close (kept, out of the totals)", onClick: () => void close([a], true) },
+      { icon: <Trash2 className="w-4 h-4" />, label: canDeleteLine(a.id, entries) ? "Delete line" : "Delete line (has spending: close it)", tone: "bad", line: true, onClick: () => void remove([a]) },
+    ];
+  };
+  const moreBtn = "ui-press inline-flex items-center justify-center w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]";
+  const pick = (id: string) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+
   // A new line: its name, budget and type (subcontract unless typed). The
   // contractor and phase are set on the line itself.
   const lineOf = (name: string, budgetText: string, typeText: string): { name: string; budget: number; type: string } | string => {
@@ -228,6 +249,11 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
         </div>
       )}
 
+      {narrow ? (
+        <LineCards groups={groups} groupBy={groupBy} rows={rows} totals={totals} cur={cur} canManage={canManage} sel={sel} onPick={pick}
+          open={open} onOpen={(id) => setOpen(open === id ? null : id)} partyName={partyName} phaseName={phases.length > 0 ? phaseName : null}
+          menu={lineMenu} moreBtn={moreBtn} renderDetail={renderDetail} query={q} onClearQuery={() => setQ("")} />
+      ) : (
       <div className="overflow-x-auto">
         <table className="w-full border-collapse text-caption min-w-[860px]">
           <thead className="bg-[var(--color-surface-2)]">
@@ -260,8 +286,8 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
                   const share = sharePhase ? (a.phaseId ? (a.phaseId === sharePhase.id ? a.budget : 0) : phaseAmount(a.budget, sharePhase.share)) : 0;
                   return (
                     <React.Fragment key={a.id}>
-                      <tr className={`border-t border-[var(--color-border)] ${closed ? "opacity-55" : ""} ${spent > a.budget && a.budget > 0 ? "bg-[var(--state-overdue)]/[0.04]" : ""}`}>
-                        {canManage && <td className={td}><input type="checkbox" aria-label={`Pick ${a.name}`} checked={sel.has(a.id)} onChange={() => setSel((s) => { const n = new Set(s); if (n.has(a.id)) n.delete(a.id); else n.add(a.id); return n; })} className="w-4 h-4 accent-[var(--color-text)]" /></td>}
+                      <tr className={`border-t border-[var(--color-border)] ${closed ? "opacity-55" : ""}`}>
+                        {canManage && <td className={td}><input type="checkbox" aria-label={`Pick ${a.name}`} checked={sel.has(a.id)} onChange={() => pick(a.id)} className="w-4 h-4 accent-[var(--color-text)]" /></td>}
                         <td className={`${td} min-w-[200px]`}>
                           <div className="flex items-center gap-1">
                             <button type="button" onClick={() => setOpen(open === a.id ? null : a.id)} aria-label={`${open === a.id ? "Close" : "Open"} ${a.name}'s entries`} className="ui-hit shrink-0 text-[var(--color-text-faint)]"><ChevronRight className={`w-4 h-4 ui-chevron${(open === a.id) ? " rotate-90" : ""}`} /></button>
@@ -301,18 +327,8 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
                             <span className="w-10 text-right tabular-nums text-caption text-[var(--color-text-muted)]">{a.budget > 0 ? `${Math.round((spent / a.budget) * 100)}%` : "-"}</span>
                           </div>
                         </td>
-                        <td className={`${td} relative`}>
-                          {canManage && (
-                            <button type="button" onClick={() => setMenu(menu === a.id ? null : a.id)} aria-label={`${a.name} actions`} className="ui-hit w-8 h-8 rounded-lg hover:bg-[var(--color-surface-2)] flex items-center justify-center"><MoreHorizontal className="w-4 h-4" /></button>
-                          )}
-                          {menu === a.id && (
-                            <div role="menu" className="absolute right-2 top-9 z-20 w-56 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl p-1 text-caption" onMouseLeave={() => setMenu(null)}>
-                              <MenuItem onClick={() => { setOpen(a.id); setMenu(null); }}>Entries, history and full edit</MenuItem>
-                              {!closed && <MenuItem onClick={() => { setMoving({ from: a, to: "" }); setMenu(null); }}>Move its spending to another line…</MenuItem>}
-                              <MenuItem onClick={() => { setMenu(null); void close([a], !closed); }}>{closed ? "Open again" : "Close (kept, out of the totals)"}</MenuItem>
-                              <MenuItem danger onClick={() => { setMenu(null); void remove([a]); }}>{canDeleteLine(a.id, entries) ? "Delete line" : "Delete line (has spending: close it)"}</MenuItem>
-                            </div>
-                          )}
+                        <td className={td}>
+                          {canManage && <MoreMenu iconOnly label={`More for ${a.name}`} triggerClass={moreBtn} items={lineMenu(a)} />}
                         </td>
                       </tr>
                       {open === a.id && (
@@ -340,6 +356,7 @@ export default function BudgetTable({ orgId, projectId, accounts, numbers, entri
           )}
         </table>
       </div>
+      )}
     </div>
   );
 }
@@ -350,8 +367,108 @@ function NoInvoices() {
   return <span className="text-caption font-normal text-[var(--color-text-muted)] whitespace-nowrap">No invoices in yet</span>;
 }
 
-function MenuItem({ children, onClick, danger }: { children: React.ReactNode; onClick: () => void; danger?: boolean }) {
-  return <button type="button" role="menuitem" onClick={onClick} className={`w-full text-left px-2.5 py-2 rounded-lg hover:bg-[var(--color-surface-2)] font-medium ${danger ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>{children}</button>;
+type LineRow = { account: CostAccount; committed: number; spent: number };
+
+/** Where a line stands, as a dot and words (rule S1): over budget is red
+ *  and says so; nothing invoiced says that, never "within budget". */
+function lineStanding(a: CostAccount, committed: number, spent: number): { dot: string; words: string; bad?: boolean } {
+  if (a.status === "closed") return { dot: "var(--color-border-strong)", words: "Closed" };
+  if (a.budget > 0 && spent > a.budget) return { dot: "var(--state-overdue)", words: "Over budget", bad: true };
+  if (a.budget > 0 && committed > a.budget) return { dot: "var(--state-held)", words: "Committed over budget" };
+  if (spent <= 0) return { dot: "var(--color-text-faint)", words: "No invoices in yet" };
+  return { dot: "var(--color-text-faint)", words: "Within budget" };
+}
+
+/** The budget lines on a phone (rule T3): one card each, the code and where
+ *  it stands on top, the name in bold (it opens the line's entries), then
+ *  budget, committed and spent; type, contractor and phase small at the
+ *  foot beside its ⋯ menu. Groups and the open-lines total as in the table. */
+function LineCards({ groups, groupBy, rows, totals, cur, canManage, sel, onPick, open, onOpen, partyName, phaseName, menu, moreBtn, renderDetail, query, onClearQuery }: {
+  groups: Array<{ key: string; label: string; rows: LineRow[]; budget: number; committed: number; spent: number }>;
+  groupBy: GroupBy; rows: LineRow[]; totals: { budget: number; committed: number; spent: number }; cur: string;
+  canManage: boolean; sel: Set<string>; onPick: (id: string) => void;
+  open: string | null; onOpen: (id: string) => void;
+  partyName: Map<string, string>; phaseName: ((id: string | null | undefined) => string) | null;
+  menu: (a: CostAccount) => MoreItem[]; moreBtn: string;
+  renderDetail: (account: CostAccount) => React.ReactNode;
+  query: string; onClearQuery: () => void;
+}) {
+  const figure = "text-right font-medium tabular-nums text-[var(--color-text)]";
+  return (
+    <ul aria-label="Budget lines" className="divide-y divide-[var(--color-border)]">
+      {groups.map((g) => (
+        <React.Fragment key={g.key}>
+          {groupBy !== "none" && (
+            <li className="px-4 py-2 flex items-baseline gap-2 bg-[var(--color-surface-2)]/60 text-body">
+              <span className="min-w-0 truncate font-medium text-[var(--color-text)]">{g.label}</span>
+              <span className="shrink-0 text-[var(--color-text-muted)]">{g.rows.length} line{g.rows.length === 1 ? "" : "s"}</span>
+              <span className="ml-auto shrink-0 font-medium tabular-nums text-[var(--color-text)]">{fmtMoney(g.budget, cur)}</span>
+            </li>
+          )}
+          {g.rows.map(({ account: a, committed, spent }) => {
+            const st = lineStanding(a, committed, spent);
+            const over = a.budget > 0 && spent > a.budget;
+            const isOpen = open === a.id;
+            const foot = [a.costType ? cap(a.costType) : null, a.partyId ? partyName.get(a.partyId) ?? null : null, phaseName ? (a.phaseId ? phaseName(a.phaseId) : "Split by phase") : null].filter(Boolean).join(" · ");
+            return (
+              <li key={a.id}>
+                <div className={`px-4 pt-3 pb-2 ${a.status === "closed" ? "opacity-60" : ""}`}>
+                  <div className="flex items-center gap-2 min-h-6">
+                    {canManage && (
+                      <label className="-ml-1 inline-flex items-center justify-center w-6 h-6 pointer-coarse:w-11 pointer-coarse:h-11 pointer-coarse:-my-2.5 cursor-pointer">
+                        <input type="checkbox" aria-label={`Pick ${a.name}`} checked={sel.has(a.id)} onChange={() => onPick(a.id)} className="w-4 h-4 accent-[var(--color-text)]" />
+                      </label>
+                    )}
+                    {a.code && <span className="font-display tabular-nums text-body text-[var(--color-text-muted)]">{a.code}</span>}
+                    <span className={`ml-auto inline-flex items-center gap-1.5 text-body ${st.bad ? "font-medium text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>
+                      <span aria-hidden className="w-[7px] h-[7px] rounded-full shrink-0" style={{ background: st.dot }} />{st.words}
+                    </span>
+                  </div>
+                  <button type="button" onClick={() => onOpen(a.id)} aria-expanded={isOpen}
+                    className="mt-0.5 -ml-1 pl-1 w-full min-h-11 flex items-center gap-1.5 text-left rounded-md hover:bg-[var(--color-surface-2)]">
+                    <span className="min-w-0 flex-1 text-reading font-semibold leading-snug text-[var(--color-text)] break-words">{a.name}</span>
+                    <ChevronRight aria-hidden className={`w-4 h-4 shrink-0 text-[var(--color-text-muted)] ui-chevron${isOpen ? " rotate-90" : ""}`} />
+                  </button>
+                  <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-body">
+                    <dt className="text-[var(--color-text-muted)]">Budget</dt>
+                    <dd className={figure}>{a.budget > 0 ? fmtMoney(a.budget, cur) : "No budget"}</dd>
+                    <dt className="text-[var(--color-text-muted)]">Committed</dt>
+                    <dd className={figure}>{fmtMoney(committed, cur)}</dd>
+                    <dt className="text-[var(--color-text-muted)]">Spent</dt>
+                    <dd className={over ? "text-right font-medium tabular-nums text-[var(--state-overdue-text)]" : figure}>
+                      {spent === 0 ? <NoInvoices /> : over ? `${fmtMoney(spent, cur)}, ${fmtMoney(spent - a.budget, cur)} over` : `${fmtMoney(spent, cur)}${a.budget > 0 ? `, ${Math.round((spent / a.budget) * 100)}%` : ""}`}
+                    </dd>
+                  </dl>
+                  <div className="mt-1 flex items-center gap-2 min-h-8">
+                    <span className="min-w-0 flex-1 truncate text-body text-[var(--color-text-muted)]">{foot}</span>
+                    {canManage && <MoreMenu iconOnly label={`More for ${a.name}`} triggerClass={moreBtn} items={menu(a)} />}
+                  </div>
+                </div>
+                {isOpen && <div className="border-t border-[var(--color-border)]">{renderDetail(a)}</div>}
+              </li>
+            );
+          })}
+        </React.Fragment>
+      ))}
+      {rows.length === 0 && (
+        <li className="px-4 py-6 text-center text-body text-[var(--color-text-muted)]">
+          {query ? "No line matches." : "Every line is closed. Tick Closed to see them."}
+          {query ? <> <button type="button" onClick={onClearQuery} className="text-[var(--color-accent-text)] hover:underline">Clear</button></> : null}
+        </li>
+      )}
+      {rows.length > 0 && (
+        <li className="px-4 py-3 border-t-2 !border-t-[var(--color-text)]/70">
+          <div className="text-body font-medium text-[var(--color-text)]">Total, open lines</div>
+          <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-body">
+            <dt className="text-[var(--color-text-muted)]">Budget</dt><dd className={figure}>{fmtMoney(totals.budget, cur)}</dd>
+            <dt className="text-[var(--color-text-muted)]">Committed</dt><dd className={figure}>{fmtMoney(totals.committed, cur)}</dd>
+            <dt className="text-[var(--color-text-muted)]">Spent</dt>
+            <dd className={totals.spent > totals.budget && totals.budget > 0 ? "text-right font-medium tabular-nums text-[var(--state-overdue-text)]" : figure}>{totals.spent === 0 ? <NoInvoices /> : fmtMoney(totals.spent, cur)}</dd>
+          </dl>
+        </li>
+      )}
+    </ul>
+  );
 }
 
 /** A cell edited where it is: tap, type, Enter or leave it to save; Esc to cancel. */

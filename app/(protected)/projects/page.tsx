@@ -336,7 +336,7 @@ export default function ProjectsPage() {
               return (
                 <Card key={g.key} as="section" pad={false} className="overflow-hidden"
                   label={<button type="button" onClick={() => toggleFold(g.key)} aria-expanded={open}
-                    className="inline-flex items-center gap-2 -ml-1 pl-1 pr-2 rounded-lg hover:bg-[color-mix(in_srgb,var(--color-text)_6%,transparent)]">
+                    className="inline-flex items-center gap-2 -ml-1 pl-1 pr-2 pointer-coarse:min-h-11 rounded-lg hover:bg-[color-mix(in_srgb,var(--color-text)_6%,transparent)]">
                     <ChevronDown aria-hidden className={`ui-chevron w-4 h-4 text-[var(--color-text-muted)] ${open ? "" : "-rotate-90"}`} />
                     {g.label} <span className="text-reading font-normal tabular-nums text-[var(--color-text-muted)]">{g.items.length}</span>
                   </button>}>

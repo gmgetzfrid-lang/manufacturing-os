@@ -1102,6 +1102,9 @@ html.vt-on .side-marker { view-transition-name: side-marker; }
   .ui-hit { position: relative; }
   @media (pointer: coarse) {
     .ui-hit::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); transform: translate(-50%, -50%); }
+    /* A tag you press (a stage filter, "+3 more"): 26 px to see, 44 to tap. */
+    :is(button, a).ui-tag { position: relative; }
+    :is(button, a).ui-tag::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); transform: translate(-50%, -50%); }
   }
 }
 
@@ -1112,6 +1115,10 @@ html.vt-on .side-marker { view-transition-name: side-marker; }
 @layer base {
   @media (pointer: coarse) {
     :is(a, button)[class*="hover:underline"] { padding-block: 12px; margin-block: -12px; }
+    /* A line shorter than 20 px (14 px text at 1.375) still adds up to 44. */
+    @supports (padding-block: 1lh) {
+      :is(a, button)[class*="hover:underline"] { padding-block: max(12px, calc(22px - 0.5lh)); margin-block: min(-12px, calc(0.5lh - 22px)); }
+    }
     /* Document numbers and IDs drawn as links (.ui-id), the same way. */
     a.ui-id, button.ui-id { padding-block: 10px; margin-block: -10px; }
   }

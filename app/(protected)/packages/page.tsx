@@ -305,7 +305,7 @@ export default function PackagesPage() {
                   <td className="px-4 pt-3 md:py-3 relative max-md:block max-md:pr-12">
                     {(stale || highlightId === pkg.id) && <span aria-hidden className={`absolute left-0 inset-y-0 w-[3px] ${stale ? "bg-[var(--state-held)]" : "bg-[var(--color-main)]"}`} />}
                     <button type="button" onClick={toggle} aria-expanded={open}
-                      className="inline-flex items-center gap-1.5 text-left text-reading font-medium text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
+                      className="inline-flex items-center gap-1.5 pointer-coarse:py-2.5 pointer-coarse:-my-2.5 text-left text-reading font-medium text-[var(--color-text)] hover:text-[var(--color-accent-text)]">
                       <ChevronRight aria-hidden className={`ui-chevron w-4 h-4 shrink-0 text-[var(--color-text-muted)] ${open ? "rotate-90" : ""}`} />
                       {pkg.name}
                     </button>
@@ -365,10 +365,10 @@ export default function PackagesPage() {
                 </tr>
                 {open && pkg.docs.map((d) => (
                   <tr key={d.id} className="hover:bg-[var(--color-surface-2)] max-md:block">
-                    <td colSpan={6} className="pl-[38px] pr-4 py-2 border-t border-[var(--color-border)] max-md:block">
+                    <td colSpan={6} className="pl-[38px] pr-4 py-2 pointer-coarse:py-0 border-t border-[var(--color-border)] max-md:block">
                       <Link
                         href={d.libraryId ? `/documents/${d.libraryId}?doc=${d.documentId}` : "#"}
-                        className="flex items-center gap-3 group"
+                        className="flex items-center gap-3 pointer-coarse:min-h-11 group"
                       >
                         <span className="ui-id text-reading group-hover:underline underline-offset-2 truncate min-w-0">{d.docLabel}</span>
                         {d.drifted ? (

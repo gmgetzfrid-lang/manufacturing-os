@@ -48,7 +48,7 @@ function useRecordWriter(): { write: RecordWriter | null; by: string | null } {
  *  chip, which shows it as 2:30 PM). */
 const clockOf = (at: number, tz: string) => toDateTimeInput(at, tz).slice(11, 16);
 
-const smallBtn = "px-1.5 py-1 text-caption font-medium rounded hover:bg-[var(--color-surface-2)]";
+const smallBtn = "px-1.5 py-1 pointer-coarse:min-h-11 pointer-coarse:min-w-11 text-caption font-medium rounded hover:bg-[var(--color-surface-2)]";
 
 /** "Removed. Undo" - right after a removal, until dismissed. */
 function UndoLine({ text, onUndo, onDismiss }: { text: string; onUndo: () => void; onDismiss: () => void }) {

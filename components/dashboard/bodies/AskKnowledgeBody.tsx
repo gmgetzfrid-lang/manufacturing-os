@@ -270,7 +270,7 @@ export default function AskKnowledgeBody() {
           placeholder={threadId ? "Ask a follow-up" : lib ? `Ask ${lib.name}` : "Loading libraries"}
           aria-label="Your question"
           enterKeyHint="send"
-          className="ui-field-bare flex-1 min-w-0 min-h-9 max-h-40 resize-none overflow-y-auto [field-sizing:content] bg-transparent py-1.5 text-reading leading-6 text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none disabled:opacity-60" />
+          className="ui-field-bare flex-1 min-w-0 min-h-9 pointer-coarse:min-h-11 max-h-40 resize-none overflow-y-auto [field-sizing:content] bg-transparent py-1.5 pointer-coarse:py-2.5 text-reading leading-6 text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] outline-none disabled:opacity-60" />
         {busy ? (
           // While the answer comes, the same spot stops it.
           // Its own element (key): reusing the Ask button's node would turn

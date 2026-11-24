@@ -147,7 +147,9 @@ const QUIET = "inline-flex items-center justify-center gap-1.5 h-10 px-3 rounded
 const MIN_PX_PER_DAY = 30;
 const MAX_PX_PER_DAY = 1440; // 60 px an hour — a turnaround is planned in hours
 const ZOOM_STEP = 1.35;
-const ROW_H = 40;     // height of each timeline row, px
+// Height of each timeline row, px. On a touch screen a row is 44 px to tap
+// plus its 1 px rule (design rule T1); read once, when the page loads.
+const ROW_H = typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches ? 45 : 40;
 const AXIS_H = 58;    // height of the date axis header (days / shifts / hours), px
 // Wide enough for a turnaround step's full name (they run 40 to 50
 // characters); drag the edge for more or less.
@@ -2052,7 +2054,7 @@ function OutlineRow({
         ) : <span className="shrink-0 w-5" aria-hidden />)}
         {status}
         {lean === "list" && (
-          <button onClick={onOpenDetail} className="flex-1 min-w-0 text-left" title={`${ms.name} - open details`}>
+          <button onClick={onOpenDetail} className="flex-1 min-w-0 pointer-coarse:self-stretch text-left" title={`${ms.name} - open details`}>
             <div className={`truncate text-body leading-tight ${finished ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"} ${(ms.isSummary || hasChildren) && !finished ? "font-medium" : ""}`}>{ms.name}</div>
             <div className="flex items-center gap-1.5 text-caption leading-tight text-[var(--color-text-muted)] min-w-0">
               {problem && <span className={`shrink-0 font-medium ${problem === "On hold" ? "text-[var(--state-held-text)]" : "text-[var(--state-overdue-text)]"}`}>{problem}</span>}
@@ -2109,7 +2111,7 @@ function OutlineRow({
 
       <button
         onClick={onOpenDetail}
-        className="flex-1 min-w-0 text-left"
+        className="flex-1 min-w-0 pointer-coarse:self-stretch text-left"
         title={`${ms.name} - open details`}
       >
         <div className={`truncate text-body leading-tight ${finished ? "text-[var(--color-text-muted)]" : "font-medium text-[var(--color-text)]"}`}>
@@ -2326,7 +2328,7 @@ function Bar({
   return (
     <div className={`absolute group/bar flex items-center transition-opacity ${dimmed ? "opacity-25" : ""} ${onPath ? "z-10" : ""}`} style={{ top: top + 6, left, width, height: ROW_H - 12 }}>
       {draggable && (
-        <button onClick={() => onNudge(-1)} className="absolute -left-5 pointer-coarse:-left-7 pointer-coarse:p-1.5 opacity-0 group-hover/bar:opacity-100 pointer-coarse:opacity-100 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-opacity" title="Move back 1 day">
+        <button onClick={() => onNudge(-1)} className="ui-hit absolute -left-5 pointer-coarse:-left-7 pointer-coarse:p-1.5 opacity-0 group-hover/bar:opacity-100 pointer-coarse:opacity-100 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-opacity" title="Move back 1 day">
           <ChevronLeft className="w-3.5 h-3.5" />
         </button>
       )}
@@ -2374,7 +2376,7 @@ function Bar({
         </span>
       )}
       {draggable && (
-        <button onClick={() => onNudge(1)} className="absolute -right-5 pointer-coarse:-right-7 pointer-coarse:p-1.5 opacity-0 group-hover/bar:opacity-100 pointer-coarse:opacity-100 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-opacity" title="Move forward 1 day">
+        <button onClick={() => onNudge(1)} className="ui-hit absolute -right-5 pointer-coarse:-right-7 pointer-coarse:p-1.5 opacity-0 group-hover/bar:opacity-100 pointer-coarse:opacity-100 p-0.5 rounded text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] transition-opacity" title="Move forward 1 day">
           <ChevronRightIcon className="w-3.5 h-3.5" />
         </button>
       )}
