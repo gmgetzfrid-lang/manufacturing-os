@@ -6,6 +6,7 @@ import type { DocumentRecord, DocumentVersion, CheckoutSession } from "@/types/s
 import { AuditEntry } from "@/lib/audit";
 import { supabase } from "@/lib/supabase";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
+import { shownRevision, uploadedName } from "@/lib/revisionShown";
 import TimelineFeed from "@/components/documents/TimelineFeed";
 import RevisionChainStrip from "@/components/documents/RevisionChainStrip";
 import ReverseConfirmModal from "@/components/documents/lifecycle/ReverseConfirmModal";
@@ -230,7 +231,9 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
                   url={activeSnapshot.fileUrl}
                   title={`ARCHIVE - ${docRecord.title}`}
                   docNumber={docRecord.documentNumber ?? ""}
-                  rev={activeSnapshot.revisionLabel}
+                  rev={shownRevision(activeSnapshot.revisionLabel, uploadedName(docRecord)) ?? ""}
+                  fileName={uploadedName(docRecord)}
+                  mime={activeSnapshot.fileType}
                   zoomLevel={60}
                   watermarkText="OBSOLETE - SUPERSEDED"
                 />

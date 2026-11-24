@@ -18,6 +18,8 @@
 // Status changes auto-release every active checkout (lib/projects.ts).
 
 import React, { useCallback, useEffect, useState } from "react";
+import { readAsk } from "@/lib/asks";
+import ProjectAsk from "@/components/projects/ProjectAsk";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -587,7 +589,14 @@ export default function ProjectDetailPage() {
             : null;
   // Shown over the plan and the work; Shift, Reports and the records each
   // have their own main button (Email, Print, Add), which is the orange one there.
-  const primary = next && tab !== next.tab && (tab === "plan" || tab === "work" || !tab)
+  // Sent here for one late or due step (?ask=late|due&m=<id>, from the
+  // Inbox): that step goes first, with its buttons, on the schedule tabs.
+  const askStep = (() => {
+    const a = readAsk(search?.get("ask"));
+    const m = search?.get("m");
+    return (a === "late" || a === "due") && m && isScheduleTab(tab) ? m : null;
+  })();
+  const primary = next && tab !== next.tab && (tab === "plan" || tab === "work" || !tab) && !askStep
     ? <button type="button" onClick={next.run} className={heroPrimary}>{next.label}</button> : undefined;
 
   // Setup opens in place, on whichever tab is open (SetupHost below).
@@ -771,6 +780,7 @@ export default function ProjectDetailPage() {
       {/* CONTENT: white cards on the paper, over the band's bottom edge. The
           schedule's tabs use the full width; the rest a reading width. */}
       <PageBody>
+        {askStep && project.id && <ProjectAsk stepId={askStep} projectId={project.id} onWorkTab={tab === "work"} />}
         {/* The work is done: what's left to close, as one path. */}
         {tab === "plan" && closing && (
           <ClosePath close={close} standings={standings} when={when} />

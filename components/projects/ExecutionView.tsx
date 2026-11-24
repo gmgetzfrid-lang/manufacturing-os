@@ -57,6 +57,7 @@ import ScheduleProgress from "@/components/projects/ScheduleProgress";
 import { usePhaseStandings } from "@/components/projects/PhaseLines";
 import { lateWords, standingOf, standingShort } from "@/lib/phaseStanding";
 import TaskDetailPanel from "@/components/projects/TaskDetailPanel";
+import { takePendingStep, STEP_OPEN_EVENT } from "@/lib/stepOpen";
 import ScheduleCalendarTileView from "@/components/projects/ScheduleCalendarTileView";
 import ShiftReportView from "@/components/projects/ShiftReportView";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
@@ -341,6 +342,20 @@ export default function ExecutionView({
     window.addEventListener("step:edit-plan", on);
     return () => window.removeEventListener("step:edit-plan", on);
   }, []);
+  // Open a step's panel from elsewhere on the page (the "Needed from you"
+  // box a late step's link opens with: components/projects/ProjectAsk).
+  // The request waits (lib/stepOpen) until this schedule is up and has it.
+  useEffect(() => {
+    const take = () => {
+      const p = takePendingStep((id) => byId.has(id));
+      if (!p) return;
+      setDetailId(p.id);
+      if (p.edit) setPlanEdit((x) => ({ id: p.id, n: (x?.n ?? 0) + 1 }));
+    };
+    take();
+    window.addEventListener(STEP_OPEN_EVENT, take);
+    return () => window.removeEventListener(STEP_OPEN_EVENT, take);
+  }, [byId]);
   // Remove a step from any view (the step card's Remove): delete it with
   // Undo, or cancel it on the record (components/projects/RemoveStep).
   const [removeId, setRemoveId] = useState<string | null>(null);

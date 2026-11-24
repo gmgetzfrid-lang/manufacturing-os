@@ -501,7 +501,7 @@ export async function nudgeAcknowledgment(input: { orgId: string; rosterId: stri
     orgId: input.orgId, userId: r.assignee_user_id as string, kind: "ack_requested",
     title: `Reminder - acknowledge ${label}${rev ? ` Rev ${rev}` : ""}`,
     body: "Please confirm you've read and understood this revision.",
-    link: `/documents/${doc?.library_id as string}?doc=${r.document_id as string}`,
+    link: `/documents/${doc?.library_id as string}?doc=${r.document_id as string}&ask=ack`,
     resourceType: "document", resourceId: r.document_id as string,
   });
   await supabase.from("document_acknowledgments").update({ notified_at: new Date().toISOString() }).eq("id", input.rosterId);

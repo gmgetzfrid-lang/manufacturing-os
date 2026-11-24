@@ -8,6 +8,7 @@ import {
 import {
   isActionRequired, attentionLabel, isManagementRole, isEngineerRole,
 } from '@/lib/ticketAttention';
+import { askForNotification, withAsk } from '@/lib/asks';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Single source of truth for "what needs my attention right now".
@@ -277,7 +278,8 @@ export function useTicketNotifications() {
         // Prefer the latest notification's deep-link (e.g. ?c=<commentId>) even
         // for action-required tickets, so clicking lands on (and highlights) the
         // new comment instead of the top of the ticket.
-        link: matched?.link || `/requests/${t.id}`,
+        // A request waiting on you opens with what to do at the top.
+        link: withAsk(matched?.link || `/requests/${t.id}`, actionReq ? 'turn' : null),
         when: String(t.lastModified || t.createdAt || ''),
       });
       tally('requests', actionReq);
@@ -302,11 +304,13 @@ export function useTicketNotifications() {
         section,
         title: n.title,
         subtitle: n.body || '',
-        link: n.link || (n.resourceId
+        // The link carries what is wanted (?ask=), so the screen it opens
+        // says it at the top with the button (lib/asks.ts).
+        link: withAsk(n.link || (n.resourceId
           ? (n.resourceType === 'document' ? `/search?q=${encodeURIComponent(n.resourceId)}`
              : n.resourceType === 'library' ? `/documents/${n.resourceId}`
              : `/requests/${n.resourceId}`)
-          : '/inbox'),
+          : '/inbox'), askForNotification(n.kind, n.metadata), n.id),
         when: n.createdAt,
         notificationId: n.id,
       });

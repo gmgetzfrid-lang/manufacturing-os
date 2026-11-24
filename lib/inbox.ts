@@ -26,8 +26,9 @@ export interface InboxSnapshot {
   // Checkouts I currently hold
   myCheckouts: CheckoutSession[];
 
-  // Holds I opened that are still open (I'm responsible for clearing them)
-  myOpenHolds: DocumentHold[];
+  // Holds I opened that are still open (I'm responsible for clearing them),
+  // with the document each is on, so the row says which and opens it.
+  myOpenHolds: Array<DocumentHold & { __docLabel?: string | null; __libraryId?: string | null }>;
 
   // Markup requests TO me (someone asked for my markups)
   markupRequestsToMe: Array<{
@@ -213,9 +214,19 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
     return !!s.startedAt && s.startedAt < longHeldBeforeIso;
   });
 
-  const myOpenHolds: DocumentHold[] = holdsRes.status === "fulfilled"
+  const myOpenHolds: Array<DocumentHold & { __docLabel?: string | null; __libraryId?: string | null }> = holdsRes.status === "fulfilled"
     ? ((holdsRes.value.data || []) as Array<Record<string, unknown>>).map(rowToHold)
     : [];
+  if (myOpenHolds.length) {
+    const ids = [...new Set(myOpenHolds.map((h) => h.documentId))];
+    const { data: hd } = await supabase.from("documents").select("id, library_id, document_number, title, name").in("id", ids);
+    const byId = new Map(((hd ?? []) as Array<Record<string, unknown>>).map((d) => [d.id as string, d]));
+    for (const h of myOpenHolds) {
+      const d = byId.get(h.documentId);
+      h.__libraryId = (d?.library_id as string | null) ?? null;
+      h.__docLabel = (d?.document_number as string) || (d?.title as string) || (d?.name as string) || null;
+    }
+  }
 
   const markupRequestsToMe = markupRes.status === "fulfilled"
     ? ((markupRes.value.data || []) as Array<Record<string, unknown>>).map((r) => ({
@@ -247,7 +258,22 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
     ? ((milestonesRes.value.data || []) as Array<Record<string, unknown>>).filter((r) => !r.cancelled_at).map(rowToMilestone)
     : [];
   // Mine = in one of my projects, or assigned directly (no projectId).
-  const myMilestones = allMilestones.filter((m) => !m.projectId || myProjectIds.has(m.projectId));
+  const mineAll = allMilestones.filter((m) => !m.projectId || myProjectIds.has(m.projectId));
+  // A task whose own row still reads "planned" while every step under it is
+  // done is done (the schedule rolls it up the same way): it isn't late and
+  // nothing is asked of anyone, so it stays off these lists.
+  const rolledUpDone = new Set<string>();
+  const parentIds = mineAll.map((m) => m.id).filter((id): id is string => !!id);
+  if (parentIds.length) {
+    const { data: kids } = await supabase.from("milestones").select("parent_id, status, cancelled_at").in("parent_id", parentIds.slice(0, 200));
+    const byParent = new Map<string, Array<{ status: string; cancelled_at: string | null }>>();
+    for (const k of (kids ?? []) as Array<{ parent_id: string; status: string; cancelled_at: string | null }>) {
+      if (k.cancelled_at) continue;
+      byParent.set(k.parent_id, [...(byParent.get(k.parent_id) ?? []), k]);
+    }
+    for (const [pid, list] of byParent) if (list.length && list.every((k) => k.status === "completed")) rolledUpDone.add(pid);
+  }
+  const myMilestones = mineAll.filter((m) => !m.id || !rolledUpDone.has(m.id));
   const msTime = (m: Milestone) => new Date(String(m.plannedAt ?? "")).getTime();
   // Due within the next 7 days — the forward-looking "this week" list.
   const milestonesUpcoming = myMilestones

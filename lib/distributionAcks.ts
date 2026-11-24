@@ -138,7 +138,7 @@ export async function requestAcks(input: {
     kind: "doc_superseded",
     title: `Please confirm: ${input.docLabel} Rev ${input.revLabel ?? "?"}`,
     body: `${input.actorName} needs your confirmation that you have the current revision. Open the document and tap "I have this revision" - takes two seconds, goes on the distribution record.`,
-    link: input.libraryId ? `/documents/${input.libraryId}?doc=${input.documentId}` : undefined,
+    link: input.libraryId ? `/documents/${input.libraryId}?doc=${input.documentId}&ask=dist` : undefined,
     resource: { type: "document", id: input.documentId },
     actorUserId: input.actorUserId,
     actorName: input.actorName,
@@ -253,7 +253,7 @@ export async function scanDistributionAcks(orgId: string, opts?: {
     const docId = r.document_id as string;
     const doc = docs.get(docId);
     const label = (doc?.document_number as string) || (doc?.title as string) || (doc?.name as string) || "Document";
-    const link = doc?.library_id ? `/documents/${doc.library_id as string}?doc=${docId}` : undefined;
+    const link = doc?.library_id ? `/documents/${doc.library_id as string}?doc=${docId}&ask=dist` : undefined;
     if (!recentlyNagged.has(`${r.recipient_user_id as string}:${docId}`)) {
       sends.push(() => notify({
         orgId,
@@ -322,7 +322,7 @@ export async function renudgeUnacked(input: {
     kind: "doc_superseded",
     title: `Reminder: confirm ${input.docLabel} Rev ${input.revLabel ?? "?"}`,
     body: `Still waiting on your confirmation that you have the current revision - open the document and tap "I have this revision".`,
-    link: input.libraryId ? `/documents/${input.libraryId}?doc=${input.documentId}` : undefined,
+    link: input.libraryId ? `/documents/${input.libraryId}?doc=${input.documentId}&ask=dist` : undefined,
     resource: { type: "document", id: input.documentId },
     actorUserId: input.actorUserId,
     actorName: input.actorName,

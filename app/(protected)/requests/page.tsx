@@ -692,7 +692,8 @@ export default function RequestPortal() {
     ...(filters.priority === 'urgent' ? [{ key: 'urgent', label: 'Urgent and RFI only', clear: () => setFilters((f) => ({ ...f, priority: 'all' })) }] : []),
     ...(showClosed && filters.status !== 'ALL' ? [{ key: 'closed', label: 'Closed ones too', clear: () => setShowClosed(false) }] : []),
   ];
-  const href = (t: Ticket) => `/requests/${t.id}`;
+  // A row waiting on you opens with that step and its button at the top.
+  const href = (t: Ticket) => `/requests/${t.id}${isActionRequired(t) ? '?ask=turn' : ''}`;
 
   const rowProps = (t: Ticket) => ({
     ticket: t,

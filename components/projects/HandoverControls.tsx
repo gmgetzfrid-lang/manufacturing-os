@@ -66,11 +66,14 @@ export function TryControl({ kind, decision, suggestions, crews, disabled, onCha
  *  turnover is done, so nobody changes the wrong day's report by mistake.
  *  Unlocking asks first. Locking or unlocking swaps the line at once, so
  *  the line itself is the answer to the tap. */
-export function ShipBar({ shippedAt, shippedBy, tries, canShip, busy, err, onShip, onUnship, when, label }: {
+export function ShipBar({ shippedAt, shippedBy, tries, canShip, busy, err, onShip, onUnship, when, label, endedAt }: {
   shippedAt: string | null; shippedBy: string | null; tries: number; canShip: boolean; busy: boolean; err: string | null;
   onShip: () => void; onUnship: () => void; when: (iso: string) => string;
   /** "Fri, Oct 30 day shift": whose report it is. */
   label: string;
+  /** When the shift ended, once it has: an open report then says plainly
+   *  that it is waiting to be locked, and by whom. */
+  endedAt?: string | null;
 }) {
   // The lock lives in its own record: when it can't be read or saved, say
   // so in plain words (never the database's), with a way to try again.
@@ -94,7 +97,26 @@ export function ShipBar({ shippedAt, shippedBy, tries, canShip, busy, err, onShi
     );
   }
   // Open: one quiet line and a quiet Lock button (the report's one accent
-  // button is Email / Print).
+  // button is Email / Print). Once the shift is over, the line says the
+  // report is waiting to be locked, with the late edge.
+  if (endedAt) {
+    return (
+      <div className="relative px-4 sm:px-5 py-2 border-b border-[var(--color-border)] flex flex-wrap items-center gap-x-3 gap-y-2 text-[14px] text-[var(--color-text)] print:hidden">
+        <span aria-hidden className="absolute left-0 top-0 bottom-0 w-[3px] bg-[var(--state-held)]" />
+        <Unlock aria-hidden className="w-4 h-4 shrink-0 text-[var(--state-held)]" />
+        <span className="flex-1 min-w-[200px]">
+          <b className="font-semibold">Lock the {label} report.</b> The shift ended {when(endedAt)} and its report is still open for changes{tries ? ` (${tries} asked to try)` : ""}.
+          {canShip ? " Locking it keeps anyone from changing the wrong day's report." : " Someone who can edit the schedule locks it."}
+        </span>
+        {canShip && (
+          <Button size="sm" variant="secondary" loading={busy} onClick={onShip}>
+            <Lock className="w-4 h-4" /> Lock report
+          </Button>
+        )}
+        {problem}
+      </div>
+    );
+  }
   return (
     <div className="px-4 sm:px-5 py-2 border-b border-[var(--color-border)] flex flex-wrap items-center gap-x-3 gap-y-2 text-[14px] text-[var(--color-text-muted)] print:hidden">
       <Unlock aria-hidden className="w-4 h-4 shrink-0" />

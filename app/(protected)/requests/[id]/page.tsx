@@ -16,6 +16,8 @@ import { field as kitField, label as kitLabel } from '@/components/admin/kit';
 import UnderlineTabs from '@/components/requests/UnderlineTabs';
 import { StatusTag, waitingOn, fmtDay, fmtWhen, relTime, historyWords, shortName, sentence } from '@/components/requests/RequestBits';
 import { isActionRequired } from '@/lib/ticketAttention';
+import { readAsk } from '@/lib/asks';
+import RequestAsk from '@/components/requests/RequestAsk';
 import FileThumb from '@/components/ui/FileThumb';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
@@ -1523,6 +1525,10 @@ export default function TicketDetailView() {
   const stagedNote = hasStagedFiles
     ? (availableActions.some((a) => a.action === 'submit_draft') ? ' Your drafts aren’t sent yet: Send draft for review sends them.' : ' Drafts are added but not sent to the requester yet.')
     : '';
+  // Sent here because it waits on you (?ask=turn): the step, who asked and
+  // by when go first, with the step's button (then the header's is quiet).
+  const askTurn = readAsk(searchParams.get('ask')) === 'turn';
+  const askHasPrimary = askTurn && onYou && !!mainAct;
   const quietButtons = quietActs.map((a) => (
     <button key={a.action + a.label} type="button" onClick={() => initiateWorkflowAction(a)} disabled={!!actionLoading} className={heroQuiet}>
       {iconOf(a)}{sentence(a.label)}
@@ -1743,7 +1749,7 @@ export default function TicketDetailView() {
             <MoreMenu items={moreMenu} iconOnly label="More: how it flows, traveler, reassign, admin steps" triggerClass={heroQuiet} />
           </>
         }
-        primary={mainAct ? (
+        primary={mainAct && !askHasPrimary ? (
           <button type="button" onClick={() => initiateWorkflowAction(mainAct)} disabled={!!actionLoading} className={heroPrimary}>
             {iconOf(mainAct)}{sentence(mainAct.label)}
           </button>
@@ -1766,6 +1772,18 @@ export default function TicketDetailView() {
       </PageHero>
 
       <PageBody>
+      {askTurn && (
+        <RequestAsk
+          ticket={ticket}
+          uid={uid ?? null}
+          onYou={onYou}
+          stateWords={stateWords}
+          main={mainAct ? { label: sentence(mainAct.label), run: () => initiateWorkflowAction(mainAct) } : null}
+          busy={!!actionLoading}
+          dueIso={ticket.targetCompletionAt ? toDate(ticket.targetCompletionAt).toISOString() : null}
+          pastDue={pastDue}
+        />
+      )}
       {justSent && ticket.requesterId === uid && emailAsk && emailAsk !== 'hidden' && (
         // Sent: the one moment email updates mean something. Says what they
         // bring; never asks when they're already on.
