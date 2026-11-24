@@ -1,21 +1,21 @@
 "use client";
 
-// SubscriptionGate — the enforcement that was missing.
+// SubscriptionGate: no subscription, no use.
 //
-// Previously `hasAccess()` existed but had ZERO callers: an expired trial
-// showed a red banner and nothing else, so lapsed orgs kept full access.
-// This gate blocks the app surface once the workspace's subscription has
-// definitively lapsed.
+// A workspace whose trial has ended, or whose subscription was canceled,
+// went unpaid or was paused, sees one screen instead of the app: what
+// happened and the one thing to do (an admin subscribes; everyone else is
+// told to ask one). The server refuses changes too (proxy.ts) and so does
+// the database (20261124_subscription_enforced.sql).
 //
-// Deliberate escape hatches (always reachable even when lapsed):
-//   - /admin/billing      so an admin can actually pay and recover.
-//   - /admin/data-export  so the "your data is yours, one-click exit"
-//                         promise holds even after a lapse.
+// Always reachable, even lapsed:
+//   - /admin/billing      so an admin can pay and get access back.
+//   - /admin/data-export  your data is yours: one-click exit holds.
 //   - /profile            so anyone can sign out or switch workspace.
 //
-// Fail-open: while the subscription is still loading, or if the lookup
-// failed (info === null), `hasAccess` returns true so a transient DB hiccup
-// never locks anyone out.
+// While the subscription loads, nothing shows (no flash of the app). If
+// the lookup fails (info === null), the app opens: a hiccup must never
+// lock out a paying workspace.
 
 import React from "react";
 import { PageShell } from "@/components/ui/PageShell";
@@ -29,35 +29,28 @@ import { useRole } from "@/components/providers/RoleContext";
 import { hasAccess, type SubscriptionInfo } from "@/lib/subscription";
 
 const ALLOWED_WHEN_LAPSED = ["/admin/billing", "/admin/data-export", "/profile"];
-
-function isController(role?: string | null) {
-  return role === "Admin" || role === "DocCtrl";
-}
+const BILLING_ROLES = ["Admin", "Manager"];
+const EXPORT_ROLES = ["Admin", "Manager", "DocCtrl"];
 
 export default function SubscriptionGate({ children }: { children: React.ReactNode }) {
   const { info, loading } = useSubscription();
   const { activeRole } = useRole();
   const pathname = usePathname() ?? "";
 
-  // Hard-blocking is OFF by default. It previously walled off the whole app
-  // for any workspace whose trial had lapsed — which, for an actively-used or
-  // in-development org, just looks like "everything is broken". The TrialBanner
-  // still nags. Flip ENFORCE to true (and confirm your orgs' billing state)
-  // when you actually want to gate access; even then, only the hard non-payment
-  // states block, never a merely-expired trial.
-  const ENFORCE = false;
-
-  if (!ENFORCE || loading || hasAccess(info)) return <>{children}</>;
-
-  const hardLapsed =
-    info?.status === "canceled" || info?.status === "unpaid" || info?.status === "paused";
+  if (loading) return null;
+  if (hasAccess(info)) return <>{children}</>;
   const escapeHatch = ALLOWED_WHEN_LAPSED.some(
     (p) => pathname === p || pathname.startsWith(`${p}/`),
   );
-  if (!hardLapsed || escapeHatch) return <>{children}</>;
-
+  if (escapeHatch) return <>{children}</>;
   return <SubscriptionBlocked info={info} role={activeRole} />;
 }
+
+const day = (iso?: string | null) => {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+};
 
 function SubscriptionBlocked({
   info,
@@ -66,27 +59,29 @@ function SubscriptionBlocked({
   info: SubscriptionInfo | null;
   role?: string | null;
 }) {
-  const admin = isController(role);
+  const canPay = BILLING_ROLES.includes(role ?? "");
+  const canExport = EXPORT_ROLES.includes(role ?? "");
+  const ended = day(info?.trialEndsAt);
   const reason =
     info?.status === "trialing"
-      ? "Your free trial has ended."
+      ? ended ? `Your free trial ended on ${ended}.` : "Your free trial has ended."
       : info?.status === "canceled"
         ? "This workspace's subscription was canceled."
-        : info?.status === "unpaid" || info?.status === "past_due"
-          ? "This workspace has an unpaid invoice."
+        : info?.status === "unpaid"
+          ? "This workspace's invoice wasn't paid."
           : info?.status === "paused"
             ? "This workspace is paused."
-            : "This workspace's subscription is inactive.";
+            : "This workspace has no active subscription.";
 
   return (
     <PageShell width="form">
       <PageHero
-        kicker="Subscription required"
+        kicker="Subscription"
         title={reason}
         size="md"
-        sub={admin
-          ? "Renew to get access back. Your documents, audit trail and history are safe and unchanged."
-          : "Your documents and audit trail are safe. Ask a workspace admin to renew access."}
+        sub={canPay
+          ? "Subscribe to keep using the workspace. Your documents, history and audit trail are kept as they are."
+          : "Ask your workspace admin to subscribe. Your documents, history and audit trail are kept as they are."}
         tools={
           <button
             type="button"
@@ -96,23 +91,22 @@ function SubscriptionBlocked({
             <LogOut className="w-3.5 h-3.5" /> Sign out
           </button>
         }
-        primary={admin ? (
+        primary={canPay ? (
           <Link href="/admin/billing" className={heroPrimary}>
-            <CreditCard className="w-4 h-4" /> Go to Billing
+            <CreditCard className="w-4 h-4" /> Subscribe
           </Link>
         ) : undefined}
       />
-      <PageBody>
-        <Card label="Your data">
-          <p className="text-[14px] text-[var(--color-text-muted)] mb-3">Everything stays exportable while access is paused.</p>
-          <Link
-            href="/admin/data-export"
-            className={heroQuiet}
-          >
-            <Download className="w-4 h-4" /> Export your data
-          </Link>
-        </Card>
-      </PageBody>
+      {canExport && (
+        <PageBody>
+          <Card label="Your data">
+            <p className="text-[14px] text-[var(--color-text-muted)] mb-3">You can still download everything, in standard formats.</p>
+            <Link href="/admin/data-export" className={heroQuiet}>
+              <Download className="w-4 h-4" /> Export your data
+            </Link>
+          </Card>
+        </PageBody>
+      )}
     </PageShell>
   );
 }
