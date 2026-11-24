@@ -66,12 +66,11 @@ Collected Nov 24, 2026 from the owner's review of the project pages and reports.
 - 42 tap targets under 44 px on touch (down from 192); none under 24 px is a real target.
 - Fixed: status colors on the dark document viewer; timeline and calendar bar colors; add rows with only a screen-reader name.
 
-## Still open, in one list
-- 42 tap targets under 44 px (rule T1).
-- Budget table as cards on the phone (T3); a "⋯" menu on invoice and change-order rows (A3).
-- The cost chart example still uses a plain bar list.
-- The project's "Ask" box sits above the tabs.
+## Still open, in one list (checked Nov 24, 2026)
+- **Database steps not run yet** (checked read-only against the live database): the materials table itself (20261119; until it exists, material lines are kept in the project's settings and the daily reminders can't see them), its two owners (20261125), its verify-by date (20261126), and the subscription rule in the database (20261124; today the block is on screen and on the server only). All four, in order: `supabase/RUN_PENDING_2026-11-24.sql`.
+- Materials: the verify-by lead time is a default of 14 days, not the turnaround book's number (the book isn't in the app). Reminders go to the bell only, not email, and only to owners who are on the project.
+- Printed reports other than the shift update (work orders, close-out, phase report, Word export) haven't had the type-scale pass: the work-orders print still uses tiny uppercase headers. The Word export's header has no head count or key number. The shift update's "Detailed" format was not checked on screen.
+- Review slides: their charts haven't been checked for the "biggest bar fills the width" problem fixed on screen.
 - Close-out report: identical rows (the 8 "Completed at Redman") are not merged.
-- On screens under 768 px the shift picker takes its own row.
-- The plant's shift table has no "Next shift" row (kept); the Word header has no head count or key number.
-- Waiting on the owner: the materials SQL, and the book.
+- 42 tap targets under 44 px (rule T1); budget table as cards on the phone (T3); a "⋯" menu on invoice and change-order rows (A3); the cost chart example still a plain bar list; the project's "Ask" box above the tabs; the shift picker on its own row under 768 px.
+- The plant's shift table has no "Next shift" row (kept on purpose: it is the plant's form).
