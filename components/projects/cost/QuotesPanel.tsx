@@ -535,7 +535,7 @@ function InvoiceDrop({ orgId, projectId, actor, onDone, setErr }: {
         onClick={() => !working && input.current?.click()}
         role="button" tabIndex={0}
         onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && !working) input.current?.click(); }}
-        className={`rounded-lg border border-dashed px-3 py-2 flex items-center gap-2 text-caption cursor-pointer transition-colors ${
+        className={`rounded-lg border border-dashed px-3 py-2 pointer-coarse:min-h-11 flex items-center gap-2 text-caption cursor-pointer transition-colors ${
           drag.over ? `border-[var(--color-main)] ${drag.ring}` : "border-[var(--color-border-strong)] hover:border-[var(--color-accent-ring)] bg-[var(--color-surface-2)]/30"}`}>
         {working ? <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-muted)]" /> : <UploadCloud className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />}
         <span className={`truncate ${drag.over ? "font-bold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>

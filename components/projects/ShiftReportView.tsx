@@ -1713,7 +1713,9 @@ function CopyUpdate({ doc, meeting, lh, stamps, primary }: { primary?: boolean; 
               <span role="status" className="w-full sm:w-auto mr-auto text-body text-[var(--color-text)]">
                 {!done.ok ? <ErrorNote compact title={done.what === "word" ? "Couldn't make the Word file." : "Your browser blocked the copy."} next="Try again." />
                   : done.what === "word" ? "Word file saved." : done.what === "email"
-                  ? <>Paste it into your email (Ctrl+V). <a className="font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2" href={`mailto:?subject=${encodeURIComponent(subject)}`}>New email with the subject</a></>
+                  ? <>Paste it into your email (Ctrl+V). <a className="font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2" href={`mailto:?subject=${encodeURIComponent(subject)}`}>New email with the subject</a>
+                    {/* New Outlook can be set to "merge formatting" for pastes from other apps, which drops the sizes and colors. */}
+                    <span className="block text-caption text-[var(--color-text-muted)] mt-0.5">Sizes and colors gone in Outlook? Settings, Mail, Compose and reply: set Pasting from other apps to Keep source formatting.</span></>
                   : "Paste it anywhere (Ctrl+V)."}
               </span>
             )}

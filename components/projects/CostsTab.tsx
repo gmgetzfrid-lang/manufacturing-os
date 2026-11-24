@@ -736,10 +736,10 @@ function EntryForm({ orgId, projectId, accountId, defaultParty, parties, actor, 
             Kind
             <HelpTooltip placement="top">{ENTRY_TYPES.map((t) => <span key={t.v} className="block"><b>{t.label}</b>: {t.hint}{t.hint.endsWith(".") ? "" : "."}</span>)}</HelpTooltip>
           </span>
-          <div role="radiogroup" aria-label="Kind of entry" className="inline-flex items-center h-10 pointer-coarse:h-11 rounded-lg border border-[var(--color-border-strong)] p-0.5 gap-0.5">
+          <div role="radiogroup" aria-label="Kind of entry" className="inline-flex items-center h-10 pointer-coarse:h-auto rounded-lg border border-[var(--color-border-strong)] p-0.5 gap-0.5">
             {ENTRY_TYPES.map((t) => (
               <button key={t.v} type="button" role="radio" aria-checked={type === t.v} onClick={() => setType(t.v)} title={t.hint}
-                className={`h-full px-2.5 rounded-md text-body font-medium transition-colors ${type === t.v ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
+                className={`h-full pointer-coarse:h-11 px-2.5 rounded-md text-body font-medium transition-colors ${type === t.v ? "bg-[var(--color-accent-soft)] text-[var(--color-accent-text)] ring-1 ring-inset ring-[var(--color-accent-text)]/30" : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)]"}`}>
                 {t.label}
               </button>
             ))}

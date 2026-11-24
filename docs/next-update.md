@@ -68,15 +68,19 @@ Collected Nov 24, 2026 from the owner's review of the project pages and reports.
 - **Needs the owner:** upload the simplified turnaround execution and management book, so the steps and words match it exactly.
 
 ## 8. Rules still open (from docs/design-rules.md status)
-- 42 tap targets under 44 px on touch (down from 192); none under 24 px is a real target.
+- **Done.** Every tap target is 44 px on touch (down from 192); the crawl's last two are hidden file inputs behind their buttons.
 - Fixed: status colors on the dark document viewer; timeline and calendar bar colors; add rows with only a screen-reader name.
 
-## Still open, in one list (checked Nov 24, 2026)
+## Still open, in one list (checked Nov 24, 2026, before production)
+Checked on the preview build: type check clean, lint 0 errors, 3,150 tests pass, production build clean, and 40 screens opened on a 375 px phone in the production build with no page errors. Tap targets under 44 px on touch: 2 left of 42 (both hidden file inputs; their visible buttons are the targets).
+
+Needs the owner:
 - **Database steps not run yet** (checked read-only against the live database): the materials table itself (20261119; until it exists, material lines are kept in the project's settings and the daily reminders can't see them), its two owners (20261125), its verify-by date (20261126), and the subscription rule in the database (20261124; today the block is on screen and on the server only). All four, in order: `supabase/RUN_PENDING_2026-11-24.sql`.
-- Materials: the verify-by lead time is a default of 14 days, not the turnaround book's number (the book isn't in the app). Reminders go to the bell only, not email, and only to owners who are on the project.
-- Printed reports other than the shift update (work orders, close-out, phase report) haven't had the type-scale pass: the work-orders print still uses tiny uppercase headers.
-- Of the six posts sent Nov 24, only DUr4dCgCLiA and the first slide of DY1Q6_CpsV8 could be opened here; the other four need an Instagram sign-in. Their ideas are not in yet.
-- Review slides: their charts haven't been checked for the "biggest bar fills the width" problem fixed on screen.
-- Close-out report: identical rows (the 8 "Completed at Redman") are not merged.
-- 42 tap targets under 44 px (rule T1); budget table as cards on the phone (T3); a "⋯" menu on invoice and change-order rows (A3); the cost chart example still a plain bar list; the project's "Ask" box above the tabs; the shift picker on its own row under 768 px.
-- The plant's shift table has no "Next shift" row (kept on purpose: it is the plant's form).
+- The turnaround book: until it's in the app, the materials verify-by lead time is a default of 14 days and the setup gates have no real weeks.
+- Four of the six posts sent Nov 24 need an Instagram sign-in to open (DfgiNAYlRp2, DfUFt_-kXza, DTaIAkPDAo3, DfENdX5jvgP): screenshots, to use their ideas.
+- Outlook: to paste the update with its sizes and colors, Settings, Mail, Compose and reply, "Pasting from other apps": Keep source formatting (the app says so after Copy for email).
+- The project setup flow (start from the approved work order list, packages, BOM, AFE, RFQs, award): designed, not built; waiting for the go and three decisions (package per WO or per equipment; the "inspect for cleanliness" WOs; importing the PM and WO tabs).
+
+Kept on purpose:
+- The plant's shift table has no "Next shift" row (it is the plant's form).
+- Material reminders go to the bell only, not email, and only to owners who are on the project.

@@ -2183,14 +2183,13 @@ function FoldLine({ row, lean, onToggle }: { row: FoldRow; lean?: "list" | "dot"
     );
   }
   return (
-    <div className="flex items-center border-b border-[var(--color-border)] pr-2" style={{ height: ROW_H, paddingLeft: lean ? 6 + Math.min(row.depth, 5) * 10 : 8 + row.depth * 16 }}>
-      <button type="button" onClick={onToggle} aria-expanded={row.shown}
-        className="inline-flex items-center gap-1.5 min-h-8 pointer-coarse:min-h-11 px-1.5 -ml-1.5 rounded-md text-body text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+    <div className="flex items-center min-w-0 border-b border-[var(--color-border)] pr-2" style={{ height: ROW_H, paddingLeft: lean ? 6 + Math.min(row.depth, 5) * 10 : 8 + row.depth * 16 }}>
+      <button type="button" onClick={onToggle} aria-expanded={row.shown} title={`${row.shown ? "Hide" : "Show"} ${what}${row.items !== row.steps ? ` in ${row.items} task${row.items === 1 ? "" : "s"}` : ""}`}
+        className="min-w-0 max-w-full inline-flex items-center gap-1.5 min-h-8 pointer-coarse:min-h-11 px-1.5 -ml-1.5 rounded-md text-body whitespace-nowrap text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
         <ChevronDown className={`w-3.5 h-3.5 shrink-0 transition-transform ${row.shown ? "" : "-rotate-90"}`} strokeWidth={2.5} aria-hidden />
-        <span className="tabular-nums">{what}</span>
-        {row.items !== row.steps && <span className="tabular-nums">in {row.items} task{row.items === 1 ? "" : "s"}</span>}
-        <span aria-hidden>·</span>
-        <span className="font-medium text-[var(--color-accent-text)]">{row.shown ? "Hide" : "Show"}</span>
+        <span className="min-w-0 truncate tabular-nums">{what}{row.items !== row.steps && !lean ? ` in ${row.items} task${row.items === 1 ? "" : "s"}` : ""}</span>
+        <span aria-hidden className="shrink-0">·</span>
+        <span className="shrink-0 font-medium text-[var(--color-accent-text)]">{row.shown ? "Hide" : "Show"}</span>
       </button>
     </div>
   );
