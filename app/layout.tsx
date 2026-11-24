@@ -51,15 +51,6 @@ export const metadata: Metadata = {
     'P&ID', 'audit trail', 'as-built', 'transmittals', 'PLM',
   ],
   appleWebApp: { capable: true, statusBarStyle: 'default', title: 'MfgOS' },
-  // The workspace's own logo (see app/api/brand/icon): the tab and the
-  // home-screen icon. Which workspace comes from this device's sign-in.
-  icons: {
-    icon: [
-      { url: '/api/brand/icon?s=32', sizes: '32x32', type: 'image/png' },
-      { url: '/api/brand/icon?s=192', sizes: '192x192', type: 'image/png' },
-    ],
-    apple: [{ url: '/api/brand/icon?s=180&m=apple', sizes: '180x180', type: 'image/png' }],
-  },
   formatDetection: { telephone: false },
   openGraph: {
     type: 'website',
@@ -88,9 +79,6 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning className={`${barlow.variable} ${barlowSemiCondensed.variable}`}>
       <head>
-        {/* Asked for with credentials: the manifest's icons are this
-            device's workspace logo, read from its cookie. */}
-        <link rel="manifest" href="/manifest.webmanifest" crossOrigin="use-credentials" />
         {/* Set theme class/accent before first paint to avoid a flash. */}
         <script dangerouslySetInnerHTML={{ __html: THEME_PREPAINT }} />
         {/* Apply saved density before first paint. */}

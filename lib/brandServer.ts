@@ -1,21 +1,16 @@
-// The workspace's own logo as the app's face: the home-screen icon, the
-// browser tab, the sign-in page and the pages someone outside opens.
+// The sending company's logo on the pages someone outside opens (a shared
+// link, an upload link, a transmittal): read from the workspace's upload,
+// its empty margin cut off, set on its own background color so it reads on
+// any page. The app's own logo (MOS) is a static file, not this.
 //
-// Server only. Read with the service role, because the browser fetches
-// icons and the manifest by itself, often before anyone signs in.
-//
-// Which workspace: the one named in the request (a link's workspace, or
-// ?ws=), else the one this device last used (the mos_ws cookie, set after
-// sign-in), else BRAND_ORG_ID, else the only workspace there is. A
-// workspace without a logo never borrows another one's: it gets the plain
-// fallback (the initial M, no mark).
+// Server only. Read with the service role: the person opening the link has
+// no account. Only ever serves a workspace's branding logo.
 
 import sharp from "sharp";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
-export const WS_COOKIE = "mos_ws";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const isOrgId = (v: unknown): v is string => typeof v === "string" && UUID_RE.test(v);
 
@@ -25,7 +20,7 @@ export interface Brand {
   /** null: this workspace has no logo uploaded. */
   logoPath: string | null;
   shape: "mark" | "full";
-  /** Changes when the logo changes (cache key for icons). */
+  /** Changes when the logo changes (cache key). */
   version: string;
 }
 
@@ -33,7 +28,6 @@ const TTL = 5 * 60_000;
 const brands = new Map<string, { at: number; brand: Brand | null }>();
 const images = new Map<string, { at: number; png: Buffer }>();
 const prepared = new Map<string, { at: number; logo: Buffer; bg: string }>();
-let only: { at: number; orgId: string | null } | null = null;
 
 function short(s: string): string {
   let h = 0;
@@ -66,28 +60,10 @@ export async function brandOf(orgId: string): Promise<Brand | null> {
   return brand;
 }
 
-/** The deployment's workspace when nothing else says which: BRAND_ORG_ID,
- *  else the single workspace when there is exactly one. */
-async function defaultOrgId(): Promise<string | null> {
-  const env = process.env.BRAND_ORG_ID;
-  if (isOrgId(env)) return env;
-  if (only && Date.now() - only.at < TTL) return only.orgId;
-  const { data } = await supabaseAdmin.from("orgs").select("id").limit(2);
-  const rows = (data ?? []) as { id: string }[];
-  only = { at: Date.now(), orgId: rows.length === 1 ? rows[0].id : null };
-  return only.orgId;
-}
-
-/** Which workspace a request is about, and whether that came from the
- *  request itself (safe to cache for everyone) or from this device. */
-export async function brandFor(req: Request): Promise<{ brand: Brand | null; shared: boolean }> {
-  const url = new URL(req.url);
-  const ws = url.searchParams.get("ws");
-  if (isOrgId(ws)) return { brand: await brandOf(ws), shared: true };
-  const cookie = (req.headers.get("cookie") ?? "").match(new RegExp(`(?:^|;\\s*)${WS_COOKIE}=([^;]+)`))?.[1];
-  if (isOrgId(cookie)) return { brand: await brandOf(cookie), shared: false };
-  const id = await defaultOrgId();
-  return { brand: id ? await brandOf(id) : null, shared: false };
+/** The workspace a logo request names (?ws=). */
+export async function brandFor(req: Request): Promise<Brand | null> {
+  const ws = new URL(req.url).searchParams.get("ws");
+  return isOrgId(ws) ? brandOf(ws) : null;
 }
 
 /** The logo link for a workspace, for a page someone outside opens. */
@@ -141,16 +117,6 @@ async function prepare(bytes: Buffer): Promise<{ logo: Buffer; bg: string }> {
   return { logo, bg };
 }
 
-/** The plain fallback: the initial M, white on graphite. */
-function fallbackSvg(size: number, rounded: boolean): Buffer {
-  const r = rounded ? Math.round(size * 0.22) : 0;
-  return Buffer.from(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 100 100">`
-    + `<rect width="100" height="100" rx="${(r / size) * 100}" fill="#16181d"/>`
-    + `<path d="M28 70V30h9l13 19 13-19h9v40h-9V45L50 63 37 45v25z" fill="#ffffff"/></svg>`,
-  );
-}
-
 /** The workspace's logo, prepared once per version. */
 export async function preparedLogo(brand: Brand): Promise<{ logo: Buffer; bg: string } | null> {
   if (!brand.logoPath) return null;
@@ -160,34 +126,6 @@ export async function preparedLogo(brand: Brand): Promise<{ logo: Buffer; bg: st
   const p = await prepare(await readObject(brand.logoPath));
   prepared.set(key, { at: Date.now(), ...p });
   return p;
-}
-
-export type IconKind = "any" | "mask" | "apple";
-
-/** A square PNG icon of the workspace's logo. `any` has rounded corners;
- *  `mask` and `apple` are full squares (the phone cuts the shape), and
- *  `mask` keeps the logo inside the circle Android may cut. */
-export async function iconPng(brand: Brand | null, size: number, kind: IconKind): Promise<Buffer> {
-  const key = `${brand?.orgId ?? "-"}|${brand?.version ?? "-"}|${size}|${kind}`;
-  const hit = images.get(key);
-  if (hit && Date.now() - hit.at < TTL * 6) return hit.png;
-  const rounded = kind === "any";
-  let png: Buffer;
-  try {
-    const p = brand ? await preparedLogo(brand) : null;
-    if (!p) throw new Error("no logo");
-    const { logo, bg } = p;
-    const k = kind === "mask" ? 0.6 : size <= 64 ? 0.84 : 0.72;
-    const box = Math.max(8, Math.round(size * k));
-    const fitted = await sharp(logo).resize(box, box, { fit: "inside" }).png().toBuffer();
-    const r = rounded ? Math.round(size * 0.22) : 0;
-    const base = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}"><rect width="${size}" height="${size}" rx="${r}" fill="${bg}"/></svg>`);
-    png = await sharp(base).composite([{ input: fitted, gravity: "centre" }]).png().toBuffer();
-  } catch {
-    png = await sharp(fallbackSvg(size, rounded)).resize(size, size).png().toBuffer();
-  }
-  images.set(key, { at: Date.now(), png });
-  return png;
 }
 
 /** The logo alone, margin cut off, at most 480 px on its long side.
@@ -211,12 +149,4 @@ export async function logoPng(brand: Brand, plated = false): Promise<Buffer | nu
   }
   images.set(key, { at: Date.now(), png });
   return png;
-}
-
-/** Cache headers: a request that names its workspace is the same for
- *  everyone; one decided by this device's cookie is private. */
-export function cacheFor(shared: boolean): string {
-  return shared
-    ? "public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800"
-    : "private, max-age=3600";
 }

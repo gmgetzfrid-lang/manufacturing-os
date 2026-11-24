@@ -43,7 +43,7 @@ const RUNTIME_CACHE = `${VERSION}-runtime`;
 // Not the manifest: the browser fetches it itself (with the sign-in a
 // protected preview deployment needs). Fetched from here it was redirected
 // to Vercel's sign-in page and surfaced as "503 (Offline)" in the console.
-const SHELL_ASSETS = ["/", "/offline"];
+const SHELL_ASSETS = ["/", "/offline", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -252,8 +252,8 @@ self.addEventListener("push", (event) => {
   const title = data.title || "Manufacturing OS";
   const options = {
     body: data.body || "",
-    // The workspace's logo (this device's, from its sign-in cookie).
-    icon: "/api/brand/icon?s=192",
+    icon: "/icon-192.png",
+    badge: "/icon-192.png",
     tag: data.tag || "mfgos-reminder",
     renotify: true,
     data: { url: data.url || "/" },

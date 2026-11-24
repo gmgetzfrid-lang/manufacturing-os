@@ -33,6 +33,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { AppMark } from '@/components/brand/AppMark';
 import { usePathname, useRouter } from 'next/navigation';
 import { supabase, setPreferMicrosoft } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
@@ -319,7 +320,9 @@ export default function Sidebar({
             aria-label="Expand sidebar"
             className="group relative w-10 h-10 rounded-lg flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-colors"
           >
-            <ChevronRight className="ui-chevron w-5 h-5 group-hover:translate-x-0.5" />
+            {/* The app logo; the arrow shows on hover and focus. */}
+            {!logoUrl && <AppMark size={28} ring className="transition-opacity group-hover:opacity-0 group-focus-visible:opacity-0" />}
+            <ChevronRight className={`ui-chevron w-5 h-5 group-hover:translate-x-0.5 ${logoUrl ? '' : 'absolute opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100'}`} />
           </button>
         ) : (
           <>
@@ -333,8 +336,11 @@ export default function Sidebar({
                 </span>
               </div>
             ) : (
-              // No logo uploaded yet: the product's name (it has no mark).
-              <div className="flex-1 min-w-0 font-display text-[18px] font-semibold text-[var(--color-text)] leading-none truncate">Manufacturing OS</div>
+              // No company logo uploaded yet: the app logo and name.
+              <>
+                <AppMark size={32} ring />
+                <div className="flex-1 min-w-0 font-display text-[18px] font-semibold text-[var(--color-text)] leading-none truncate">Manufacturing OS</div>
+              </>
             )}
             <button
               onClick={() => (isMobile ? onMobileClose?.() : setRailCollapsed((v) => !v))}

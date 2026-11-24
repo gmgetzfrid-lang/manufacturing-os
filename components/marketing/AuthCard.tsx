@@ -12,7 +12,7 @@
 
 import React from "react";
 import Link from "next/link";
-import { DeviceWorkspaceLogo } from "@/components/brand/WorkspaceLogo";
+import { Logo } from "./PublicChrome";
 import { PlantLineArt } from "./PlantLineArt";
 
 /** What the app holds, said plainly (each one is a real part of it). */
@@ -65,8 +65,7 @@ export function AuthCard({ title, sub, children, footer, wide = false }: {
           className="lg:hidden absolute -z-10 right-0 top-0 h-full w-[72%] text-[var(--color-accent-text)] [mask-image:linear-gradient(to_right,transparent,black_60%)]" />
         <PlantLineArt preserveAspectRatio="xMaxYMax slice"
           className="max-lg:hidden absolute -z-10 right-0 bottom-0 w-[118%] h-[60%] text-[var(--color-accent-text)] [mask-image:linear-gradient(to_bottom,transparent,black_38%)]" />
-        {/* The workspace's own logo (this device's, after its first sign-in). */}
-        <div className="self-start"><DeviceWorkspaceLogo /></div>
+        <Link href="/about" aria-label="About Manufacturing OS" className="self-start rounded-lg"><Logo /></Link>
         <p className="lg:hidden mt-3 max-w-[62%] text-[14px] leading-snug text-[var(--color-text-muted)]">Your site&apos;s drawings, equipment and work, in one place.</p>
         <div className="max-lg:hidden mt-[9vh] max-w-[30rem]">
           <p className="font-display text-title font-semibold text-[var(--color-text)]">Your site&apos;s drawings, equipment and work, in one place.</p>

@@ -1,15 +1,17 @@
 // The public pages' top bar and footer, in the brand's deep shade: the
-// product's name, the sections of /about, and the two ways in.
+// app logo, the sections of /about, and the two ways in.
 
 import Link from "next/link";
 import { btnQuiet } from "@/components/admin/kit";
-import { SenderLogo, Wordmark } from "@/components/brand/WorkspaceLogo";
+import { SenderLogo } from "@/components/brand/WorkspaceLogo";
+import { AppLogo, AppMark } from "@/components/brand/AppMark";
 
 const wrap = "max-w-[1200px] mx-auto px-4 sm:px-6";
 
-/** The product's name (it has no mark; a workspace shows its own logo). */
+/** The app logo and name. These pages sit on the deep brand shade, so the
+ *  tile gets its hairline. */
 export function Logo() {
-  return <Wordmark />;
+  return <AppLogo ring />;
 }
 
 /** The slim bar on a page someone opens from outside the company (a
@@ -28,7 +30,9 @@ export function PublicBar() {
  *  in the field), white on the verdict's color. */
 export function PublicSignature() {
   return (
-    <p className="mt-10 font-display text-[15px] font-semibold text-white">Manufacturing OS</p>
+    <p className="mt-10 inline-flex items-center gap-2 font-display text-[15px] font-semibold text-white">
+      <AppMark size={22} ring /> Manufacturing OS
+    </p>
   );
 }
 

@@ -1,8 +1,8 @@
 // lib/__tests__/brandServer.test.ts
 //
-// The app icon is made from the workspace's own logo. These check which
-// workspace a request gets (never another company's logo), the color the
-// logo sits on, and the plain fallback when there is no logo.
+// A page someone outside opens shows the sending company's logo. These
+// check that a request only ever gets the workspace it names (never
+// another company's logo), the color the logo sits on, and the trim.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import sharp from "sharp";
@@ -64,37 +64,21 @@ beforeEach(() => {
 });
 
 describe("which workspace", () => {
-  it("uses the only workspace when nothing names one", async () => {
-    orgs.push({ id: A, name: "Kern" });
-    configs.set(A, { logoPath: `orgs/${A}/branding/logo.png`, updatedAt: "1" });
-    const { brandFor } = await fresh();
-    const { brand, shared } = await brandFor(new Request("https://x/api/brand/icon"));
-    expect(brand?.orgId).toBe(A);
-    expect(shared).toBe(false);
-  });
-
-  it("uses nobody's logo when there are two workspaces and none is named", async () => {
-    orgs.push({ id: A, name: "Kern" }, { id: B, name: "Other" });
-    configs.set(A, { logoPath: `orgs/${A}/branding/logo.png` });
-    const { brandFor } = await fresh();
-    expect((await brandFor(new Request("https://x/api/brand/icon"))).brand).toBeNull();
-  });
-
-  it("follows this device's cookie, and a named workspace over it", async () => {
+  it("only the workspace the request names", async () => {
     orgs.push({ id: A, name: "Kern" }, { id: B, name: "Other" });
     const { brandFor } = await fresh();
-    const byCookie = await brandFor(new Request("https://x/api/brand/icon", { headers: { cookie: `a=1; mos_ws=${B}` } }));
-    expect(byCookie.brand?.orgId).toBe(B);
-    const named = await brandFor(new Request(`https://x/api/brand/icon?ws=${A}`, { headers: { cookie: `mos_ws=${B}` } }));
-    expect(named.brand?.orgId).toBe(A);
-    expect(named.shared).toBe(true);
+    expect((await brandFor(new Request(`https://x/api/brand/logo?ws=${A}`)))?.orgId).toBe(A);
+    expect(await brandFor(new Request("https://x/api/brand/logo"))).toBeNull();
+    expect(await brandFor(new Request("https://x/api/brand/logo?ws=not-an-id"))).toBeNull();
   });
 
   it("never borrows another workspace's logo", async () => {
     orgs.push({ id: A, name: "Kern" }, { id: B, name: "Other" });
     configs.set(A, { logoPath: `orgs/${A}/branding/logo.png` });
-    const { brandOf } = await fresh();
+    const { brandOf, logoLinkFor } = await fresh();
     expect((await brandOf(B))?.logoPath).toBeNull();
+    expect(await logoLinkFor(B)).toBeNull();
+    expect(await logoLinkFor(A)).toMatch(new RegExp(`^/api/brand/logo\\?ws=${A}&v=\\w+&plate=1$`));
   });
 
   it("ignores a logo path outside the workspace's own folder", async () => {
@@ -105,65 +89,46 @@ describe("which workspace", () => {
   });
 });
 
-describe("the icon", () => {
-  it("puts a dark logo on white, full square for a phone", async () => {
+describe("the logo", () => {
+  async function plated(color: string, background?: string) {
     orgs.push({ id: A, name: "Kern" });
     configs.set(A, { logoPath: `orgs/${A}/l.png`, updatedAt: "1" });
-    store.set(`orgs/${A}/l.png`, await logo("#000972"));
-    const { brandOf, iconPng } = await fresh();
-    const png = await iconPng(await brandOf(A), 180, "apple");
-    const corner = await pixel(png, 0, 0);
-    expect([corner.w, corner.h]).toEqual([180, 180]);
-    expect([corner.r, corner.g, corner.b, corner.a]).toEqual([255, 255, 255, 255]);
-    const middle = await pixel(png, 90, 90);
-    expect(middle.b).toBeGreaterThan(100);
-    expect(middle.r).toBeLessThan(40);
+    store.set(`orgs/${A}/l.png`, await logo(color, background));
+    const { brandOf, logoPng } = await fresh();
+    return (await logoPng((await brandOf(A))!, true))!;
+  }
+
+  it("sits a dark logo on white", async () => {
+    const corner = await pixel(await plated("#000972"), 12, 12);
+    expect([corner.r, corner.g, corner.b]).toEqual([255, 255, 255]);
   });
 
-  it("puts a white logo on a dark square", async () => {
-    orgs.push({ id: A, name: "Kern" });
-    configs.set(A, { logoPath: `orgs/${A}/l.png`, updatedAt: "1" });
-    store.set(`orgs/${A}/l.png`, await logo("#ffffff"));
-    const { brandOf, iconPng } = await fresh();
-    const corner = await pixel(await iconPng(await brandOf(A), 192, "mask"), 2, 2);
-    expect(corner.r).toBeLessThan(40);
+  it("sits a white logo on dark", async () => {
+    expect((await pixel(await plated("#ffffff"), 12, 12)).r).toBeLessThan(40);
   });
 
   it("keeps a logo's own solid background", async () => {
-    orgs.push({ id: A, name: "Kern" });
-    configs.set(A, { logoPath: `orgs/${A}/l.png`, updatedAt: "1" });
-    store.set(`orgs/${A}/l.png`, await logo("#ffffff", "#c8102e"));
-    const { brandOf, iconPng } = await fresh();
-    const corner = await pixel(await iconPng(await brandOf(A), 192, "mask"), 2, 2);
+    const corner = await pixel(await plated("#ffffff", "#c8102e"), 12, 12);
     expect([corner.r, corner.g, corner.b]).toEqual([0xc8, 0x10, 0x2e]);
   });
 
-  it("rounds the corners of the plain install icon", async () => {
-    orgs.push({ id: A, name: "Kern" });
-    configs.set(A, { logoPath: `orgs/${A}/l.png`, updatedAt: "1" });
-    store.set(`orgs/${A}/l.png`, await logo("#000972"));
-    const { brandOf, iconPng } = await fresh();
-    expect((await pixel(await iconPng(await brandOf(A), 192, "any"), 0, 0)).a).toBe(0);
-  });
-
-  it("draws the plain fallback when there is no logo, or it can't be read", async () => {
-    orgs.push({ id: A, name: "Kern" });
-    configs.set(A, { logoPath: `orgs/${A}/missing.png` });
-    const { brandOf, iconPng } = await fresh();
-    for (const b of [null, await brandOf(A)]) {
-      const p = await pixel(await iconPng(b, 64, "apple"), 1, 1);
-      expect([p.w, p.r, p.a]).toEqual([64, 0x16, 255]);
-    }
-  });
-
-  it("plates the logo for a page, trimmed of its margin", async () => {
+  it("is trimmed of its margin, and the plate adds one back", async () => {
     orgs.push({ id: A, name: "Kern" });
     configs.set(A, { logoPath: `orgs/${A}/l.png`, updatedAt: "1" });
     store.set(`orgs/${A}/l.png`, await logo("#000972"));
     const { brandOf, logoPng } = await fresh();
     const bare = await pixel((await logoPng((await brandOf(A))!))!, 0, 0);
     expect(bare.w).toBeLessThan(80); // the 60 px disc, not the 200 px canvas
-    const plated = await pixel((await logoPng((await brandOf(A))!, true))!, 0, 0);
-    expect(plated.w).toBeGreaterThan(bare.w);
+    const withPlate = await pixel((await logoPng((await brandOf(A))!, true))!, 0, 0);
+    expect(withPlate.w).toBeGreaterThan(bare.w);
+  });
+
+  it("is nothing when the workspace has no logo, or it can't be read", async () => {
+    orgs.push({ id: A, name: "Kern" });
+    const { brandOf, logoPng } = await fresh();
+    expect(await logoPng((await brandOf(A))!)).toBeNull();
+    configs.set(A, { logoPath: `orgs/${A}/missing.png`, updatedAt: "2" });
+    const again = await fresh();
+    await expect(again.logoPng((await again.brandOf(A))!)).rejects.toThrow();
   });
 });
