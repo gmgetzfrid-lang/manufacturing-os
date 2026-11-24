@@ -14,7 +14,7 @@ describe("causeWords", () => {
   it("a note written on the job says what it says, and where it was written", () => {
     // E-17's piece goes to a note written on E-12 that names E-17: its
     // heading is E-12's name, which on E-17's bar reads as the wrong job.
-    expect(causeWords(seg, job)).toBe("“The material shortfall held E-17 too”, written on E-12");
+    expect(causeWords(seg, job)).toBe("“The material shortfall held E-17 too” (from a note on E-12)");
   });
   it("a headline is said as it is", () => {
     expect(causeWords({ ...seg, title: "A material shortfall set the finish" }, { ...job, source: "records", title: "A material shortfall set the finish" })).toBe("A material shortfall set the finish");

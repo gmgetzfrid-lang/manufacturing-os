@@ -596,7 +596,7 @@ function FindingCard({ f, tz, lateH, canManage, busy, action, questions, answers
       {L && <LoadBody L={L} tz={tz} canManage={canManage} busy={busy} onCrews={onCrews} />}
       {f.idle && (
         <div className="mt-3" data-idle>
-          <IdleBars groups={f.idle.groups.slice(0, 8)} />
+          <IdleBars groups={f.idle.groups.slice(0, 8)} total={f.idle.hours} />
           {f.idle.groups.length > 8 && <p className="mt-1 text-caption text-[var(--color-text-muted)]">And {f.idle.groups.length - 8} more in the jobs below.</p>}
         </div>
       )}

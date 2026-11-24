@@ -15,11 +15,11 @@ import { companyOf, estimateByWorkOrder, manpowerSummary, shiftCounts, type Manp
 import LoadingBlock from "@/components/ui/LoadingBlock";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 
-// Each company keeps its color (fixed order, by man-hours); past seven, Other.
-// The app's chart colors (globals.css --viz-cat-*), the same in every chart.
+// Each company keeps its color (fixed order, by man-hours); past eight, Other.
+// The crew colors (globals.css --crew-*), validated apart, as on the schedules.
 const SWATCH = [
-  "bg-[var(--viz-cat-1)]", "bg-[var(--viz-cat-2)]", "bg-[var(--viz-cat-3)]", "bg-[var(--viz-cat-4)]",
-  "bg-[var(--viz-cat-5)]", "bg-[var(--viz-cat-6)]", "bg-[var(--viz-cat-7)]",
+  "bg-[var(--crew-1)]", "bg-[var(--crew-2)]", "bg-[var(--crew-3)]", "bg-[var(--crew-4)]",
+  "bg-[var(--crew-5)]", "bg-[var(--crew-6)]", "bg-[var(--crew-7)]", "bg-[var(--crew-8)]",
 ];
 const OTHER = "bg-[var(--viz-neutral)]";
 const OTHER_NAME = "Other";

@@ -207,6 +207,27 @@
 @keyframes skeleton-pulse { 50% { opacity: 0.55; } }
 
 /* Dark theme: a deep slate page; the same roles. */
+:root {
+  /* Crews on the schedules (used from inline styles, so outside @theme,
+     which drops what no class names). Any two crews can sit side by side
+     on a schedule, so every pair is checked, not just neighbours: on this
+     surface each pair is ΔE ≥ 15 for normal vision and ≥ 6.4 for color-blind
+     vision, and each is ΔE ≥ 15 from the late red and the "Not set" gray
+     (five of Okabe-Ito's, a brown, a plum and a violet). The first five
+     are five different families and go to the busiest crews; the second
+     blue and second purple only to the sixth crew and after. Each crew is also named
+     beside its color, which carries it where color alone can't. A ninth
+     crew gets one of these striped, never the gray of "Not set". */
+  --crew-1: #E69F00;  /* orange      */
+  --crew-2: #56B4E9;  /* sky blue    */
+  --crew-3: #009E73;  /* green       */
+  --crew-4: #CC79A7;  /* pink        */
+  --crew-5: #7a4800;  /* brown       */
+  --crew-6: #0072B2;  /* blue        */
+  --crew-7: #7f3c8d;  /* plum        */
+  --crew-8: #8a3ffc;  /* violet      */
+}
+
 .dark {
   --color-canvas: #111418;
   --color-surface: #1b1e24;
@@ -232,6 +253,18 @@
   --viz-cat-5: #f43f5e;  /* rose-500   */
   --viz-cat-6: #0891b2;  /* cyan-600   */
   --viz-cat-7: #65a30d;  /* lime-600   */
+  /* Crews, dark steps: every pair ΔE ≥ 15 for normal vision on the dark
+     surface, and ≥ 11.5 from the late red and the gray. Color-blind
+     separation is weak here (as low as 2), so the crew's name beside its
+     color carries it in dark mode. */
+  --crew-1: #c08509;
+  --crew-2: #3c9cd0;
+  --crew-3: #028661;
+  --crew-4: #c673a1;
+  --crew-5: #8a5100;
+  --crew-6: #00669f;
+  --crew-7: #883898;
+  --crew-8: #9e71ff;
   --viz-up:    #34d399;  /* emerald-400 — reads on dark, always with ▲ */
   --viz-down:  #fb7185;  /* rose-400 — always with ▼ */
   --color-text: #e8ebf0;

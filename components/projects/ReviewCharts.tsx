@@ -34,7 +34,11 @@ const WAIT = "var(--state-held)";
 const OPEN = "var(--color-main)";
 const WORK = "var(--color-text-muted)";
 const NOBODY = "color-mix(in srgb, var(--color-text) 22%, var(--color-surface))";
+/** The gap of ready jobs nobody was on, under the lines: a gray that reads. */
+const NOBODY_GAP = "color-mix(in srgb, var(--color-text) 18%, var(--color-surface))";
 const LATER = "color-mix(in srgb, var(--color-text) 9%, var(--color-surface))";
+/** Ready work nobody was on, as a bar: a solid gray that reads (3:1). */
+const IDLE_FILL = "color-mix(in srgb, var(--color-text) 55%, var(--color-surface))";
 const H = 3_600_000;
 
 /** The width a box has, kept up to date. */
@@ -61,12 +65,8 @@ const jobName = (j: { name: string; order: string }) => {
 
 // ─── Where the late hours went ─────────────────────────────────────
 
-/** The finding that explains the most hours: the one accent. */
-const LEAD = "var(--color-main)";
-/** Every other piece: one gray that reads on a sheet (3:1, both themes). */
-const PIECE = "var(--color-border-control)";
-/** What the records don't explain: the same gray, hatched, with its edge. */
-const UNEXPLAINED: React.CSSProperties = { background: `repeating-linear-gradient(135deg, ${PIECE} 0 3px, var(--color-surface) 3px 6px)`, boxShadow: `inset 0 0 0 1px ${PIECE}` };
+/** Late hours: the late red of the schedules, one color for every cause. */
+const LATE_FILL = "var(--state-overdue)";
 type Seg = LateBar["segs"][number];
 
 /** Why a piece went, in the record's own words. A finding written on the
@@ -82,56 +82,59 @@ export function causeWords(seg: Seg, f: Pick<Finding, "source" | "title" | "draf
   if (f.source !== "job" || f.title !== f.drafted.title) return f.title;
   const said = (f.proof || f.observation.split("\n")[0] || "").trim().replace(/\.$/, "");
   const on = f.title.split(" - ")[0].trim() || f.title;
-  return said ? `“${said}”, written on ${on}` : `Written on ${f.title}`;
+  return said ? `“${said}” (from a note on ${on})` : `From a note on ${f.title}`;
 }
 
 export function LateHours({ bars, late, onPick, findings = [] }: { bars: LateBar[]; late: number; onPick: (key: string) => void; findings?: Finding[] }) {
-  // Each cause is written on its own bar's row: nothing to match by color.
-  // The finding that explains the most hours (over every bar) is the one
-  // accent; the rest one gray; what the records don't explain is hatched.
-  const totals = new Map<string, number>();
-  for (const b of bars) for (const x of b.segs) if (x.key) totals.set(x.key, (totals.get(x.key) ?? 0) + x.hours);
-  const lead = [...totals.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  // Every bar is out of the whole late finish: its track is the late hours,
+  // its fill its share ("24 h of 33.5 h"), so a full bar would mean all of
+  // it. One color, the late red of the schedules; the cause is written on
+  // the row, never told by color.
   const byKey = new Map(findings.map((f) => [f.key, f]));
-  const fill = (k: string | null): React.CSSProperties => (k == null ? UNEXPLAINED : { background: k === lead ? LEAD : PIECE });
-  const why = (x: Seg) => causeWords(x, x.key ? byKey.get(x.key) : undefined);
-  const max = Math.max(1, ...bars.map((b) => b.hours));
+  const why = (x: Seg) => (x.key ? causeWords(x, byKey.get(x.key)) : !x.title ? "No reason recorded" : /not explained|no reason/i.test(x.title) ? x.title : `${x.title} (no reason recorded)`);
+  const total = Math.max(late, ...bars.map((b) => b.hours), 0.1);
   const rowBtn = "block w-[calc(100%+1rem)] text-left rounded-md -mx-2 px-2 py-1.5 pointer-coarse:min-h-11 hover:bg-[var(--color-surface-2)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]";
   const bar = (b: LateBar) => (
-    <span role="img" aria-label={`${b.label}: ${b.hours} h. ${b.segs.map((x) => `${x.hours} h, ${why(x)}`).join("; ")}`} className="mt-1.5 flex gap-[2px] h-4" style={{ width: `${Math.max(2, (b.hours / max) * 100)}%` }}>
-      {b.segs.map((x, k) => <span key={k} aria-hidden className="h-full rounded-[4px]" style={{ flexGrow: x.hours, flexBasis: 0, minWidth: 3, ...fill(x.key) }} />)}
+    <span role="img" aria-label={`${b.label}: ${b.hours} h of the ${late} h late. ${b.segs.map((x) => `${x.hours} h, ${why(x)}`).join("; ")}`} className="relative mt-1.5 block h-4 rounded-[4px]" style={{ background: "var(--viz-track)" }}>
+      <span aria-hidden className="absolute inset-y-0 left-0 flex gap-[2px]" style={{ width: `${Math.max(1.5, (b.hours / total) * 100)}%` }}>
+        {b.segs.map((x, k) => <span key={k} className="h-full rounded-[4px]" style={{ flexGrow: x.hours, flexBasis: 0, minWidth: 3, background: LATE_FILL }} />)}
+      </span>
     </span>
   );
+  const head = (b: LateBar) => <><b className="font-medium">{b.label}</b> · <b className="font-medium tabular-nums">{b.hours} h</b> <span className="text-[var(--color-text-muted)] tabular-nums">of {late} h</span></>;
   return (
-    <ul className="divide-y divide-[var(--color-border)]" aria-label={`Where the ${late} h went`} data-late-hours>
-      {bars.map((b, i) => {
-        const one = b.segs.length === 1 ? b.segs[0] : null;
-        // One cause: the whole row says it, and goes to its finding.
-        if (one) {
-          const body = (
-            <>
-              <span className="block text-body text-[var(--color-text)]"><b className="font-medium">{b.label}</b> · <b className="font-medium tabular-nums">{b.hours} h</b> · <span className={one.key ? "" : "text-[var(--color-text-muted)]"}>{why(one)}</span></span>
+    <div>
+      <p className="mb-1 text-caption text-[var(--color-text-muted)]">Each bar is out of the whole {late} h late; together they add up to it.</p>
+      <ul className="divide-y divide-[var(--color-border)]" aria-label={`Where the ${late} h went`} data-late-hours>
+        {bars.map((b, i) => {
+          const one = b.segs.length === 1 ? b.segs[0] : null;
+          // One cause: the whole row says it, and goes to its finding.
+          if (one) {
+            const body = (
+              <>
+                <span className="block text-body text-[var(--color-text)]">{head(b)} · <span className={one.key ? "" : "text-[var(--color-text-muted)]"}>{why(one)}</span></span>
+                {bar(b)}
+              </>
+            );
+            return <li key={i} className="py-1">{one.key ? <button type="button" onClick={() => onPick(one.key!)} className={rowBtn}>{body}</button> : <div className="py-1.5">{body}</div>}</li>;
+          }
+          // Split among causes: the total once, then each cause under the
+          // bar, in the order its pieces run left to right.
+          return (
+            <li key={i} className="py-2">
+              <span className="block text-body text-[var(--color-text)]">{head(b)}</span>
               {bar(b)}
-            </>
+              <ol className="mt-1">
+                {b.segs.map((x, k) => {
+                  const line = <span className="flex items-start gap-2 text-body"><span className="shrink-0 tabular-nums text-[var(--color-text-muted)]">{k + 1}.</span><span className="min-w-0"><b className="font-medium tabular-nums">{x.hours} h</b> · <span className={x.key ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}>{why(x)}</span></span></span>;
+                  return <li key={k}>{x.key ? <button type="button" onClick={() => onPick(x.key!)} className={rowBtn}>{line}</button> : <div className="py-1.5">{line}</div>}</li>;
+                })}
+              </ol>
+            </li>
           );
-          return <li key={i} className="py-1">{one.key ? <button type="button" onClick={() => onPick(one.key!)} className={rowBtn}>{body}</button> : <div className="py-1.5">{body}</div>}</li>;
-        }
-        // Split among causes: the total once, then each cause under the
-        // bar, left to right, with its hours.
-        return (
-          <li key={i} className="py-2">
-            <span className="block text-body text-[var(--color-text)]"><b className="font-medium">{b.label}</b> · <b className="font-medium tabular-nums">{b.hours} h</b></span>
-            {bar(b)}
-            <ul className="mt-1">
-              {b.segs.map((x, k) => {
-                const line = <span className="flex items-start gap-2 text-body"><span aria-hidden className="mt-[5px] w-3 h-3 rounded-[3px] shrink-0" style={fill(x.key)} /><span className="min-w-0"><b className="font-medium tabular-nums">{x.hours} h</b> · <span className={x.key ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}>{why(x)}</span></span></span>;
-                return <li key={k}>{x.key ? <button type="button" onClick={() => onPick(x.key!)} className={rowBtn}>{line}</button> : <div className="py-1.5">{line}</div>}</li>;
-              })}
-            </ul>
-          </li>
-        );
-      })}
-    </ul>
+        })}
+      </ul>
+    </div>
   );
 }
 
@@ -139,7 +142,7 @@ export function LateHours({ bars, late, onPick, findings = [] }: { bars: LateBar
 
 const PAD_L = 28;
 /** Room on the right for the lines' names where they end (wide charts only). */
-const padR = (w: number) => (w >= 480 ? 104 : 10);
+const padR = (w: number) => (w >= 480 ? 16 : 10);
 /** The x scale both the chart and the strip under it share. */
 function scaleOf(L: PartyLoad, w: number) {
   const PAD_R = padR(w);
@@ -160,7 +163,6 @@ export function LoadChart({ load: L, tz }: { load: PartyLoad; tz: string }) {
   const Hh = 200, PT = 10, PB = 26;
   const sc = scaleOf(L, w);
   const PAD_R = padR(w);
-  const ends = w >= 480;
   const top = Math.max(L.planned.n, ...L.series.map((p) => p.open)) + 1;
   const y = (n: number) => PT + (1 - n / top) * (Hh - PT - PB);
   const pts = L.series;
@@ -171,16 +173,14 @@ export function LoadChart({ load: L, tz }: { load: PartyLoad; tz: string }) {
     return d;
   };
   const end = sc.to;
-  const bands = (() => {
-    const out: Array<{ a: number; b: number; kind: "wait" | "nobody" }> = [];
-    pts.forEach((p, i) => {
-      const kind = p.waiting > 0 ? "wait" : p.nobody > 0 ? "nobody" : null;
-      if (!kind) return;
-      const b = i + 1 < pts.length ? pts[i + 1].t : end, last = out[out.length - 1];
-      if (last && last.kind === kind && last.b === p.t) last.b = b; else out.push({ a: p.t, b, kind });
-    });
-    return out;
-  })();
+  // The gap between the two lines, shaded by why the ready jobs weren't
+  // worked: the crew at its planned size or more (waiting for it), or under
+  // it with room (nobody on them).
+  const gaps = pts.flatMap((p, i) => {
+    const kind = p.waiting > 0 ? "wait" as const : p.nobody > 0 ? "nobody" as const : null;
+    if (!kind || p.open <= p.working) return [];
+    return [{ a: p.t, b: i + 1 < pts.length ? pts[i + 1].t : end, kind, open: p.open, working: p.working }];
+  });
   const days = midnights(sc.from, sc.to, tz);
   const ticks = Array.from({ length: top + 1 }, (_, i) => i).filter((i) => top <= 8 || i % 2 === 0);
   const cur = hover == null ? null : [...pts].reverse().find((p) => p.t <= hover) ?? pts[0];
@@ -190,23 +190,19 @@ export function LoadChart({ load: L, tz }: { load: PartyLoad; tz: string }) {
     setHover(sc.from + ((px - PAD_L) / Math.max(1, w - PAD_L - PAD_R)) * (sc.to - sc.from));
   };
   const P = L.party, n = L.planned.n;
-  // Each line named at its end, in its color, nudged apart so none overlap.
-  const last = pts[pts.length - 1];
-  const endLabels = (() => {
-    if (!ends || !last) return [];
-    const xs = [
-      { key: "open", y: y(last.open), text: `Ready ${last.open}`, color: OPEN, bold: true },
-      { key: "work", y: y(last.working), text: `Worked ${last.working}`, color: WORK, bold: false },
-      { key: "plan", y: y(n), text: `Planned ${n}`, color: "var(--color-text-muted)", bold: false },
-    ].sort((a, b) => a.y - b.y);
-    for (let i = 1; i < xs.length; i++) if (xs[i].y - xs[i - 1].y < 13) xs[i].y = xs[i - 1].y + 13;
-    return xs;
-  })();
   return (
     <div ref={ref} className="relative" data-load-chart={P}>
+      {/* The key first, so the chart is read knowing what each mark is. */}
+      <ul className="mb-1.5 flex flex-wrap gap-x-4 gap-y-1 text-caption text-[var(--color-text-muted)]">
+        <li className="inline-flex items-center gap-1.5"><span aria-hidden className="w-4 h-[3px] rounded-full" style={{ background: OPEN }} /><span className="text-[var(--color-text)]">Jobs ready to work</span></li>
+        <li className="inline-flex items-center gap-1.5"><span aria-hidden className="w-4 h-[3px] rounded-full" style={{ background: WORK }} /><span className="text-[var(--color-text)]">Jobs being worked</span></li>
+        <li className="inline-flex items-center gap-1.5"><span aria-hidden className="w-4 border-t-2 border-dashed border-[var(--color-text-muted)]" /><span className="text-[var(--color-text)]">Planned at once: {n}</span></li>
+        <li className="inline-flex items-center gap-1.5"><span aria-hidden className="w-3 h-3 rounded-[2px]" style={{ background: WAIT, opacity: 0.55 }} />Gap: ready jobs waiting, {P} working {n} or more</li>
+        <li className="inline-flex items-center gap-1.5"><span aria-hidden className="w-3 h-3 rounded-[2px]" style={{ background: NOBODY_GAP }} />Gap: ready jobs nobody was on, {P} working fewer than {n}</li>
+      </ul>
       {w > 0 && (
         <svg width={w} height={Hh} role="img" aria-label={`${P}: jobs ready and being worked over the event, against ${n} planned at once. Most ready at once: ${L.peak.open}.`}>
-          {bands.map((b, i) => <rect key={i} x={sc.x(b.a)} y={PT} width={Math.max(1, sc.x(b.b) - sc.x(b.a))} height={Hh - PT - PB} fill={b.kind === "wait" ? WAIT : NOBODY} opacity={b.kind === "wait" ? 0.16 : 0.45} />)}
+          {gaps.map((b, i) => <rect key={i} x={sc.x(b.a)} y={y(b.open)} width={Math.max(1, sc.x(b.b) - sc.x(b.a))} height={Math.max(0, y(b.working) - y(b.open))} fill={b.kind === "wait" ? WAIT : NOBODY_GAP} opacity={b.kind === "wait" ? 0.55 : 1} />)}
           {ticks.map((i) => <g key={i}><line x1={PAD_L} x2={w - PAD_R} y1={y(i)} y2={y(i)} stroke="var(--viz-track)" strokeWidth={1} /><text x={PAD_L - 6} y={y(i) + 3.5} fontSize={11} textAnchor="end" fill="var(--color-text-muted)">{i}</text></g>)}
           {days.map((t) => <line key={t} x1={sc.x(t)} x2={sc.x(t)} y1={PT} y2={Hh - PB} stroke="var(--viz-track)" strokeWidth={1} />)}
           {[sc.from, ...days].map((t, i, all) => {
@@ -224,7 +220,6 @@ export function LoadChart({ load: L, tz }: { load: PartyLoad; tz: string }) {
             const right = px < w - PAD_R - 110;
             return <text x={right ? px + 8 : px - 8} y={Math.max(PT + 9, py - 7)} fontSize={11} fontWeight={600} textAnchor={right ? "start" : "end"} fill={OPEN}>Most ready: {L.peak.open}</text>;
           })()}
-          {endLabels.map((l) => <text key={l.key} x={w - PAD_R + 6} y={l.y + 4} fontSize={11} fontWeight={l.bold ? 600 : 400} fill={l.color}>{l.text}</text>)}
           {cur && hover != null && <line x1={sc.x(hover)} x2={sc.x(hover)} y1={PT} y2={Hh - PB} stroke="var(--color-text-muted)" strokeWidth={1} />}
           <rect x={PAD_L} y={PT} width={Math.max(1, w - PAD_L - PAD_R)} height={Hh - PT - PB} fill="transparent" onPointerMove={onMove} onPointerDown={onMove} onPointerLeave={() => setHover(null)} />
         </svg>
@@ -239,16 +234,6 @@ export function LoadChart({ load: L, tz }: { load: PartyLoad; tz: string }) {
           <span className="block text-[var(--color-text-muted)]">Planned at once: {n}</span>
         </div>
       )}
-      <ul className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-caption text-[var(--color-text-muted)]">
-        {/* The lines are named at their ends on a wide chart; on a narrow one, here. */}
-        {!ends && <>
-          <li className="inline-flex items-center gap-1.5"><span aria-hidden className="w-4 h-0.5 rounded-full" style={{ background: OPEN }} />Ready (open)</li>
-          <li className="inline-flex items-center gap-1.5"><span aria-hidden className="w-4 h-0.5 rounded-full" style={{ background: WORK }} />Being worked</li>
-          <li className="inline-flex items-center gap-1.5"><span aria-hidden className="w-4 border-t-[1.5px] border-dashed border-[var(--color-text-muted)]" />Planned at once ({n})</li>
-        </>}
-        <li className="inline-flex items-center gap-1.5"><span aria-hidden className="w-3 h-3 rounded-[2px]" style={{ background: WAIT, opacity: 0.35 }} />Jobs waiting for {P}</li>
-        <li className="inline-flex items-center gap-1.5"><span aria-hidden className="w-3 h-3 rounded-[2px]" style={{ background: NOBODY }} />Ready, nobody on it</li>
-      </ul>
     </div>
   );
 }
@@ -263,6 +248,11 @@ export function LoadStrip({ load: L, jobs, held, tz }: { load: PartyLoad; jobs: 
   const P = L.party;
   return (
     <div ref={ref} data-load-strip={P}>
+      {/* The dates the strips run on (the chart's own scale). */}
+      <div aria-hidden className="relative h-4 mb-1 text-caption text-[var(--color-text-muted)]" style={{ marginLeft: PAD_L, marginRight: PAD_R }}>
+        {midnights(sc.from, sc.to, tz).map((t, i, all) => (i % Math.max(1, Math.ceil(all.length / Math.max(2, Math.floor((w || 600) / 90)))) ? null
+          : <span key={t} className="absolute top-0 border-l border-[var(--color-border)] pl-1 whitespace-nowrap" style={{ left: left(t) }}>{fmtInTz(t, tz, { weekday: "short", month: "numeric", day: "numeric" })}</span>))}
+      </div>
       <ul className="space-y-2.5">
         {jobs.map((j) => {
           const after = held.filter((h) => h.by === j.id);
@@ -294,17 +284,21 @@ export function LoadStrip({ load: L, jobs, held, tz }: { load: PartyLoad; jobs: 
 }
 
 /** Ready work with nobody on it, by party and step: one bar each. */
-export function IdleBars({ groups }: { groups: Array<{ party: string; step: string; jobs: LoadJob[]; hours: number }> }) {
-  const max = Math.max(1, ...groups.map((g) => g.hours));
+export function IdleBars({ groups, total }: { groups: Array<{ party: string; step: string; jobs: LoadJob[]; hours: number }>; total: number }) {
+  // Each bar is out of the whole (its track is all the hours ready work sat),
+  // so a long bar is a big share, never "full".
+  const max = Math.max(0.1, total, ...groups.map((g) => g.hours));
   return (
     <ul className="space-y-2" data-idle-bars>
       {groups.map((g, i) => (
         <li key={i} title={`${g.party}, ${g.step}: ${g.jobs.length} job${g.jobs.length === 1 ? "" : "s"}, ${g.hours} h`}>
           <div className="flex items-baseline gap-2 text-caption min-w-0">
             <span className="min-w-0 truncate text-[var(--color-text)]"><b>{g.party}</b> · {g.step} <span className="text-[var(--color-text-muted)]">({g.jobs.length} job{g.jobs.length === 1 ? "" : "s"})</span></span>
-            <span className="ml-auto shrink-0 tabular-nums font-medium text-[var(--color-text)]">{g.hours} h</span>
+            <span className="ml-auto shrink-0 tabular-nums text-[var(--color-text)]"><b className="font-medium">{g.hours} h</b> <span className="text-[var(--color-text-muted)]">of {total} h</span></span>
           </div>
-          <div className="mt-0.5 h-2.5 rounded-md" style={{ width: `${Math.max(2, (g.hours / max) * 100)}%`, background: NOBODY }} />
+          <div className="relative mt-0.5 h-2.5 rounded-md" style={{ background: "var(--viz-track)" }}>
+            <div className="absolute inset-y-0 left-0 rounded-md" style={{ width: `${Math.max(1.5, (g.hours / max) * 100)}%`, background: IDLE_FILL }} />
+          </div>
         </li>
       ))}
     </ul>

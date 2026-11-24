@@ -49,11 +49,11 @@ import HelpTooltip from "@/components/ui/HelpTooltip";
 /** Width of one shift on the chart: fitted to the space it has (see the
  *  view), between 14 and 56 px. */
 const PxCtx = React.createContext(34);
-/** Crew colors: the chart's categorical set (globals.css), so each crew
- *  reads apart; a step with no crew named is neutral gray. */
-const PALETTE = ["var(--viz-cat-1)", "var(--viz-cat-2)", "var(--viz-cat-3)", "var(--viz-cat-4)", "var(--viz-cat-5)", "var(--viz-cat-6)", "var(--viz-cat-7)",
-  // Two more, darker, for a job with more crews than that.
-  "color-mix(in srgb, var(--viz-cat-2) 55%, var(--color-text))", "color-mix(in srgb, var(--viz-cat-6) 55%, var(--color-text))"];
+/** Crew colors (globals.css --crew-*): eight hues validated apart for
+ *  color-blind and normal vision, in a fixed order; a crew past the eighth
+ *  is gray, and every crew is named beside its color. */
+const OFFSITE_FILL = "repeating-linear-gradient(135deg, var(--viz-neutral) 0 4px, color-mix(in srgb, var(--viz-neutral) 35%, var(--color-surface)) 4px 7px)";
+const PALETTE = ["var(--crew-1)", "var(--crew-2)", "var(--crew-3)", "var(--crew-4)", "var(--crew-5)", "var(--crew-6)", "var(--crew-7)", "var(--crew-8)"];
 const r1 = (n: number) => Math.round(n * 10) / 10;
 
 interface Props {
@@ -143,12 +143,20 @@ export default function AsBuiltScheduleView(p: Props) {
   // What could still move it: found work, jobs that ran long.
   const risks = useMemo(() => (work && plan ? planRisks({ built, work, milestones: p.milestones, tz, times, changes: applied }, plan, { max: 12 }) : []), [work, plan, built, p.milestones, tz, times, applied]);
 
+  // The eight crew colors go to the crews on the schedule first, the most
+  // hours first, then any other crew in the record; past eight a crew gets
+  // a striped one of the eight, never the gray of "Not set". Each crew is
+  // named beside its color everywhere it shows.
   const crews = useMemo(() => {
-    const names = [...new Set([...(work?.crews.map((c) => c.crew) ?? []), ...Object.keys(plan?.load ?? {})])];
-    const named = names.filter((n) => n !== "Not set" && n !== "Off site");
-    return new Map(named.map((n, i) => [n, PALETTE[i % PALETTE.length]]));
+    const hours = new Map<string, number>();
+    for (const a of plan?.acts ?? []) hours.set(a.crew, (hours.get(a.crew) ?? 0) + a.hours);
+    for (const c of work?.crews ?? []) if (!hours.has(c.crew)) hours.set(c.crew, -1);
+    const named = [...hours.keys()].filter((n) => n !== "Not set" && n !== "Off site")
+      .sort((a, b) => hours.get(b)! - hours.get(a)! || a.localeCompare(b));
+    return new Map(named.map((n, i) => [n, PALETTE[i] ?? `repeating-linear-gradient(135deg, ${PALETTE[i % PALETTE.length]} 0 4px, var(--color-surface) 4px 6px)`]));
   }, [work, plan]);
-  const colorOf = (c: string) => crews.get(c) ?? "var(--viz-neutral)";
+  // Off site is no crew: gray striped, so it never reads as "Not set".
+  const colorOf = (c: string) => (c === "Off site" ? OFFSITE_FILL : crews.get(c) ?? "var(--viz-neutral)");
 
   const saveChanges = useCallback(async (next: PlanChange[]) => {
     if (!data) return;
@@ -368,7 +376,8 @@ const ACTUAL = "var(--color-main)";
 const LATE = "var(--state-overdue)";
 /** Stripes laid over the bar: the shifts it waited with nothing logged. */
 const WAITED: React.CSSProperties = { background: "repeating-linear-gradient(135deg, transparent 0 3px, var(--color-surface) 3px 6px)" };
-const WAITED_KEY: React.CSSProperties = { background: `repeating-linear-gradient(135deg, ${ACTUAL} 0 3px, var(--color-surface) 3px 6px)` };
+/** The key shows the stripes as they appear: on a blue or a red bar. */
+const WAITED_KEY: React.CSSProperties = { background: `repeating-linear-gradient(135deg, transparent 0 3px, var(--color-surface) 3px 6px), linear-gradient(90deg, ${ACTUAL} 50%, ${LATE} 50%)`, width: 24 };
 /** As a schedule reads (P6, Microsoft Project): work order, actual start,
  *  planned finish, actual finish, late by, waited; the bars to the right. */
 const COLS = "grid-cols-[minmax(13rem,1.5fr)_5.75rem_5.75rem_5.75rem_6rem_4rem_minmax(0,2.5fr)]";
@@ -488,7 +497,7 @@ function BuiltView(p: BuiltProps & { mode: "orders" | "shifts"; onMode: (m: "ord
       {p.mode === "shifts" ? <ShiftGrid {...p} /> : (
         <>
           <div className="flex flex-wrap items-center gap-2">
-            <Legend items={[[PLAN_BOX, "Plan"], [{ background: ACTUAL }, "As built"], [{ background: LATE }, "Past its own planned finish"], [WAITED_KEY, "Shifts waited, nothing logged"], [{ borderLeft: "2px solid var(--color-text)", width: 2 }, blocks.some((x) => x.name) ? "The phase's planned finish" : "Planned finish"]]} />
+            <Legend items={[[PLAN_BOX, "Plan"], [{ background: ACTUAL }, "As built"], [{ background: LATE }, "Past its own planned finish"], [WAITED_KEY, "Striped, blue or red: shifts it sat open with nothing logged"], [{ borderLeft: "2px solid var(--color-text)", width: 2 }, blocks.some((x) => x.name) ? "The phase's planned finish" : "Planned finish"]]} />
             <HelpTooltip>{NIGHTS}</HelpTooltip>
           </div>
           {blocks.map((b, bi) => {
@@ -1228,7 +1237,7 @@ function NextView(p: Props & { boxW: number; built: ReturnType<typeof buildAsBui
                         {size && first >= 0 && (
                           // The size, flat from its first shift to its last.
                           <span aria-hidden className="absolute top-1 h-[16px] rounded-sm border-t-2 text-caption font-medium leading-[13px] pl-1 whitespace-nowrap overflow-hidden text-[var(--color-text)] bg-[var(--color-surface-2)]"
-                            style={{ left: first * PX + 1, width: Math.max(PX - 2, (last - first + 1) * PX - 2), borderColor: p.colorOf(crew) }} title={`${crew}: ${sizeWords(size)}, ${days}`}>{sizeWords(size)}</span>
+                            style={{ left: first * PX + 1, width: Math.max(PX - 2, (last - first + 1) * PX - 2), borderColor: p.colorOf(crew).startsWith("repeating") ? "var(--viz-neutral)" : p.colorOf(crew) }} title={`${crew}: ${sizeWords(size)}, ${days}`}>{sizeWords(size)}</span>
                         )}
                         {sub.map((w, i) => {
                           const n = jobs[i] ?? 0;
@@ -1313,7 +1322,7 @@ function NextView(p: Props & { boxW: number; built: ReturnType<typeof buildAsBui
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-caption text-[var(--color-text-muted)]" data-crew-key>
         <span className="font-medium text-[var(--color-text)]">Bar color = crew:</span>
-        {[...new Set(plan.acts.map((a) => a.crew))].filter((c) => c !== "Off site").sort().map((c) => <span key={c} className="inline-flex items-center gap-1"><span aria-hidden className="inline-block w-3 h-3 rounded-sm" style={{ background: p.colorOf(c) }} />{c}</span>)}
+        {[...new Set(plan.acts.map((a) => a.crew))].sort((a, b) => Number(a === "Off site") - Number(b === "Off site") || a.localeCompare(b)).map((c) => <span key={c} className="inline-flex items-center gap-1"><span aria-hidden className="inline-block w-3 h-3 rounded-sm" style={{ background: p.colorOf(c) }} />{c}</span>)}
       </div>
       <Legend items={[[{ background: "var(--color-surface)", boxShadow: "0 0 0 1.5px var(--state-held)" }, "Not in this year's plan"], [{ background: "color-mix(in srgb, var(--state-overdue) 12%, var(--color-surface))", boxShadow: "0 0 0 1.5px var(--state-overdue)" }, "Sets the finish"], [{ borderLeft: "2px solid var(--state-overdue)", width: 2 }, "This year's planned finish"], [{ borderLeft: "2px dashed var(--color-main)", width: 2 }, "Suggested finish"]]} />
 
