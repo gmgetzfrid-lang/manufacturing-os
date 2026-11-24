@@ -53,6 +53,7 @@ import EventOrganization from "@/components/projects/EventOrganization";
 import ProjectCoach from "@/components/projects/ProjectCoach";
 import ProjectNeeds from "@/components/projects/ProjectNeeds";
 import ScopeList from "@/components/projects/setup/ScopeList";
+import { loadScope } from "@/lib/scopeStore";
 import SetupHost from "@/components/projects/SetupHost";
 import { isWatching, watch, unwatch } from "@/lib/subscriptions";
 import { openProjectReport } from "@/lib/projectReport";
@@ -453,6 +454,17 @@ export default function ProjectDetailPage() {
     } finally { setTransitionBusy(false); }
   };
 
+  // A project in planning (no schedule yet): where its scope stands, from the
+  // work order list (lib/scopeStore), for the header.
+  const unscheduled0 = !!stepRows && !!standings && standings.every((s) => s.state === "no schedule");
+  const [planning, setPlanning] = useState<{ wos: number; drafted: number; coming: number } | null>(null);
+  useEffect(() => {
+    if (!unscheduled0 || !project?.id) return;
+    let on = true;
+    void loadScope(project.id).then((s) => { if (on) setPlanning(s ? { wos: s.items.length, drafted: s.items.filter((x) => x.drafted).length, coming: s.coming.length } : null); }, () => undefined);
+    return () => { on = false; };
+  }, [unscheduled0, project?.id, tab]);
+
   const goBack = () => { if (window.history.length > 1) router.back(); else router.push("/projects"); };
 
   if (loading) return (
@@ -514,6 +526,14 @@ export default function ProjectDetailPage() {
   else if (project.status === "archived") answer = "Archived.";
   else if (project.status === "completed") { answer = workDone ? "Project complete." : "Marked complete."; facts = [finishFact(true), stepsFact]; }
   else if (!standings || !stepRows) answer = project.name;
+  else if (noSchedule && planning) {
+    // Planning from the work order list: the scope and the packages, until
+    // there's a schedule to track.
+    answer = `Planning: ${planning.wos} work order${planning.wos === 1 ? "" : "s"}.`;
+    sub = planning.coming ? `Scope still coming from ${planning.coming}. Next: draft the packages.` : "Next: draft the packages.";
+    facts = [{ label: "Packages drafted", value: `${planning.drafted} of ${planning.wos}`, tone: planning.drafted < planning.wos ? "warn" : undefined, hero: true },
+      ...(planning.coming ? [{ label: "Still adding scope", value: planning.coming }] : []), { label: "Schedule", value: "Not yet" }];
+  }
   else if (noSchedule) { answer = "No schedule yet."; sub = "Import it on Plan to track the work."; }
   else if (workDone) {
     const left = close ? close.open.length : null;
