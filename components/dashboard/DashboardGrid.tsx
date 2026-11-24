@@ -38,6 +38,7 @@ import { moveElement, resizeElement, firstFreeSlot, bottomRow } from "@/lib/dash
 import { WIDGET_CATALOG } from "./widgets";
 import WidgetFrame from "./WidgetFrame";
 import AddWidgetModal from "./AddWidgetModal";
+import { plainDate } from "@/lib/asks";
 import WidgetSettingsModal from "./WidgetSettingsModal";
 
 // Grid geometry. ROW_UNIT is the height of one `h` unit; GAP is the grid gap.
@@ -288,7 +289,9 @@ export default function DashboardGrid() {
     if (failed) return <>The list of what waits on you didn&apos;t load. {friendlyError(attnError)}</>;
     if (!lead) return attnLoading ? null : "No requests, reviews or alerts are waiting on you.";
     const todo = lead.todo && !/^[A-Z]{2}/.test(lead.todo) ? lead.todo.charAt(0).toLowerCase() + lead.todo.slice(1) : lead.todo;
-    return <>First up: {lead.ref ? <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{lead.ref} </span> : null}<span className="text-[var(--color-text)]">{lead.name}</span>{todo ? `, ${todo}` : ""}.</>;
+    // When it has a date, say it: "overdue since Nov 12", "due Nov 29".
+    const when = lead.due ? (lead.overdue ? `, overdue since ${plainDate(lead.due)}` : `, due ${plainDate(lead.due)}`) : "";
+    return <>First up: {lead.ref ? <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{lead.ref} </span> : null}<span className="text-[var(--color-text)]">{lead.name}</span>{todo ? `, ${todo}` : ""}{when}.</>;
   })();
   const showFacts = !failed && !(attnLoading && attnCount === 0);
 

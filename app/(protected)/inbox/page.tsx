@@ -33,7 +33,7 @@ import { formatAgo, exportInboxCsv } from "@/components/cockpit/CommandDeck";
 import { AttentionFeed, type AttnFilter } from "@/components/cockpit/AttentionFeed";
 import GroupedTable, { type Group } from "@/components/cockpit/GroupedTable";
 import { buildNeeds, needsFacts } from "@/components/cockpit/needsYou";
-import { withAsk } from "@/lib/asks";
+import { withAsk, plainDate } from "@/lib/asks";
 import { StatusTag, rowBtn, iconBtn, link, humanDate, sheet, SectionHead } from "@/components/cockpit/ui";
 import { useNotificationsSeen, readSeen } from "@/components/notifications/seen";
 
@@ -333,7 +333,7 @@ export default function InboxPage() {
       <PageHero
         kicker="Home · Inbox"
         title={answer}
-        sub={lead ? <>First up: {lead.ref ? <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{lead.ref} </span> : null}<span className="text-[var(--color-text)]">{lead.name}</span>.</> : null}
+        sub={lead ? <>First up: {lead.ref ? <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{lead.ref} </span> : null}<span className="text-[var(--color-text)]">{lead.name}</span>{lead.todo ? `, ${/^[A-Z]{2}/.test(lead.todo) ? lead.todo : lead.todo.charAt(0).toLowerCase() + lead.todo.slice(1)}` : ""}{lead.due ? (lead.overdue ? `, overdue since ${plainDate(lead.due)}` : `, due ${plainDate(lead.due)}`) : ""}.</> : null}
         // One large number: what is late when anything is, else what waits
         // on you. The others small; zeros muted.
         facts={[
