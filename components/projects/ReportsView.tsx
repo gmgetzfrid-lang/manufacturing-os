@@ -115,6 +115,10 @@ export default function ReportsView(p: Props) {
   const setSel = useCallback((id: ReportId) => { lastOpen.set(projectId, id); setSelState(id); }, [projectId]);
   // Phone: the report open full screen (the list behind it).
   const [phoneOpen, setPhoneOpen] = useState(() => askedOpen.has(projectId));
+  // A schedule needs the width: on the two schedule reports the list of
+  // reports folds away behind "Reports" (on a phone it already does).
+  const wideReport = sel === "asbuilt" || sel === "schedule";
+  const [listOpen, setListOpen] = useState(false);
   useEffect(() => { askedOpen.delete(projectId); }, [projectId]);
   // The shift (turnover, hourly log, time log); null: the current one.
   const [shiftPick, setShiftPick] = useState<ShiftPick | null>(null);
@@ -635,6 +639,11 @@ export default function ReportsView(p: Props) {
         <button type="button" onClick={() => setPhoneOpen(false)} className="sm:hidden mb-2 inline-flex items-center gap-1 text-body text-[var(--color-accent-text)] hover:underline">
           <ChevronLeft className="w-4 h-4" /> Reports
         </button>
+        {wideReport && !listOpen && (
+          <button type="button" onClick={() => setListOpen(true)} className="hidden sm:inline-flex mb-2 items-center gap-1 min-h-10 text-body text-[var(--color-accent-text)] hover:underline">
+            <ChevronLeft className="w-4 h-4" /> All reports
+          </button>
+        )}
         {/* What it is, one tap away: no paragraph between the title and the report. */}
         <div className="flex items-center gap-1.5">
           <h2 className="text-reading font-medium text-[var(--color-text)]">{meta.name}</h2>
@@ -685,7 +694,7 @@ export default function ReportsView(p: Props) {
     <div className="rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] sm:flex min-h-[520px]">
       {/* The update a meeting sends, made off screen for the preview. */}
       {meeting && <ShiftReportView key={sel} {...base} docOnly meetingFixed={meeting} shiftPick={meeting === "turnover" ? shiftPick : undefined} onDoc={setDoc} />}
-      <nav aria-label="Reports" className={`${phoneOpen ? "hidden sm:block" : ""} sm:w-[280px] shrink-0 sm:border-r border-[var(--color-border)] py-3`}>
+      <nav aria-label="Reports" className={`${phoneOpen ? "hidden" : ""} ${wideReport && !listOpen ? "sm:hidden" : "sm:block"} sm:w-[280px] shrink-0 sm:border-r border-[var(--color-border)] py-3`}>
         {[{ head: "Reports", sub: "filled in from the project", items: REPORTS.filter((r) => !r.form && (r.id !== "phase" || ph.phases.length > 0)) }, { head: "Forms", sub: "blank, filled in by hand", items: REPORTS.filter((r) => r.form) }].map((g) => (
           <div key={g.head} className="mb-2">
             <div className="px-4 pt-1 pb-1">
@@ -695,7 +704,7 @@ export default function ReportsView(p: Props) {
             {g.items.map((r) => {
               const on = r.id === sel;
               return (
-                <button key={r.id} type="button" aria-current={on ? "page" : undefined} onClick={() => { setSel(r.id); setPhoneOpen(true); }}
+                <button key={r.id} type="button" aria-current={on ? "page" : undefined} onClick={() => { setSel(r.id); setPhoneOpen(true); setListOpen(false); }}
                   className={`w-full text-left px-4 py-2 border-l-[3px] ${on ? "sm:border-[var(--color-main)] sm:bg-[var(--color-surface-2)] border-transparent" : "border-transparent hover:bg-[var(--color-surface-2)]"}`}>
                   <span className="block text-reading font-medium text-[var(--color-text)]">{r.name}</span>
                   <span className="block text-body text-[var(--color-text-muted)] leading-snug">{r.sub}</span>

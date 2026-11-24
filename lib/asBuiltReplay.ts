@@ -921,7 +921,7 @@ export function replayAsBuilt(input: ReplayInput): Replay {
   // What stays as it was.
   const kept: string[] = [];
   if ([...nodes.values()].some((n) => n.how === "as ran" && isShutdown(n.orderName))) kept.push("The shutdown stays as it ran.");
-  if ([...nodes.values()].some((n) => n.how === "start-up")) kept.push("Start-up starts once every work order is done, around the clock, for the shifts it really took.");
+  if ([...nodes.values()].some((n) => n.how === "start-up")) kept.push("Start-up starts once every work order of its phase is done, around the clock, for the shifts it really took.");
   for (const n of nodes.values()) {
     if (n.how === "off site" && n.clockH > 0) kept.push(`${named(n.name, n.orderName)} was off site ${hoursWord(n.clockH)}: kept at that, not before it really went.`);
     for (const x of r.runs.get(n.id) ?? []) if (x.reason && !takes.has(x.id)) kept.push(`${named(n.name, n.orderName)} waited ${plural(x.run.shifts, "shift")}, recorded: "${x.reason.said}". Kept at its real length; the work after it starts no sooner than it really did.`);

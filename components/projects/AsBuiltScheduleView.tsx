@@ -49,7 +49,11 @@ import HelpTooltip from "@/components/ui/HelpTooltip";
 /** Width of one shift on the chart: fitted to the space it has (see the
  *  view), between 14 and 56 px. */
 const PxCtx = React.createContext(34);
-const PALETTE = ["var(--color-main)", "color-mix(in srgb, var(--color-text) 72%, var(--color-surface))", "color-mix(in srgb, var(--color-text) 60%, var(--color-surface))"];
+/** Crew colors: the chart's categorical set (globals.css), so each crew
+ *  reads apart; a step with no crew named is neutral gray. */
+const PALETTE = ["var(--viz-cat-1)", "var(--viz-cat-2)", "var(--viz-cat-3)", "var(--viz-cat-4)", "var(--viz-cat-5)", "var(--viz-cat-6)", "var(--viz-cat-7)",
+  // Two more, darker, for a job with more crews than that.
+  "color-mix(in srgb, var(--viz-cat-2) 55%, var(--color-text))", "color-mix(in srgb, var(--viz-cat-6) 55%, var(--color-text))"];
 const r1 = (n: number) => Math.round(n * 10) / 10;
 
 interface Props {
@@ -79,7 +83,8 @@ export default function AsBuiltScheduleView(p: Props) {
   const [data, setData] = useState<{ log: ProgressLogRow[]; notes: MilestoneNote[]; records: Map<string, ShiftRecord>; mp: ManpowerSettings; settings: NextPlanSettings } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  const [cols, setCols] = useState(false);
+  // The dates are columns, as in P6 or Microsoft Project; they can be hidden.
+  const [cols, setCols] = useState(true);
   // As-built: each work order against its own plan, or the shift-by-shift grid.
   const [mode, setMode] = useState<"orders" | "shifts">("orders");
   const [full, setFull] = useState(false);
@@ -140,7 +145,8 @@ export default function AsBuiltScheduleView(p: Props) {
 
   const crews = useMemo(() => {
     const names = [...new Set([...(work?.crews.map((c) => c.crew) ?? []), ...Object.keys(plan?.load ?? {})])];
-    return new Map(names.map((n, i) => [n, PALETTE[i % PALETTE.length]]));
+    const named = names.filter((n) => n !== "Not set" && n !== "Off site");
+    return new Map(named.map((n, i) => [n, PALETTE[i % PALETTE.length]]));
   }, [work, plan]);
   const colorOf = (c: string) => crews.get(c) ?? "var(--viz-neutral)";
 
@@ -191,7 +197,7 @@ export default function AsBuiltScheduleView(p: Props) {
       </div>
       {view === "built"
         ? <BuiltView {...p} cols={cols} built={built} work={work} colorOf={colorOf} changes={changes} onAdd={(c) => void saveChanges([...changes, c])} mode={mode} onMode={setMode} boxW={boxW} />
-        : <NextView {...p} cols={cols} built={built} work={work} notes={data.notes} plan={plan} colorOf={colorOf} changes={changes} applied={applied} check={check} risks={risks} lessons={lessons} skipped={skipped} settings={data.settings} onChanges={(n) => void saveChanges(n)}
+        : <NextView {...p} cols={cols} boxW={boxW} built={built} work={work} notes={data.notes} plan={plan} colorOf={colorOf} changes={changes} applied={applied} check={check} risks={risks} lessons={lessons} skipped={skipped} settings={data.settings} onChanges={(n) => void saveChanges(n)}
             onStaffing={(next) => setData({ ...data, settings: { ...data.settings, staffing: next } })} />}
     </div>
     </PxCtx.Provider>
@@ -286,13 +292,41 @@ function pieces(items: Piece[], x: (t: number) => number, top: number): { h: num
   return { h: Math.max(1, lanes) * 13, nodes };
 }
 
+/** A work order's bar as a schedule draws it: a summary line from its
+ *  first start to its last finish (red when it sets the finish), and on it
+ *  each activity's working shifts in its crew's color, in one lane; where
+ *  two run at once, the later is drawn over. Open the row for each one. */
+function summaryBar(items: Array<{ key: string; parts: Array<[number, number]>; color: string; ring?: string; title: string }>, x: (t: number) => number, crit: boolean): React.ReactNode {
+  const all = items.flatMap((q) => q.parts);
+  if (!all.length) return null;
+  const a = Math.min(...all.map(([s0]) => s0)), b = Math.max(...all.map(([, s1]) => s1));
+  const line = crit ? "var(--state-overdue)" : "color-mix(in srgb, var(--color-text) 70%, var(--color-surface))";
+  const l = x(a), w = Math.max(3, x(b) - l);
+  return (
+    <>
+      <i aria-hidden className="absolute top-[9px] h-[3px] rounded-full" style={{ left: l, width: w, background: line }} />
+      <i aria-hidden className="absolute top-[6px] w-[3px] h-[9px] rounded-sm" style={{ left: l, background: line }} />
+      <i aria-hidden className="absolute top-[6px] w-[3px] h-[9px] rounded-sm" style={{ left: l + w - 3, background: line }} />
+      {items.flatMap((q) => {
+        // A run of back-to-back shifts is one piece.
+        const runs: Array<[number, number]> = [];
+        for (const [s0, s1] of q.parts) { const last = runs[runs.length - 1]; if (last && s0 - last[1] < 60_000) last[1] = s1; else runs.push([s0, s1]); }
+        return runs.map(([s0, s1], i) => {
+          const pl = x(s0), pw = Math.max(3, x(s1) - pl);
+          return <i key={`${q.key}:${i}`} title={q.title} className="absolute top-[18px] h-[14px] rounded-[3px]" style={{ left: pl + 0.5, width: Math.max(2, pw - 1), background: q.color, boxShadow: q.ring ? `0 0 0 1.5px ${q.ring}` : "0 0 0 1px var(--color-surface)" }} />;
+        });
+      })}
+    </>
+  );
+}
+
 /** Fold every work order's steps away, or show them all. */
-function FoldAll({ open, total, onAll }: { open: number; total: number; onAll: (open: boolean) => void }) {
+function FoldAll({ open, total, onAll, hint }: { open: number; total: number; onAll: (open: boolean) => void; hint?: string }) {
   const all = open >= total;
   return (
     <div className="flex flex-wrap items-center gap-2 text-caption text-[var(--color-text-muted)]">
       <button type="button" onClick={() => onAll(!all)} className={btnQuiet}>{all ? <ChevronsDownUp className="w-4 h-4" /> : <ChevronsUpDown className="w-4 h-4" />} {all ? "Fold the steps away" : "Show every step"}</button>
-      <span>Each work order&apos;s bar is its steps, one piece each. Tap a work order to see its steps.</span>
+      <span>{hint ?? "Each work order's bar is its steps, one piece each. Tap a work order to see its steps."}</span>
     </div>
   );
 }
@@ -315,7 +349,8 @@ const cellN = "col-x align-top px-1.5 py-1.5 text-center font-medium text-captio
 // One row per work order: its full name, planned finish, actual finish,
 // how late against its own planned finish, and the shifts it waited; one
 // bar (the plan a gray box, as built solid, the part past its own planned
-// finish red, the shifts it waited hatched). Most late first. Each phase
+// finish red, the shifts it waited hatched). In schedule order (most late
+// first is a choice). Each phase
 // is its own block, on its own dates, with its own planned-finish line.
 // Crews and shift-by-shift marks show when a row is opened.
 
@@ -334,8 +369,9 @@ const LATE = "var(--state-overdue)";
 /** Stripes laid over the bar: the shifts it waited with nothing logged. */
 const WAITED: React.CSSProperties = { background: "repeating-linear-gradient(135deg, transparent 0 3px, var(--color-surface) 3px 6px)" };
 const WAITED_KEY: React.CSSProperties = { background: `repeating-linear-gradient(135deg, ${ACTUAL} 0 3px, var(--color-surface) 3px 6px)` };
-/** Work order, planned finish, actual finish, late by, waited, the bar. */
-const COLS = "grid-cols-[minmax(0,1.6fr)_5.75rem_5.75rem_6.5rem_4.5rem_minmax(0,2.4fr)]";
+/** As a schedule reads (P6, Microsoft Project): work order, actual start,
+ *  planned finish, actual finish, late by, waited; the bars to the right. */
+const COLS = "grid-cols-[minmax(13rem,1.5fr)_5.75rem_5.75rem_5.75rem_6rem_4rem_minmax(0,2.5fr)]";
 const pct = (x: (t: number) => number, a: number, b: number): React.CSSProperties => ({ left: `${x(a)}%`, width: `${Math.max(0.5, x(b) - x(a))}%` });
 /** One shift's mark, a pixel in from each side. */
 const mark = (x: (t: number) => number, a: number, b: number): React.CSSProperties => ({ left: `calc(${x(a)}% + 1px)`, width: `max(2px, calc(${Math.max(0, x(b) - x(a))}% - 2px))` });
@@ -384,10 +420,20 @@ function Track({ b, x, children }: { b: Block; x: (t: number) => number; childre
 function Axis({ b, x, tz, room }: { b: Block; x: (t: number) => number; tz: string; room: number }) {
   const step = Math.max(1, Math.ceil(b.days.length / Math.max(2, Math.floor(room / 64))));
   // Near the right edge a label reads leftward from its line, so it never runs off.
+  // The days labeled: every step-th, and never one that runs into the one
+  // before it (a label is about 52 px).
+  const labels: number[] = [];
+  let lastEnd = -Infinity;
+  for (let i = 0; i < b.days.length; i += step) {
+    const t = b.days[i], px = (x(t) / 100) * room, flip = x(t) > 75;
+    const from = flip ? px - 52 : px;
+    if (from < lastEnd + 4) continue;
+    labels.push(t); lastEnd = flip ? px : px + 52;
+  }
   const at = (t: number) => (x(t) > 75 ? { st: { right: `${100 - x(t)}%` }, thin: "border-r", thick: "border-r-2" } : { st: { left: `${x(t)}%` }, thin: "border-l", thick: "border-l-2" });
   return (
     <div aria-hidden className="relative h-9 overflow-hidden text-caption text-[var(--color-text-muted)]">
-      {b.days.map((t, i) => { if (i % step) return null; const a = at(t); return <span key={t} className={`absolute top-0 px-1 whitespace-nowrap ${a.thin} border-[var(--color-border)]`} style={a.st}>{fmtInTz(t, tz, { month: "short", day: "numeric" })}</span>; })}
+      {labels.map((t) => { const a = at(t); return <span key={t} className={`absolute top-0 px-1 whitespace-nowrap ${a.thin} border-[var(--color-border)]`} style={a.st}>{fmtInTz(t, tz, { month: "short", day: "numeric" })}</span>; })}
       {b.planFinish != null && (() => { const a = at(b.planFinish); return <span className={`absolute bottom-0 px-1 whitespace-nowrap font-medium text-[var(--color-text)] ${a.thick} border-[var(--color-text)]`} style={a.st}>Plan finish</span>; })()}
     </div>
   );
@@ -396,7 +442,8 @@ function Axis({ b, x, tz, room }: { b: Block; x: (t: number) => number; tz: stri
 function BuiltView(p: BuiltProps & { mode: "orders" | "shifts"; onMode: (m: "orders" | "shifts") => void; boxW: number }) {
   const { tz, built, work } = p;
   const [now] = useState(() => Date.now());
-  const [order, setOrder] = useState<"late" | "plan">("late");
+  // A schedule reads in time order: shutdown, the work, start-up.
+  const [order, setOrder] = useState<"late" | "plan">("plan");
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [planning, setPlanning] = useState<Planning>(null);
   const blocks = useMemo(() => blocksOf(built, now, tz), [built, now, tz]);
@@ -404,7 +451,10 @@ function BuiltView(p: BuiltProps & { mode: "orders" | "shifts"; onMode: (m: "ord
   const t = work.totals;
   // Wide: the numbers in columns beside the bar; narrow: under the name.
   const wide = p.boxW >= 880;
-  const room = wide ? Math.max(120, Math.round((p.boxW - 420) * 0.6)) : Math.max(120, p.boxW - 32);
+  // The bars' column: what the columns leave (COLS: 3 × 92 px, 96, 64, the
+  // gaps and the name's 1.5 share, at least 208 px).
+  const rest = p.boxW - 32 - 508;
+  const room = wide ? Math.max(120, Math.round(rest - Math.max(208, rest * 0.375))) : Math.max(120, p.boxW - 32);
   const all = built.orders.map((o) => o.key);
   const flip = (k: string) => setOpen((o) => { const n = new Set(o); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const sorted = (os: Order[]) => (order === "plan" ? os : mostLateFirst(os, now));
@@ -427,7 +477,7 @@ function BuiltView(p: BuiltProps & { mode: "orders" | "shifts"; onMode: (m: "ord
         <div className="flex flex-wrap items-center gap-x-2"><span className="text-caption font-medium text-[var(--color-text-muted)]">Show</span>
           <Choice label="Show" value={p.mode} onChange={p.onMode} options={[["orders", "Work orders"], ["shifts", "Shift by shift"]] as const} /></div>
         {p.mode === "orders" && <div className="flex flex-wrap items-center gap-x-2"><span className="text-caption font-medium text-[var(--color-text-muted)]">Order</span>
-          <Choice label="Order" value={order} onChange={setOrder} options={[["late", "Most late first"], ["plan", "Schedule order"]] as const} /></div>}
+          <Choice label="Order" value={order} onChange={setOrder} options={[["plan", "Schedule order"], ["late", "Most late first"]] as const} /></div>}
         {p.mode === "orders" && (
           <button type="button" onClick={() => setOpen(open.size >= all.length ? new Set() : new Set(all))} className={btnQuiet}>
             {open.size >= all.length ? <ChevronsDownUp className="w-4 h-4" /> : <ChevronsUpDown className="w-4 h-4" />} {open.size >= all.length ? "Fold the steps away" : "Show every step"}
@@ -454,7 +504,7 @@ function BuiltView(p: BuiltProps & { mode: "orders" | "shifts"; onMode: (m: "ord
                 </div>
                 {wide ? (
                   <div className={`mt-2 grid ${COLS} gap-x-3 items-end border-b border-[var(--color-border)] pb-1 text-caption font-medium text-[var(--color-text-muted)]`}>
-                    <span>Work order</span><span>Planned finish</span><span>Actual finish</span><span className="text-right">Late by</span><span className="text-right">Shifts waited</span>
+                    <span>Work order</span><span>Actual start</span><span>Planned finish</span><span>Actual finish</span><span className="text-right">Late by</span><span className="text-right">Shifts waited</span>
                     <Axis b={b} x={x} tz={tz} room={room} />
                   </div>
                 ) : <div className="mt-2 border-b border-[var(--color-border)] pb-1"><Axis b={b} x={x} tz={tz} room={room} /></div>}
@@ -507,6 +557,7 @@ function OrderRow({ o, b, x, p, now, wide, open, onToggle }: { o: Order; b: Bloc
     return (
       <div className={`grid ${COLS} gap-x-3 items-start py-2`} data-order={o.key}>
         <div className="min-w-0">{name}</div>
+        <WhenCell t={start} tz={tz} />
         <WhenCell t={pf} tz={tz} />
         {o.finish != null ? <WhenCell t={o.finish} tz={tz} /> : <span className="text-caption text-[var(--color-text-muted)]">{BUILT_WORD[o.status].toLowerCase()}</span>}
         <span className="text-body text-right"><LateWords item={o} now={now} /></span>
@@ -573,6 +624,7 @@ function StepsOpen({ o, b, x, p, now, wide, idx, planning, setPlanning }: { o: O
           return wide ? (
             <div key={s.id} className={`grid ${COLS} gap-x-3 items-start py-1.5`} data-step={s.id}>
               {text}
+              <WhenCell t={s.start} tz={tz} />
               <WhenCell t={s.planFinish} tz={tz} />
               {s.finish != null ? <WhenCell t={s.finish} tz={tz} /> : <span className="text-caption text-[var(--color-text-muted)]">{BUILT_WORD[s.status].toLowerCase()}</span>}
               <span className="text-body text-right"><LateWords item={s} now={now} /></span>
@@ -937,14 +989,12 @@ function ReplaySection({ input, replay, delays, tz, finished, planFinish }: { in
   );
 }
 
-const REPLAY_RULES = `This year replayed on what really happened: each step takes the shifts it was really worked, on its crew's real days or nights. ${CAPACITY_RULE} Only the links the work really needed are kept. A trip off site keeps its real time, and a wait with a recorded reason (parts, material, vendor, inspection, permit, weather, a hold) keeps its real length. Found and added work starts no sooner than it really did. The shutdown stays as it ran; start-up starts once every work order is done. Only waits with nothing logged and no reason, and shifts a step sat ready while its crew had room, are taken out.`;
+const REPLAY_RULES = `This year replayed on what really happened: each step takes the shifts it was really worked, on its crew's real days or nights. ${CAPACITY_RULE} Only the links the work really needed are kept. A trip off site keeps its real time, and a wait with a recorded reason (parts, material, vendor, inspection, permit, weather, a hold) keeps its real length. Found and added work starts no sooner than it really did. The shutdown stays as it ran; start-up starts once every work order of its phase is done. Only waits with nothing logged and no reason, and shifts a step sat ready while its crew had room, are taken out.`;
 
 // ── Suggested for next time ──────────────────────────────────────────────
 
-function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsBuiltWork; notes: MilestoneNote[]; plan: NextPlan; colorOf: (c: string) => string; changes: PlanChange[]; applied: PlanChange[]; check: PlanCheck; risks: PlanRisk[]; lessons: Lesson[]; skipped: Set<string>; settings: NextPlanSettings; onChanges: (c: PlanChange[]) => void; onStaffing: (s: NextPlanSettings["staffing"]) => void }) {
+function NextView(p: Props & { boxW: number; built: ReturnType<typeof buildAsBuilt>; work: AsBuiltWork; notes: MilestoneNote[]; plan: NextPlan; colorOf: (c: string) => string; changes: PlanChange[]; applied: PlanChange[]; check: PlanCheck; risks: PlanRisk[]; lessons: Lesson[]; skipped: Set<string>; settings: NextPlanSettings; onChanges: (c: PlanChange[]) => void; onStaffing: (s: NextPlanSettings["staffing"]) => void }) {
   const { tz, times, built, work, plan, changes } = p;
-  const PX = React.useContext(PxCtx);
-  const { x, width } = useAxis(plan);
   const dayOf = (t: number) => dayNumber(plan, t, tz);
   const dayLabel = (t: number) => `Day ${dayOf(t)}`;
   const at = (t: number) => `Day ${dayOf(t)} · ${fmtInTz(t, tz, { weekday: "short" })} ${fmtInTz(t, tz, { hour: "numeric", minute: "2-digit", hour12: true })}`;
@@ -1026,11 +1076,182 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
   const orders = [...byOrder.entries()].sort((a, b) => Math.min(...a[1].map((x) => x.start)) - Math.min(...b[1].map((x) => x.start)));
   const kinds = plan.acts.reduce((m, a) => { m[a.kind] = (m[a.kind] ?? 0) + 1; return m; }, {} as Record<string, number>);
   const planFin = built.planFinish;
-  const lines = <>{planFin != null && <i aria-hidden title="This year's planned finish" className="absolute top-0 bottom-0 border-l-2 border-[var(--state-overdue)]" style={{ left: x(planFin) }} />}<i aria-hidden title="Suggested finish" className="absolute top-0 bottom-0 border-l-2 border-dashed border-blue-600" style={{ left: x(plan.finish) }} /></>;
   // What kind of change each activity is: plain tags, the word says it.
   const TAG = "border border-[var(--color-border-strong)] text-[var(--color-text)]";
   const KIND: Record<string, [string, string]> = { new: ["New", TAG], found: ["Added scope", TAG], shorter: ["Shorter", TAG], split: ["Split", TAG], changed: ["Changed", TAG] };
   const mine = changes.filter((c) => c.kind !== "heads" && c.kind !== "skip");
+
+  // The schedule as P6 or Microsoft Project shows it: each activity with its
+  // hours, start and finish, the bars to the right; one table per phase, on
+  // that phase's own days, so the bars have room. The phase picked at the
+  // top is the one shown.
+  const shownPhase = p.phase ? p.phases.find((ph) => ph.id === p.phase)?.name ?? null : null;
+  const phaseOfOrder = new Map(built.orders.map((o) => [o.key, o.phase ?? null]));
+  const groups: Array<{ name: string | null; orders: typeof orders }> = [];
+  for (const o of orders) {
+    const n = phaseOfOrder.get(o[0]) ?? null;
+    if (shownPhase && n !== shownPhase) continue;
+    let g = groups.find((y) => y.name === n);
+    if (!g) { g = { name: n, orders: [] }; groups.push(g); }
+    g.orders.push(o);
+  }
+  if (!groups.length) groups.push({ name: null, orders });
+  const phaseRank = (n: string | null) => { const i = p.phases.findIndex((ph) => ph.name === n); return i < 0 ? 999 : i; };
+  groups.sort((a, b) => phaseRank(a.name) - phaseRank(b.name));
+  const blockPlan = new Map(phaseBlocks(built, Date.now()).map((b) => [b.name, b.planFinish]));
+  const shiftAt = (t: number) => { const i = plan.shifts.findIndex((w) => w.end > t); return i < 0 ? plan.shifts.length - 1 : i; };
+  const renderPhase = (g: (typeof groups)[number], gi: number) => {
+    const allActs = g.orders.flatMap(([, a]) => a);
+    const t0 = Math.min(...allActs.map((a) => a.start)), t1 = Math.max(...allActs.map((a) => a.finish));
+    const gPlanFin = groups.length === 1 && !g.name ? planFin : blockPlan.get(g.name) ?? null;
+    let i0 = Math.max(0, shiftAt(t0) - 1);
+    // Start on a day shift, so the first day reads whole.
+    if (i0 > 0 && plan.shifts[i0].kind === "night") i0 -= 1;
+    const i1 = Math.min(plan.shifts.length - 1, Math.max(shiftAt(t1 - 1), gPlanFin != null ? shiftAt(gPlanFin - 1) : 0) + 1);
+    const sub = plan.shifts.slice(i0, i1 + 1);
+    // Room for the bars: what's left of the width after the columns.
+    const PX = p.boxW ? Math.max(24, Math.min(64, Math.floor((p.boxW - 290 - (p.cols ? 350 : 0) - 8) / Math.max(1, sub.length)))) : 34;
+    const x = (t: number) => {
+      if (!sub.length || t <= sub[0].start) return 0;
+      for (let i = 0; i < sub.length; i++) { const w = sub[i]; if (t < w.end) return i * PX + (PX * (t - w.start)) / (w.end - w.start); }
+      return sub.length * PX;
+    };
+    const width = sub.length * PX;
+    const finHere = groups.length === 1 && !g.name ? plan.finish : t1;
+    const lines = <>{gPlanFin != null && <i aria-hidden title="This year's planned finish" className="absolute top-0 bottom-0 border-l-2 border-[var(--state-overdue)]" style={{ left: x(gPlanFin) }} />}<i aria-hidden title="Suggested finish" className="absolute top-0 bottom-0 border-l-2 border-dashed border-blue-600" style={{ left: x(finHere) }} /></>;
+    const orders = g.orders;
+    return (
+      <section key={g.name ?? gi} className="space-y-1.5" data-plan-phase={g.name ?? ""}>
+        {(g.name || groups.length > 1) && (
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 pt-2">
+            <h3 className="text-reading font-semibold text-[var(--color-text)]">{g.name ?? "No phase"}</h3>
+            <span className="text-caption text-[var(--color-text-muted)]">{dayLabel(sub[0].start)} to {dayLabel(sub[sub.length - 1].start)} · suggested finish <b className="font-medium text-[var(--color-text)]">{at(finHere)}</b>{gPlanFin != null && <> · this year planned <b className="font-medium text-[var(--color-text)]">{at(gPlanFin)}</b></>} · {orders.length} work order{orders.length === 1 ? "" : "s"}</span>
+          </div>
+        )}
+        <PxCtx.Provider value={PX}>
+          <div className="overflow-auto max-h-[75vh] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+            <table className={`border-separate border-spacing-0 w-max text-caption ${p.cols ? "" : "[&_.col-x]:hidden"}`}>
+              <thead className="sticky top-0 z-[4] bg-[var(--color-surface-2)]">
+                <tr className="text-caption text-[var(--color-text-muted)] text-left">
+                  <th className={`${cellAct} !bg-[var(--color-surface-2)] z-[5]`}>Activity</th>
+                  <th className="col-x px-1 font-medium text-center">Hours</th><th className="col-x px-2 font-medium">Start</th><th className="col-x px-2 font-medium">Finish</th>
+                  <th className="p-0"><Header shifts={sub} tz={tz} dayLabel={dayLabel} /></th>
+                </tr>
+              </thead>
+              <tbody>
+                {gi === 0 && plan.pre.length > 0 && <SectionRow4 title="Before the shutdown" sub="bookings and materials" width={width} shifts={sub} />}
+                {gi === 0 && plan.pre.map((a) => (
+                  <tr key={a.id}><td className={cellAct}><div className="font-medium">{a.name} <span className="rounded bg-transparent px-1 text-caption font-medium text-[var(--state-released-text)]">New</span></div>{a.basis && <div className="text-caption text-[var(--color-text-muted)]">{a.basis}</div>}</td><td className={cellN}>-</td><td className={cellDt}>Before Day 1</td><td className={cellDt} /><td className="p-0"><div className="relative h-10" style={{ width }}><Grid shifts={sub} /><span className="absolute left-1.5 top-2.5 rounded bg-transparent px-1.5 text-caption font-medium text-[var(--state-released-text)]">before the shutdown</span></div></td></tr>
+                ))}
+                {orders.map(([key, acts]) => {
+                  const s0 = Math.min(...acts.map((a) => a.start)), s1 = Math.max(...acts.map((a) => a.finish));
+                  const crit = acts.some((a) => driving.has(a.id));
+                  const changed = acts.filter((a) => a.kind !== "same" || a.changedBy?.length).length;
+                  const isOpen = open.has(key);
+                  // As P6 draws a work order: one summary bar from its start
+                  // to its finish, and on it the shifts its activities are
+                  // worked, in the crew's color (open it for each activity).
+                  const bar = summaryBar(acts.filter((a) => a.finish > a.start).map((a) => ({
+                    key: a.id, parts: shiftParts(a, sub), color: p.colorOf(a.crew),
+                    ring: driving.has(a.id) ? "var(--state-overdue)" : a.kind === "new" || a.kind === "found" ? "var(--state-held)" : undefined,
+                    title: `${a.name} · ${a.crew} · ${at(a.start)} to ${at(a.finish)} · ${r1(a.hours)} h, ${a.cal === "both" ? "days and nights" : a.cal === "night" ? "nights" : "days"}${driving.has(a.id) ? " · sets the finish" : ""}`,
+                  })), x, crit);
+                  const bo = built.orders.find((o) => o.key === key);
+                  return (
+                    <React.Fragment key={key}>
+                      <tr className="bg-[var(--color-surface-2)]" data-order={key}>
+                        <td className={`${cellAct} !bg-[var(--color-surface-2)]`}>
+                          <OrderName open={isOpen} onToggle={() => flip(key)}>
+                            <div className="font-medium text-caption">{orderName.get(key) ?? key}{crit && <span className="ml-1 rounded bg-transparent px-1 text-caption font-medium text-[var(--state-overdue-text)]">Sets the finish</span>}</div>
+                            {bo?.foundOn && <div className="text-caption font-medium text-[var(--color-text-muted)]">Found on {bo.foundOn}</div>}
+                            <div className="text-caption text-[var(--color-text-muted)]">{acts.length} activit{acts.length === 1 ? "y" : "ies"} · {r1(acts.reduce((n, a) => n + a.hours, 0))} h{changed ? ` · ${changed} changed` : ""}</div>
+                          </OrderName>
+                        </td>
+                        <td className={cellN}>{r1(acts.reduce((n, a) => n + a.hours, 0))}</td><td className={cellDt}>{at(s0)}</td><td className={cellDt}>{at(s1)}</td>
+                        <td className="p-0"><div className="relative h-11" style={{ width }}><Grid shifts={sub} />{bar}{lines}</div></td>
+                      </tr>
+                      {isOpen && [...acts].sort((a, b) => a.start - b.start).map((a) => {
+                        const k = KIND[a.kind];
+                        const isCrit = driving.has(a.id);
+                        return (
+                          <tr key={a.id} className={isCrit ? "[&>td:first-child]:shadow-[inset_3px_0_0_var(--state-overdue)]" : ""}>
+                            <td className={`${cellAct} ${isCrit ? "!bg-transparent dark:!bg-[var(--state-overdue)]" : ""}`}>
+                              <div className="font-medium">{a.name}{k && <span className={`ml-1 rounded px-1 text-caption font-medium ${k[1]}`}>{k[0]}</span>}{a.heldForCrew && <span className="ml-1 rounded bg-transparent px-1 text-caption font-medium text-[var(--state-held-text)]">Waits for its crew</span>}</div>
+                              <div className="text-caption text-[var(--color-text-muted)]"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(a.crew) }} />{a.crew} · {r1(a.hours)} h · {a.cal === "both" ? "days and nights" : a.cal === "night" ? "nights" : "days"}</div>
+                              {a.basis && a.kind !== "found" && <div className="text-caption text-[var(--color-text-muted)]">{a.basis}</div>}
+                              {a.waitedForCrew && <div className="text-caption text-[var(--color-text-muted)]">This year it waited {a.waitedForCrew.shifts} shift{a.waitedForCrew.shifts === 1 ? "" : "s"} for {a.waitedForCrew.crew}{a.waitedForCrew.busyOn.length ? ` (on ${[...new Set(a.waitedForCrew.busyOn.map((b) => b.split(" - ")[0]))].join(", ")})` : ""}. See {a.waitedForCrew.crew} under Crews below.</div>}
+                            </td>
+                            <td className={cellN}>{r1(a.hours)}</td><td className={cellDt}>{at(a.start)}</td><td className={cellDt}>{at(a.finish)}</td>
+                            <td className="p-0"><div className="relative h-11" style={{ width }}><Grid shifts={sub} />
+                              {shiftParts(a, sub).map(([s0, s1], i) => <i key={i} title={`${a.name}: ${r1(a.hours)} h, ${a.cal === "both" ? "days and nights" : a.cal === "night" ? "nights" : "days"}`} className="absolute top-3 h-4 rounded-sm" style={{ left: x(s0) + 1, width: Math.max(3, x(s1) - x(s0) - 2), background: p.colorOf(a.crew), boxShadow: a.kind === "new" || a.kind === "found" ? "0 0 0 2px var(--color-surface), 0 0 0 3.5px var(--state-held)" : undefined }} />)}{lines}</div></td>
+                          </tr>
+                        );
+                      })}
+                    </React.Fragment>
+                  );
+                })}
+                <SectionRow4 title="Crews" sub="each crew's size, held from its first shift to its last (the line), and under it what its work takes each shift: hands for a crew held by hands, jobs going at once for one held by jobs at a time. Never more than the line. Amber: a contractor on site with nothing to do." width={width} shifts={sub} />
+                {Object.keys(plan.load).filter((c) => c !== "Off site" && c !== "Not set" && (plan.jobs[c] ?? []).slice(i0, i1 + 1).some((n) => n > 0)).sort((a, b) => plan.load[b].reduce((n, h) => n + h, 0) - plan.load[a].reduce((n, h) => n + h, 0)).map((crew) => {
+                  const jobs = (plan.jobs[crew] ?? []).slice(i0, i1 + 1);
+                  const size = plan.sizes[crew] as CrewSize | undefined;
+                  const byHands = !!size?.hands;
+                  const works = size?.works ?? { day: true, night: true };
+                  const busy = jobs.map((n) => n > 0);
+                  const first = busy.indexOf(true), last = busy.lastIndexOf(true);
+                  const sp = planOf(crew);
+                  // A contractor on site with nothing to do is paid to stand by; plant crews have their other work.
+                  const onSite = (i: number) => !sp.plant && i >= first && i <= last && works[sub[i].kind === "night" ? "night" : "day"];
+                  const idle = sub.filter((_, i) => onSite(i) && !jobs[i]).length;
+                  const sum = sp.plan ? summaryOver(sp.plan, sub.map(shiftKey)) : null;
+                  const days = first >= 0 ? `${dayLabel(sub[first].start)} to ${dayLabel(sub[last].start)}` : "";
+                  const warn = size ? rampWarning(sp.co, size, dayOf, dayOf(plan.finish)) : null;
+                  const mineSet = changes.filter((c) => (c.kind === "jobs" || c.kind === "crew") && c.crew === crew);
+                  // Each shift: hands its work takes (held by hands) or jobs going at once.
+                  const cell = (i: number) => (byHands ? plan.heads[crew]?.[i + i0] ?? 0 : jobs[i] ?? 0);
+                  const sizeOf = (i: number) => (byHands ? size!.hands![sub[i].kind === "night" ? "night" : "day"] : size?.jobs ?? null);
+                  return (
+                    <tr key={`cr${crew}`} data-crew={crew}>
+                      <td className={cellAct}>
+                        <div className="font-medium"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(crew) }} />{crew}</div>
+                        {size && <div className="text-caption font-medium text-[var(--color-text)]" data-crew-size>{sizeWords(size)}{size.hands ? "" : works.night ? (works.day ? ", days and nights" : ", nights") : ", days"}{days ? `, ${days}` : ""}</div>}
+                        {size && <div className="text-caption text-[var(--color-text-muted)]">{sourceWords(size, sp.co, dayLabel)}</div>}
+                        {warn && <div role="note" className="mt-0.5 border-l-2 border-[var(--state-held)] pl-1.5 text-caption text-[var(--state-held-text)]" data-ramp>{warn}</div>}
+                        {idle > 0 && <div className="text-caption font-medium text-[var(--state-held-text)]">{idle} shift{idle === 1 ? "" : "s"} on site with nothing to do</div>}
+                        {sp.plant ? <div className="text-caption text-[var(--color-text-muted)]">Kern Energy crew: no contractor staffing plan.</div>
+                          : sum ? <div className="text-caption text-[var(--color-text-muted)]">Staffing plan ({sp.plan!.file || "typed in"}). <button type="button" onClick={() => openContractor(sp.co)} className="text-[var(--color-accent-text)] hover:underline cursor-pointer">Open it</button></div>
+                          : <div className="text-caption text-[var(--color-text-muted)]">No staffing plan yet. <button type="button" onClick={() => openContractor(sp.co)} className="text-[var(--color-accent-text)] hover:underline cursor-pointer">Put in {sp.co}&apos;s</button></div>}
+                        {p.canEdit && size && <CrewSizeEdit crew={crew} size={size} pace={plan.pace[crew]?.mh ?? null} mine={mineSet.length > 0}
+                          onSave={(c) => p.onChanges([...changes.filter((x) => !mineSet.includes(x)), c])} onClear={() => p.onChanges(changes.filter((x) => !mineSet.includes(x)))} />}
+                      </td>
+                      <td className={cellN}>{size ? (byHands ? [size.hands!.day, size.hands!.night].filter((n) => n != null).join(" / ") : size.jobs) : "-"}<div className="text-caption font-normal text-[var(--color-text-muted)]">{byHands ? "hands held" : "jobs at a time"}</div></td><td className="col-x" /><td className="col-x" />
+                      <td className="p-0"><div className="relative h-[52px]" style={{ width }}><Grid shifts={sub} />
+                        {size && first >= 0 && (
+                          // The size, flat from its first shift to its last.
+                          <span aria-hidden className="absolute top-1 h-[16px] rounded-sm border-t-2 text-caption font-medium leading-[13px] pl-1 whitespace-nowrap overflow-hidden text-[var(--color-text)] bg-[var(--color-surface-2)]"
+                            style={{ left: first * PX + 1, width: Math.max(PX - 2, (last - first + 1) * PX - 2), borderColor: p.colorOf(crew) }} title={`${crew}: ${sizeWords(size)}, ${days}`}>{sizeWords(size)}</span>
+                        )}
+                        {sub.map((w, i) => {
+                          const n = jobs[i] ?? 0;
+                          if (!n && !onSite(i)) return null;
+                          const v = cell(i), cap = sizeOf(i);
+                          const plannedHands = sp.plan?.shifts[shiftKey(w)]?.direct;
+                          return (
+                            <span key={i} title={`${dayLabel(w.start)} ${w.kind}: ${n ? `${n} job${n === 1 ? "" : "s"} going at once, ${Math.round(plan.load[crew]?.[i + i0] ?? 0)} h of work${byHands ? `, about ${v} of the ${cap} on the tools` : cap != null ? ` (held at ${cap} at a time)` : ""}` : "on site, nothing to do"}${plannedHands != null ? `; staffing plan ${plannedHands} on the tools` : ""}`}
+                              className={`absolute top-[22px] h-6 rounded border text-center text-caption font-medium leading-[22px] ${!n ? "bg-transparent border-[var(--color-border)] text-[var(--state-held-text)]" : "text-white border-transparent"}`}
+                              style={{ left: i * PX + 2, width: PX - 4, background: n ? p.colorOf(crew) : undefined }}>{n ? v : 0}</span>
+                          );
+                        })}
+                      </div></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </PxCtx.Provider>
+      </section>
+    );
+  };
 
   return (
     <div className="space-y-2">
@@ -1090,127 +1311,17 @@ function NextView(p: Props & { built: ReturnType<typeof buildAsBuilt>; work: AsB
         <Chip><b>{plan.acts.length + plan.pre.length}</b> activities{Object.entries(kinds).filter(([k]) => k !== "same").map(([k, n]) => ` · ${n} ${(KIND[k]?.[0] ?? k).toLowerCase()}`).join("")}{plan.pre.length ? ` · ${plan.pre.length} before the shutdown` : ""}</Chip>
         <Chip><CalendarClock className="w-3.5 h-3.5 inline mr-1" />Sets the finish: {drivingOrders.slice(0, 3).join(", ")}</Chip>
       </div>
-      <Legend items={[[{ background: "var(--color-main)" }, "Crew's work: each piece of a work order's bar is one activity"], [{ background: "var(--color-surface)", boxShadow: "0 0 0 1.5px var(--state-held)" }, "Not in this year's plan"], [{ background: "color-mix(in srgb, var(--state-overdue) 12%, var(--color-surface))", boxShadow: "0 0 0 1.5px var(--state-overdue)" }, "Sets the finish"], [{ borderLeft: "2px solid var(--state-overdue)", width: 2 }, "This year's planned finish"], [{ borderLeft: "2px dashed var(--color-main)", width: 2 }, "Suggested finish"]]} />
-
-      <FoldAll open={open.size} total={orders.length} onAll={(all) => setOpen(all ? new Set(orders.map(([k]) => k)) : new Set())} />
-      <div className="overflow-auto max-h-[75vh] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-        <table className={`border-separate border-spacing-0 w-max text-caption ${p.cols ? "" : "[&_.col-x]:hidden"}`}>
-          <thead className="sticky top-0 z-[4] bg-[var(--color-surface-2)]">
-            <tr className="text-caption text-[var(--color-text-muted)] text-left">
-              <th className={`${cellAct} !bg-[var(--color-surface-2)] z-[5]`}>Activity</th>
-              <th className="col-x px-1 font-medium text-center">Hours</th><th className="col-x px-2 font-medium">Start</th><th className="col-x px-2 font-medium">Finish</th>
-              <th className="p-0"><Header shifts={plan.shifts} tz={tz} dayLabel={dayLabel} /></th>
-            </tr>
-          </thead>
-          <tbody>
-            {plan.pre.length > 0 && <SectionRow4 title="Before the shutdown" sub="bookings and materials" width={width} shifts={plan.shifts} />}
-            {plan.pre.map((a) => (
-              <tr key={a.id}><td className={cellAct}><div className="font-medium">{a.name} <span className="rounded bg-transparent px-1 text-caption font-medium text-[var(--state-released-text)]">New</span></div>{a.basis && <div className="text-caption text-[var(--color-text-muted)]">{a.basis}</div>}</td><td className={cellN}>-</td><td className={cellDt}>Before Day 1</td><td className={cellDt} /><td className="p-0"><div className="relative h-10" style={{ width }}><Grid shifts={plan.shifts} /><span className="absolute left-1.5 top-2.5 rounded bg-transparent px-1.5 text-caption font-medium text-[var(--state-released-text)]">before the shutdown</span></div></td></tr>
-            ))}
-            {orders.map(([key, acts]) => {
-              const s0 = Math.min(...acts.map((a) => a.start)), s1 = Math.max(...acts.map((a) => a.finish));
-              const crit = acts.some((a) => driving.has(a.id));
-              const changed = acts.filter((a) => a.kind !== "same" || a.changedBy?.length).length;
-              const isOpen = open.has(key);
-              const bar = pieces(acts.filter((a) => a.finish > a.start).flatMap((a) => shiftParts(a, plan.shifts).map(([s0, s1], i, all) => ({
-                key: `${a.id}:${i}`, from: s0, to: s1, color: p.colorOf(a.crew), label: all.length === 1 || (s1 - s0) === Math.max(...all.map(([q0, q1]) => q1 - q0)) ? `${r1(a.hours)} h` : undefined,
-                ring: driving.has(a.id) ? "0 0 0 1.5px var(--state-overdue)" : a.kind === "new" || a.kind === "found" ? "0 0 0 1.5px var(--state-held)" : undefined,
-                title: `${a.name} · ${a.crew} · ${at(a.start)} to ${at(a.finish)} · ${r1(a.hours)} h, ${a.cal === "both" ? "days and nights" : a.cal === "night" ? "nights" : "days"}${driving.has(a.id) ? " · sets the finish" : ""}`,
-              }))), x, 8);
-              const bo = built.orders.find((o) => o.key === key);
-              return (
-                <React.Fragment key={key}>
-                  <tr className="bg-[var(--color-surface-2)]" data-order={key}>
-                    <td className={`${cellAct} !bg-[var(--color-surface-2)]`}>
-                      <OrderName open={isOpen} onToggle={() => flip(key)}>
-                        <div className="font-medium text-caption">{orderName.get(key) ?? key}{crit && <span className="ml-1 rounded bg-transparent px-1 text-caption font-medium text-[var(--state-overdue-text)]">Sets the finish</span>}</div>
-                        {bo?.foundOn && <div className="text-caption font-medium text-[var(--color-text-muted)]">Found on {bo.foundOn}</div>}
-                        <div className="text-caption text-[var(--color-text-muted)]">{acts.length} activit{acts.length === 1 ? "y" : "ies"} · {r1(acts.reduce((n, a) => n + a.hours, 0))} h{changed ? ` · ${changed} changed` : ""}</div>
-                      </OrderName>
-                    </td>
-                    <td className={cellN}>{r1(acts.reduce((n, a) => n + a.hours, 0))}</td><td className={cellDt}>{at(s0)}</td><td className={cellDt}>{at(s1)}</td>
-                    <td className="p-0"><div className="relative" style={{ width, height: Math.max(44, 8 + bar.h + 4) }}><Grid shifts={plan.shifts} />{bar.nodes}{lines}</div></td>
-                  </tr>
-                  {isOpen && [...acts].sort((a, b) => a.start - b.start).map((a) => {
-                    const k = KIND[a.kind];
-                    const isCrit = driving.has(a.id);
-                    return (
-                      <tr key={a.id} className={isCrit ? "[&>td:first-child]:shadow-[inset_3px_0_0_var(--state-overdue)]" : ""}>
-                        <td className={`${cellAct} ${isCrit ? "!bg-transparent dark:!bg-[var(--state-overdue)]" : ""}`}>
-                          <div className="font-medium">{a.name}{k && <span className={`ml-1 rounded px-1 text-caption font-medium ${k[1]}`}>{k[0]}</span>}{a.heldForCrew && <span className="ml-1 rounded bg-transparent px-1 text-caption font-medium text-[var(--state-held-text)]">Waits for its crew</span>}</div>
-                          <div className="text-caption text-[var(--color-text-muted)]"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(a.crew) }} />{a.crew} · {r1(a.hours)} h · {a.cal === "both" ? "days and nights" : a.cal === "night" ? "nights" : "days"}</div>
-                          {a.basis && a.kind !== "found" && <div className="text-caption text-[var(--color-text-muted)]">{a.basis}</div>}
-                          {a.waitedForCrew && <div className="text-caption text-[var(--color-text-muted)]">This year it waited {a.waitedForCrew.shifts} shift{a.waitedForCrew.shifts === 1 ? "" : "s"} for {a.waitedForCrew.crew}{a.waitedForCrew.busyOn.length ? ` (on ${[...new Set(a.waitedForCrew.busyOn.map((b) => b.split(" - ")[0]))].join(", ")})` : ""}. See {a.waitedForCrew.crew} under Crews below.</div>}
-                        </td>
-                        <td className={cellN}>{r1(a.hours)}</td><td className={cellDt}>{at(a.start)}</td><td className={cellDt}>{at(a.finish)}</td>
-                        <td className="p-0"><div className="relative h-11" style={{ width }}><Grid shifts={plan.shifts} />
-                          {shiftParts(a, plan.shifts).map(([s0, s1], i) => <i key={i} title={`${a.name}: ${r1(a.hours)} h, ${a.cal === "both" ? "days and nights" : a.cal === "night" ? "nights" : "days"}`} className="absolute top-3 h-4 rounded-sm" style={{ left: x(s0) + 1, width: Math.max(3, x(s1) - x(s0) - 2), background: p.colorOf(a.crew), boxShadow: a.kind === "new" || a.kind === "found" ? "0 0 0 2px var(--color-surface), 0 0 0 3.5px var(--state-held)" : undefined }} />)}{lines}</div></td>
-                      </tr>
-                    );
-                  })}
-                </React.Fragment>
-              );
-            })}
-            <SectionRow4 title="Crews" sub="each crew's size, held from its first shift to its last (the line), and under it what its work takes each shift: hands for a crew held by hands, jobs going at once for one held by jobs at a time. Never more than the line. Amber: a contractor on site with nothing to do." width={width} shifts={plan.shifts} />
-            {Object.keys(plan.load).filter((c) => c !== "Off site" && c !== "Not set").sort((a, b) => plan.load[b].reduce((n, h) => n + h, 0) - plan.load[a].reduce((n, h) => n + h, 0)).map((crew) => {
-              const jobs = plan.jobs[crew] ?? [];
-              const size = plan.sizes[crew] as CrewSize | undefined;
-              const byHands = !!size?.hands;
-              const works = size?.works ?? { day: true, night: true };
-              const busy = jobs.map((n) => n > 0);
-              const first = busy.indexOf(true), last = busy.lastIndexOf(true);
-              const sp = planOf(crew);
-              // A contractor on site with nothing to do is paid to stand by; plant crews have their other work.
-              const onSite = (i: number) => !sp.plant && i >= first && i <= last && works[plan.shifts[i].kind === "night" ? "night" : "day"];
-              const idle = plan.shifts.filter((_, i) => onSite(i) && !jobs[i]).length;
-              const sum = sp.plan ? summaryOver(sp.plan, plan.shifts.map(shiftKey)) : null;
-              const days = first >= 0 ? `${dayLabel(plan.shifts[first].start)} to ${dayLabel(plan.shifts[last].start)}` : "";
-              const warn = size ? rampWarning(sp.co, size, dayOf, dayOf(plan.finish)) : null;
-              const mineSet = changes.filter((c) => (c.kind === "jobs" || c.kind === "crew") && c.crew === crew);
-              // Each shift: hands its work takes (held by hands) or jobs going at once.
-              const cell = (i: number) => (byHands ? plan.heads[crew]?.[i] ?? 0 : jobs[i] ?? 0);
-              const sizeOf = (i: number) => (byHands ? size!.hands![plan.shifts[i].kind === "night" ? "night" : "day"] : size?.jobs ?? null);
-              return (
-                <tr key={`cr${crew}`} data-crew={crew}>
-                  <td className={cellAct}>
-                    <div className="font-medium"><b className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: p.colorOf(crew) }} />{crew}</div>
-                    {size && <div className="text-caption font-medium text-[var(--color-text)]" data-crew-size>{sizeWords(size)}{size.hands ? "" : works.night ? (works.day ? ", days and nights" : ", nights") : ", days"}{days ? `, ${days}` : ""}</div>}
-                    {size && <div className="text-caption text-[var(--color-text-muted)]">{sourceWords(size, sp.co, dayLabel)}</div>}
-                    {warn && <div role="note" className="mt-0.5 border-l-2 border-[var(--state-held)] pl-1.5 text-caption text-[var(--state-held-text)]" data-ramp>{warn}</div>}
-                    {idle > 0 && <div className="text-caption font-medium text-[var(--state-held-text)]">{idle} shift{idle === 1 ? "" : "s"} on site with nothing to do</div>}
-                    {sp.plant ? <div className="text-caption text-[var(--color-text-muted)]">Kern Energy crew: no contractor staffing plan.</div>
-                      : sum ? <div className="text-caption text-[var(--color-text-muted)]">Staffing plan ({sp.plan!.file || "typed in"}). <button type="button" onClick={() => openContractor(sp.co)} className="text-[var(--color-accent-text)] hover:underline cursor-pointer">Open it</button></div>
-                      : <div className="text-caption text-[var(--color-text-muted)]">No staffing plan yet. <button type="button" onClick={() => openContractor(sp.co)} className="text-[var(--color-accent-text)] hover:underline cursor-pointer">Put in {sp.co}&apos;s</button></div>}
-                    {p.canEdit && size && <CrewSizeEdit crew={crew} size={size} pace={plan.pace[crew]?.mh ?? null} mine={mineSet.length > 0}
-                      onSave={(c) => p.onChanges([...changes.filter((x) => !mineSet.includes(x)), c])} onClear={() => p.onChanges(changes.filter((x) => !mineSet.includes(x)))} />}
-                  </td>
-                  <td className={cellN}>{size ? (byHands ? [size.hands!.day, size.hands!.night].filter((n) => n != null).join(" / ") : size.jobs) : "-"}<div className="text-caption font-normal text-[var(--color-text-muted)]">{byHands ? "hands held" : "jobs at a time"}</div></td><td className="col-x" /><td className="col-x" />
-                  <td className="p-0"><div className="relative h-[52px]" style={{ width }}><Grid shifts={plan.shifts} />
-                    {size && first >= 0 && (
-                      // The size, flat from its first shift to its last.
-                      <span aria-hidden className="absolute top-1 h-[16px] rounded-sm border-t-2 text-caption font-medium leading-[13px] pl-1 whitespace-nowrap overflow-hidden text-[var(--color-text)] bg-[var(--color-surface-2)]"
-                        style={{ left: first * PX + 1, width: Math.max(PX - 2, (last - first + 1) * PX - 2), borderColor: p.colorOf(crew) }} title={`${crew}: ${sizeWords(size)}, ${days}`}>{sizeWords(size)}</span>
-                    )}
-                    {plan.shifts.map((w, i) => {
-                      const n = jobs[i] ?? 0;
-                      if (!n && !onSite(i)) return null;
-                      const v = cell(i), cap = sizeOf(i);
-                      const plannedHands = sp.plan?.shifts[shiftKey(w)]?.direct;
-                      return (
-                        <span key={i} title={`${dayLabel(w.start)} ${w.kind}: ${n ? `${n} job${n === 1 ? "" : "s"} going at once, ${Math.round(plan.load[crew]?.[i] ?? 0)} h of work${byHands ? `, about ${v} of the ${cap} on the tools` : cap != null ? ` (held at ${cap} at a time)` : ""}` : "on site, nothing to do"}${plannedHands != null ? `; staffing plan ${plannedHands} on the tools` : ""}`}
-                          className={`absolute top-[22px] h-6 rounded border text-center text-caption font-medium leading-[22px] ${!n ? "bg-transparent border-[var(--color-border)] text-[var(--state-held-text)]" : "text-white border-transparent"}`}
-                          style={{ left: i * PX + 2, width: PX - 4, background: n ? p.colorOf(crew) : undefined }}>{n ? v : 0}</span>
-                      );
-                    })}
-                  </div></td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-caption text-[var(--color-text-muted)]" data-crew-key>
+        <span className="font-medium text-[var(--color-text)]">Bar color = crew:</span>
+        {[...new Set(plan.acts.map((a) => a.crew))].filter((c) => c !== "Off site").sort().map((c) => <span key={c} className="inline-flex items-center gap-1"><span aria-hidden className="inline-block w-3 h-3 rounded-sm" style={{ background: p.colorOf(c) }} />{c}</span>)}
       </div>
+      <Legend items={[[{ background: "var(--color-surface)", boxShadow: "0 0 0 1.5px var(--state-held)" }, "Not in this year's plan"], [{ background: "color-mix(in srgb, var(--state-overdue) 12%, var(--color-surface))", boxShadow: "0 0 0 1.5px var(--state-overdue)" }, "Sets the finish"], [{ borderLeft: "2px solid var(--state-overdue)", width: 2 }, "This year's planned finish"], [{ borderLeft: "2px dashed var(--color-main)", width: 2 }, "Suggested finish"]]} />
+
+      <FoldAll open={open.size} total={orders.length} onAll={(all) => setOpen(all ? new Set(orders.map(([k]) => k)) : new Set())}
+        hint="Each work order's line runs from its start to its finish; the colored pieces on it are the shifts it's worked. Tap a work order to see its activities." />
+      {groups.map((g, gi) => renderPhase(g, gi))}
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-caption text-[var(--color-text)]">
-        <b>How it&apos;s built.</b> This year&apos;s activities and crews, in the order they were really done: a link the crews didn&apos;t wait on gives way to what that work waited on, and a work order&apos;s steps done before a step started come first. Nights as this year really ran: a crew that worked a work order on two or more nights works it days and nights, otherwise days, 12-hour shifts; the shutdown and start-up run around the clock. Planned start dates are the earliest each can start, or when it really started if sooner. Missed scope added this year is in; work found by inspection is not planned, it shows as a risk above with what it would do to the finish. An activity done inside fewer shifts than its plan gets that length; nothing is made longer from a guess. Start-up begins once every work order is done. {CREW_RULE} What this job taught (the box at the top) goes in: time off site at the clock time it really took, with what gets it out moved to first thing. The check at the top runs this year back through these same rules with each step at the length it really took; the schedule is trusted only when that lands within {CHECK_H} hours of the real finish.
+        <b>How it&apos;s built.</b> This year&apos;s activities and crews, in the order they were really done: a link the crews didn&apos;t wait on gives way to what that work waited on, and a work order&apos;s steps done before a step started come first. Nights as this year really ran: a crew that worked a work order on two or more nights works it days and nights, otherwise days, 12-hour shifts; the shutdown and start-up run around the clock. Planned start dates are the earliest each can start, or when it really started if sooner. Missed scope added this year is in; work found by inspection is not planned, it shows as a risk above with what it would do to the finish. An activity done inside fewer shifts than its plan gets that length; nothing is made longer from a guess. Start-up begins once every work order of its phase is done. {CREW_RULE} What this job taught (the box at the top) goes in: time off site at the clock time it really took, with what gets it out moved to first thing. The check at the top runs this year back through these same rules with each step at the length it really took; the schedule is trusted only when that lands within {CHECK_H} hours of the real finish.
       </div>
     </div>
   );

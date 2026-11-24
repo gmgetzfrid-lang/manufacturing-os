@@ -39,7 +39,9 @@ Collected Nov 24, 2026 from the owner's review of the project pages and reports.
 ## 5. Charts the owner could not read
 - **Done.** Budget lines: each row's track is that line's own budget, filled with committed and spent; the line's size is a number.
 - **Done.** Where the late hours went: each cause is written on its own bar's row; the bar's title comes from the job it was written on (the E-17 bar no longer carries E-12's title).
-- **Done.** As-built schedule: one row per work order, most late first, each phase its own block with its own planned finish line; plan gray, actual solid, the part past its own plan in red, waits hatched; the legend says what each color means.
+- **Done.** As-built schedule reads like P6 or Microsoft Project: a table of work orders in schedule order (shutdown first, start-up last; "Most late first" is a choice), with actual start, planned finish, actual finish, late by and shifts waited, and the bars to the right. Each phase is its own block with its own planned finish line; plan gray, actual solid, the part past its own plan in red, waits hatched.
+- **Done.** Suggested schedule is the same kind of table: activity, hours, start, finish, with the bars to the right; one table per phase on that phase's own days; a work order's bar is a summary line from start to finish with its worked shifts on it; the crew colors are named. The phase picked under "Showing" is the one shown.
+- **Done.** The list of reports folds away on the two schedule reports, so the table has the full width ("All reports" brings it back).
 - These were built straight into the app (the owner asked for everything at once), not shown as mock-ups first.
 
 ## 6. Suggested schedule for next time: replay first, add people last
@@ -48,6 +50,7 @@ Collected Nov 24, 2026 from the owner's review of the project pages and reports.
   - On the test data for Phase 1: with the same crews nothing could have been pulled in. Taking out E-12 (the seal rings: 20 of 24 ordered, re-used ones leaked on the hydro) brings the finish in 25 h, to 8.5 h late against the planned finish instead of 33.5 h.
 - **Done.** A step left open (work logged, never marked done) no longer stops the replay: it stays as it ran and is named. Phase 1 has one: "Set Blinds; Verify LOTO".
 - **Done.** Added people or time come after, under "If it still misses the target", with how far sequencing alone got.
+- **Fixed.** With two phases, each start-up now waits only on its own phase's work, and "out first thing once the unit is down" uses its own phase's shutdown. Before, Transmix-1's start-up was put on Day 23, after Phase 2's work, and two Phase 1 valves waited for Transmix-2's shutdown.
 - **Done.** What the replay can't know is listed (waits with no reason, crews with no head count, steps with no times).
 
 ## 7. Materials: add a line like a spreadsheet, two owners

@@ -18,7 +18,7 @@
 //     planned; it shows as a risk with what it would do to the finish.
 //   - An activity done inside fewer shifts than its plan gets that length;
 //     nothing is made longer from a guess.
-//   - Start-up begins once every work order is done.
+//   - Start-up begins once every work order of its phase is done.
 //   - CREW_RULE: a crew's size is set before the job starts and held for
 //     the whole job. Its hands on the tools from its staffing plan's first
 //     shifts on this job (days and nights each), else the first meeting it
@@ -261,14 +261,20 @@ export function planActivities(input: { built: AsBuilt; work: AsBuiltWork; miles
       waitedForCrew: w.ready && w.ready.crewLogged ? { shifts: w.ready.shifts.length, crew: w.crew, busyOn: w.ready.busyOn } : null,
     });
   }
-  // Start-up waits for every work order to be done.
+  // Start-up waits for every work order of its own phase to be done (a
+  // unit's start-up never waits for the next phase's work).
   const orderName = new Map(built.orders.map((o) => [o.key, o.name]));
+  const phaseOf = new Map(built.orders.map((o) => [o.key, o.phase ?? null]));
   const su = acts.filter((a) => isStartUp(orderName.get(a.order) ?? ""));
   if (su.length) {
     const suIds = new Set(su.map((a) => a.id));
     const succ = new Set(acts.flatMap((a) => a.preds));
-    const ends = acts.filter((a) => !suIds.has(a.id) && !isShutdown(orderName.get(a.order) ?? "") && !succ.has(a.id)).map((a) => a.id);
-    for (const a of su) if (!a.preds.some((p) => suIds.has(p))) a.preds = [...new Set([...a.preds, ...ends])];
+    const ends = acts.filter((a) => !suIds.has(a.id) && !isShutdown(orderName.get(a.order) ?? "") && !succ.has(a.id));
+    for (const a of su) {
+      if (a.preds.some((p) => suIds.has(p))) continue;
+      const ph = phaseOf.get(a.order) ?? null;
+      a.preds = [...new Set([...a.preds, ...ends.filter((e) => (phaseOf.get(e.order) ?? null) === ph).map((e) => e.id)])];
+    }
   }
   return acts;
 }

@@ -74,10 +74,19 @@ export function planLessons(input: Input & { notes: MilestoneNote[]; base: NextP
   const actOf = new Map(base.acts.map((a) => [a.id, a]));
   const idx = new Map(work.shifts.map((w, i) => [shiftKey(w), i]));
 
-  // When the unit is down and its equipment can be opened: the shutdown's
-  // last activity, else the first shift.
+  // When the unit is down and its equipment can be opened: its own phase's
+  // shutdown's last activity (Phase 1's work never waits for Phase 2's
+  // shutdown), else the phase's first activity, else the first shift.
+  const phaseOf = new Map(built.orders.map((o) => [o.key, o.phase ?? null]));
   const shut = base.acts.filter((a) => isShutdown(built.orders.find((o) => o.key === a.order)?.name ?? ""));
-  const ready = shut.length ? Math.max(...shut.map((a) => a.finish)) : base.start;
+  const readyFor = (id: string): number => {
+    const ph = phaseOf.get(stepOf.get(id)?.o.key ?? "") ?? null;
+    const mine = shut.filter((a) => (phaseOf.get(a.order) ?? null) === ph);
+    if (mine.length) return Math.max(...mine.map((a) => a.finish));
+    const acts = base.acts.filter((a) => (phaseOf.get(a.order) ?? null) === ph);
+    if (ph != null && acts.length) return Math.min(...acts.map((a) => a.start));
+    return shut.length ? Math.max(...shut.map((a) => a.finish)) : base.start;
+  };
 
   // What came before a step on its equipment this year: the steps of its
   // work order that were done when it started (the order it was really
@@ -110,7 +119,7 @@ export function planLessons(input: Input & { notes: MilestoneNote[]; base: NextP
       const drop = [...new Set([...a.preds.filter((p) => sameOrder.has(p) && p !== prev && !chain.slice(0, i).includes(p)), ...notWaited(a.id)])];
       if (drop.length || (prev && !a.preds.includes(prev))) cs.push(change(`${lid}:link:${a.id}`, { kind: "relink", actId: a.id, drop, add: prev ? [prev] : [] }));
     }
-    if (chain.length) cs.push(change(`${lid}:floor`, { kind: "floor", target: { ids: chain }, at: ready }));
+    if (chain.length) cs.push(change(`${lid}:floor`, { kind: "floor", target: { ids: chain }, at: readyFor(id) }));
     cs.push(change(`${lid}:first`, { kind: "first", target: { ids: all } }));
     return cs;
   };
@@ -174,7 +183,7 @@ export function planLessons(input: Input & { notes: MilestoneNote[]; base: NextP
         changes: [
           ...(notWaited(w.id).length ? [change(`${lid}:link`, { kind: "relink", actId: w.id, drop: notWaited(w.id), add: [] })] : []),
           split,
-          change(`${lid}:floor`, { kind: "floor", target: { ids: [`${w.id}:1`, ...chain] }, at: ready }),
+          change(`${lid}:floor`, { kind: "floor", target: { ids: [`${w.id}:1`, ...chain] }, at: readyFor(w.id) }),
           change(`${lid}:first`, { kind: "first", target: { ids: [...chain, `${w.id}:1`, `${w.id}:w`] } }),
         ],
       });

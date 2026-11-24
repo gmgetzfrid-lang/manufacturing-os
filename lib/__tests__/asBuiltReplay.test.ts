@@ -6,6 +6,7 @@ import type { ProgressLogRow } from "@/lib/progressHistory";
 import type { ShiftRecord } from "@/lib/shiftRecord";
 import { shiftWindowsBetween } from "@/lib/shiftReport";
 import { replayAsBuilt, oneOffDelays, type Replay } from "@/lib/asBuiltReplay";
+import { planActivities } from "@/lib/nextPlan";
 
 // The job replayed on what really happened: same work, same crews, better timed.
 
@@ -296,6 +297,25 @@ describe("one-off delays as a what-if", () => {
     expect(list[0]).toMatchObject({ id: "order:e", short: "E-12: Tube side hydro waited 1 shift; Tube side hydro ran 2 shifts past plan", said: "Leak at the shell flange", shifts: 3 });
     const r = replayAsBuilt({ ...x, notes, without: ["order:e"] });
     expect(placed(r, "tube").shifts).toEqual([K(26)]);
+  });
+
+  it("each phase's start-up waits only on its own phase's work", () => {
+    const x = job([
+      { key: "sd1", name: "Unit 1 - Shutdown", steps: [{ id: "sd1", crew: "Operations", start: t(26, 6), finish: t(26, 12), worked: [K(26)] }] },
+      { key: "w1", name: "E-12", steps: [{ id: "w1", crew: "Schultz", deps: ["sd1"], start: t(26, 12), finish: t(27, 16), worked: [K(26), K(27)] }] },
+      { key: "su1", name: "Unit 1 - Start-Up", steps: [{ id: "su1", crew: "Operations", start: t(28, 6), finish: t(28, 12), worked: [K(28)] }] },
+      { key: "sd2", name: "Unit 2 - Shutdown", steps: [{ id: "sd2", crew: "Operations", start: t(29, 6), finish: t(29, 12), worked: [K(29)] }] },
+      { key: "w2", name: "V-7", steps: [{ id: "w2", crew: "Schultz", deps: ["sd2"], start: t(29, 12), finish: t(30, 16), worked: [K(29), K(30)] }] },
+      { key: "su2", name: "Unit 2 - Start-Up", steps: [{ id: "su2", crew: "Operations", start: t(30, 16), finish: t(30, 18), worked: [K(30)] }] },
+    ]);
+    const ph: Record<string, string> = { sd1: "Phase 1", w1: "Phase 1", su1: "Phase 1", sd2: "Phase 2", w2: "Phase 2", su2: "Phase 2" };
+    for (const o of x.built.orders) (o as { phase?: string }).phase = ph[o.key];
+    const acts = planActivities(x);
+    const pre = (id: string) => acts.find((a) => a.id === id)!.preds;
+    expect(pre("su1")).toContain("w1");
+    expect(pre("su1")).not.toContain("w2");
+    expect(pre("su2")).toContain("w2");
+    expect(pre("su2")).not.toContain("w1");
   });
 
   it("an id the record doesn't list is left in, and said", () => {
