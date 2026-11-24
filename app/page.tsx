@@ -10,9 +10,11 @@
 
 import { AuthCard, authField, authBtn } from "@/components/marketing/AuthCard";
 import { rememberWorkspaceName } from "@/lib/deviceWorkspace";
-import { prefersReducedMotion } from "@/lib/viewTransition";
 import { checkSignin, type SigninVerdict } from "@/lib/signinCheck";
-import { fetchMemberships, pickMembership, SignedOut } from "@/lib/membershipClient";
+import { fetchMemberships, pickMembership, SignedOut, type MembershipAnswer } from "@/lib/membershipClient";
+import { writeMember } from "@/lib/memberCache";
+import { normalizeRoles, primaryRole } from "@/lib/roleCapabilities";
+import type { Role } from "@/types/schema";
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { supabase, setRememberSession, setPreferMicrosoft, prefersMicrosoft, rememberDefault } from '@/lib/supabase';
@@ -80,7 +82,9 @@ export default function LoginPage() {
   const [opened, setOpened] = useState(false);
   // The title block's SIGNED line, then the hand-off into the app.
   const [signed, setSigned] = useState<{ name: string; at: Date } | null>(null);
-  const [leaving, setLeaving] = useState(false);
+  // The app's code for the dashboard, fetched while the person types, so
+  // nothing is left to download once the server says yes.
+  useEffect(() => { router.prefetch("/dashboard"); }, [router]);
   // A password sign-in in progress decides its own next step (handleLogin).
   const loginInFlight = useRef(false);
   const slowSecs = useElapsed(view === "checking" || loading);
@@ -102,6 +106,9 @@ export default function LoginPage() {
     }
 
     const { data: { session } } = await supabase.auth.getSession();
+    // The workspace lookup runs alongside the sign-in check, not after it;
+    // its answer is used only when the check lets the account in.
+    const workspaces = fetchMemberships().catch((e: unknown) => e);
     const verdict = await checkSignin(session?.access_token ?? null);
     const why = refusal(verdict);
     if (why) {
@@ -112,21 +119,22 @@ export default function LoginPage() {
       return;
     }
     if (verdict.action === "set_password") { router.replace("/set-password"); return; }
-    // Already signed in (or back from Microsoft): a short signing, not the
-    // full one a typed sign-in gets.
-    await openWorkspace(user, "quick");
+    // Already signed in (or back from Microsoft): straight in.
+    await openWorkspace(user, await workspaces);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
   /** Into the app when the server says the account is active in a
-   *  workspace; else the paused-access screen. On the way in, the title
-   *  block is signed with the person's name and the time, then the sheet
-   *  settles away into the app. */
-  const openWorkspace = async (user: User | null, ceremony: "full" | "quick") => {
+   *  workspace; else the paused-access screen. No pause on the way in: the
+   *  dashboard opens the moment the server says yes, and the app shell is
+   *  handed the membership this page already has (lib/memberCache), so it
+   *  opens without asking again (it checks again in the background). */
+  const openWorkspace = async (user: User | null, known?: MembershipAnswer | unknown) => {
     const userEmail = user?.email ?? null;
     try {
       router.prefetch("/dashboard");
-      const answer = await fetchMemberships();
+      if (known instanceof SignedOut) throw known;
+      const answer = known && typeof known === "object" && "memberships" in (known as object) ? known as MembershipAnswer : await fetchMemberships();
       const pick = pickMembership(answer, null);
       if (pick) {
         rememberWorkspaceName(pick.orgName);
@@ -134,15 +142,15 @@ export default function LoginPage() {
         const name = typeof meta.full_name === "string" && meta.full_name.trim() ? meta.full_name.trim()
           : typeof meta.name === "string" && meta.name.trim() ? meta.name.trim()
           : userEmail ?? "Signed in";
+        if (user?.id) {
+          const roles = normalizeRoles(pick.roles, pick.role as Role | undefined);
+          try {
+            window.localStorage.setItem("manufacturingos.activeOrgId", pick.orgId);
+            writeMember(window.localStorage, { uid: user.id, orgId: pick.orgId, role: primaryRole(roles), roles, status: pick.status, email: pick.email ?? userEmail ?? undefined });
+          } catch { /* private mode: the shell looks it up */ }
+        }
         setLoading(false); setOpened(true);
         setSigned({ name, at: new Date() });
-        // A phone has scrolled to the fields: back up to where the title
-        // block shows the signature.
-        try { if (window.matchMedia("(max-width: 767px)").matches) window.scrollTo({ top: 0, behavior: "smooth" }); } catch { /* old browser */ }
-        const calm = prefersReducedMotion();
-        await new Promise((r) => setTimeout(r, calm ? 0 : ceremony === "full" ? 750 : 420));
-        setLeaving(true);
-        await new Promise((r) => setTimeout(r, calm ? 0 : 360));
         router.replace("/dashboard");
         return;
       }
@@ -286,7 +294,9 @@ export default function LoginPage() {
         setLoading(false);
         return;
       }
-      // The workspace's sign-in rules decide what happens next.
+      // The workspace's sign-in rules decide what happens next; the
+      // workspace lookup runs alongside, used only if they let the account in.
+      const workspaces = fetchMemberships().catch((e: unknown) => e);
       const verdict = await checkSignin(signedIn.session?.access_token ?? null);
       const why = refusal(verdict) ?? (verdict.action === "error" ? "Couldn't finish signing you in. Check your connection and try again." : null);
       if (why) {
@@ -296,7 +306,7 @@ export default function LoginPage() {
       } else if (verdict.action === "set_password") {
         router.push('/set-password');
       } else {
-        await openWorkspace(signedIn.user ?? null, "full");
+        await openWorkspace(signedIn.user ?? null, await workspaces);
       }
     } finally {
       loginInFlight.current = false;
@@ -328,7 +338,7 @@ export default function LoginPage() {
   // ─── Checking / OAuth redirect in progress ──────────────────────
   if (view === "checking") {
     return (
-      <AuthCard title={signed ? "Signed in." : "Signing you in."} signed={signed} leaving={leaving}
+      <AuthCard title={signed ? "Signed in." : "Signing you in."} signed={signed}
         status={signed ? "Opening your workspace" : "Checking your sign-in"}>
         <SlowNotice secs={slowSecs} onStartOver={() => startOver()} />
       </AuthCard>
@@ -354,7 +364,7 @@ export default function LoginPage() {
     <AuthCard
       title={signed ? "Signed in." : "Sign in."}
       signed={signed}
-      leaving={leaving}
+     
       status={signed ? "Opening your workspace"
         : loading ? "Signing in"
         : oauthLoading ? "Opening Microsoft"

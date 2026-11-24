@@ -95,17 +95,19 @@
   --shadow-card: 0 1px 2px 0 rgb(15 23 42 / 0.06);
 
   /* The action color: the one filled button per screen (the workspace's
-     accent). accent-text is the brand's readable shade for links. */
-  --color-accent: #ebb432;
+     accent; the app's own is orange, the third color beside the navy and
+     the blue, lib/brandColors accentFor("#2262e6", "#f97316")).
+     accent-text is the brand's readable shade for links. */
+  --color-accent: #e46916;
   --color-accent-text: #0a4bce;
-  --color-accent-hover: #d7a10b;
-  --color-accent-fg: #1f2733;
+  --color-accent-hover: #ca5b09;
+  --color-accent-fg: #ffffff;
   --color-accent-soft: #e6efff;
   --color-accent-ring: #2262e6;
 
-  --color-accent-2: #ebb432;
-  --color-accent-2-hover: #d7a10b;
-  --color-accent-2-fg: #1f2733;
+  --color-accent-2: #e46916;
+  --color-accent-2-hover: #ca5b09;
+  --color-accent-2-fg: #ffffff;
   --color-accent-2-soft: #f3f7fd;
   --brand-gradient: linear-gradient(135deg, #2262e6, #2262e6);
 
@@ -208,6 +210,10 @@
 
 /* Dark theme: a deep slate page; the same roles. */
 :root {
+  /* The app's own third color (beside the navy and the blue), an accent
+     only: the logo, the sign-in drawing's level and flow, a full stop. The
+     same in light and dark. Buttons use the workspace accent. */
+  --app-orange: #f26a1b;
   /* Crews on the schedules (used from inline styles, so outside @theme,
      which drops what no class names). Any two crews can sit side by side
      on a schedule, so every pair is checked, not just neighbours: on this
@@ -954,8 +960,8 @@ html.vt-on .vt-top { view-transition-name: top-bar; }
 .bp-fill { fill: currentColor; stroke: none; }
 .bp-grid { animation: bp-fade .6s ease both; }
 .bp-t { font: 600 10px var(--font-display), "Barlow Semi Condensed", sans-serif; fill: currentColor; stroke: none; text-anchor: middle; }
-.bp-level { fill: currentColor; opacity: .08; animation: bp-level 6s ease-in-out 1.6s infinite alternate; transform-box: fill-box; }
-.bp-flow path { stroke: var(--color-accent-text); stroke-width: 2; stroke-dasharray: 3 13; opacity: 0; animation: bp-flow-in .8s ease 1.5s forwards, bp-flow 1.4s linear 1.5s infinite; }
+.bp-level { fill: var(--app-orange); opacity: .6; animation: bp-level 6s ease-in-out 1.6s infinite alternate; transform-box: fill-box; }
+.bp-flow path { stroke: var(--app-orange); stroke-width: 2; stroke-dasharray: 3 13; opacity: 0; animation: bp-flow-in .8s ease 1.5s forwards, bp-flow 1.4s linear 1.5s infinite; }
 .bp-tag { cursor: default; }
 .bp-tag .bp-hit { fill: transparent; stroke: none; pointer-events: all; }
 .bp-tag .bp-ring { transition: stroke-width .15s ease, opacity .15s ease; opacity: .55; }

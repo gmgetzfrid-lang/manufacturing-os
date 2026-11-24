@@ -565,6 +565,46 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
   );
 }
 
+// ─── Cause, effect, fix ───────────────────────────────────────────
+
+const firstSentence = (t: string) => { const m = /^(.+?[.!?])(\s|$)/.exec(t.trim()); return (m ? m[1] : t).trim(); };
+
+/** A finding in three lines: why it happened, what it cost, the fix. From
+ *  the finding's own fields (its gap, its effect, its ask); none for a
+ *  strength or a finding with nothing to change. */
+function cefOf(f: Finding, lateH: number | null, tz: string): { cause: string; cost: string; fix: string } | null {
+  if (f.rating === "none" || f.rating === "strength") return null;
+  const L = f.load;
+  const cause = L
+    ? `${L.party} was planned to work ${L.planned.n} jobs at once; ${L.peak.open} were ready at once on ${fmtInTz(L.peak.at, tz, { weekday: "short", month: "numeric", day: "numeric" })}.`
+    : f.gap || firstSentence(f.proof || f.observation.split("\n")[0] || "");
+  const finish = lateH != null && f.finishH > 0 ? `${f.finishH} h of the ${lateH} h late finish.` : f.moved === 0 ? "Did not move the finish." : "";
+  const more = f.because && f.because !== cause ? f.because : f.effect;
+  // The finish once: not again when the cost line already says it.
+  const said = !!more && lateH != null && (more.includes(`${lateH} h`) || /set the finish|did not move the finish/i.test(more));
+  const cost = [more, said ? "" : finish].filter(Boolean).join(" ").trim() || "Not measured in the records.";
+  return { cause, cost, fix: f.ask || f.next };
+}
+
+/** What the suggested schedule (Reports, As-built schedule, Suggested for
+ *  next time) does with this kind of finding, as its rules are written
+ *  (lib/nextPlan, lib/nextPlanLessons, lib/asBuiltReplay). */
+function inSchedule(f: Finding): string | null {
+  const k = f.key;
+  if (k.startsWith("contractors:load:") && f.load) {
+    const P = f.load.party;
+    return `${P} is held at one size for the whole job (its staffing plan, else its first head count, else the most jobs it worked at once this year); work over that waits for it, so these waits stay. Ready jobs that sat while ${P} had room are taken out in the replay. More ${P} on the busy days comes only under "If it still misses the target".`;
+  }
+  if (k === "execution:nobody") return "Taken out: in the replay and the suggested schedule, ready work starts as soon as its crew has room.";
+  if (k === "execution") return "Taken out in the replay: a wait with nothing logged and no reason recorded is not carried.";
+  if (k === "materials:service") return "Taken out first thing once the unit is down, with its real time off site, then put back (under \"What this job taught\").";
+  if (k === "materials") return "Each activity is planned at its planned hours, so the schedule assumes the parts are there. In the replay, tick it under \"One-off delays\" to see this year's finish without it.";
+  if (k === "planning:added") return "Missed scope added this year is in the suggested schedule from the start.";
+  if (k === "scope" || k.startsWith("scope:known:")) return "Work found by inspection is not planned; it shows as a risk with what it would do to the finish.";
+  if (k === "planning" || k === "planning:links" || k === "contractors:handoff") return "Not changed in the suggested schedule.";
+  return null;
+}
+
 // ─── A finding ─────────────────────────────────────────────────────
 
 function FindingCard({ f, tz, lateH, canManage, busy, action, questions, answers, onKeep, onNotRight, onAnswer, onCrews }: {
@@ -590,8 +630,25 @@ function FindingCard({ f, tz, lateH, canManage, busy, action, questions, answers
         {f.source === "job" && <span className="font-medium px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">{f.where}</span>}
       </div>
       <h4 className="mt-1 text-reading font-medium leading-snug text-[var(--color-text)]"><Tags text={f.title} /></h4>
-      {head && <p className="mt-1 text-body leading-relaxed text-[var(--color-text)]" data-finding-headline>{head}</p>}
-      {showEffect && <p className="mt-1 text-body font-medium text-[var(--color-text)]" data-finding-effect>{f.effect}</p>}
+      {/* Read in one look: why, what it cost, the fix, and what the
+          suggested schedule does with it. The record is under it. */}
+      {(() => {
+        const s3 = cefOf(f, lateH, tz);
+        const plan = inSchedule(f);
+        if (!s3 && !plan) return null;
+        return (
+          <div className="mt-2" data-finding-cef>
+            {s3 && (
+              <dl className="grid gap-x-5 gap-y-2 sm:grid-cols-3 rounded-md bg-[var(--color-surface-2)] px-3 py-2.5 text-body">
+                <div><dt className={label}>Why it happened</dt><dd className="mt-0.5 text-[var(--color-text)]">{s3.cause}</dd></div>
+                <div><dt className={label}>What it cost</dt><dd className="mt-0.5 text-[var(--color-text)]">{s3.cost}</dd></div>
+                <div><dt className={label}>Fix next time{action != null ? <span className="font-normal"> · action {action}</span> : null}</dt><dd className="mt-0.5 font-medium text-[var(--color-text)]">{s3.fix || <span className="font-normal text-[var(--color-text-muted)]">Nothing to change.</span>}</dd></div>
+              </dl>
+            )}
+            {plan && <p className="mt-1.5 text-body text-[var(--color-text)]" data-finding-schedule><span className={label}>In the suggested schedule </span>{plan}</p>}
+          </div>
+        );
+      })()}
 
       {L && <LoadBody L={L} tz={tz} canManage={canManage} busy={busy} onCrews={onCrews} />}
       {f.idle && (
@@ -600,8 +657,15 @@ function FindingCard({ f, tz, lateH, canManage, busy, action, questions, answers
           {f.idle.groups.length > 8 && <p className="mt-1 text-caption text-[var(--color-text-muted)]">And {f.idle.groups.length - 8} more in the jobs below.</p>}
         </div>
       )}
-      {rest.length > 0 && <ul className="mt-2 space-y-1 text-body text-[var(--color-text)] list-disc pl-5">{rest.map((l, i) => <li key={i}>{l}</li>)}</ul>}
-      {f.info.length > 0 && <ul className="mt-2 space-y-1 text-body text-[var(--color-text)]">{f.info.map((l, i) => <li key={i} className="border-l-2 border-[var(--color-border-strong)] pl-2">{l}</li>)}</ul>}
+      {(head || showEffect || rest.length > 0 || f.info.length > 0) && (
+        <details className="mt-3 group" data-finding-record>
+          <summary className="cursor-pointer list-none inline-flex items-center gap-1 text-body font-medium text-[var(--color-accent-text)]"><ChevronDown className="w-4 h-4 transition-transform group-open:rotate-180" />What the records say</summary>
+          {head && <p className="mt-1 text-body leading-relaxed text-[var(--color-text)]" data-finding-headline>{head}</p>}
+          {showEffect && <p className="mt-1 text-body font-medium text-[var(--color-text)]" data-finding-effect>{f.effect}</p>}
+          {rest.length > 0 && <ul className="mt-2 space-y-1 text-body text-[var(--color-text)] list-disc pl-5">{rest.map((l, i) => <li key={i}>{l}</li>)}</ul>}
+          {f.info.length > 0 && <ul className="mt-2 space-y-1 text-body text-[var(--color-text)]">{f.info.map((l, i) => <li key={i} className="border-l-2 border-[var(--color-border-strong)] pl-2">{l}</li>)}</ul>}
+        </details>
+      )}
 
       {questions.map((q) => <QuestionLine key={q.key} q={q} said={answers[q.key]?.note ?? ""} canManage={canManage} busy={busy === `q:${q.key}`} onSave={(t) => onAnswer(q, t)} />)}
 
@@ -612,7 +676,7 @@ function FindingCard({ f, tz, lateH, canManage, busy, action, questions, answers
         </details>
       ) : null}
 
-      {(f.ask || action != null) && f.rating !== "none" && f.rating !== "strength" && (
+      {(f.ask || action != null) && f.rating !== "none" && f.rating !== "strength" && !cefOf(f, lateH, tz) && (
         <p className="mt-3 text-body text-[var(--color-text)]"><span className={label}>Next time </span>{f.ask}{action != null && <span className="text-[var(--color-text-muted)]"> (action {action})</span>}</p>
       )}
       {canManage && (
@@ -667,7 +731,7 @@ function LoadBody({ L, tz, canManage, busy, onCrews }: { L: PartyLoad; tz: strin
       </div>
       {jobs.length > 0 && (
         <div className="mt-4">
-          <h5 className="mb-1.5 text-body font-medium text-[var(--color-text)]">{L.waited.length ? `The jobs that waited for ${L.party}, and what they held up` : `${L.party}'s ready jobs with nobody on them`}</h5>
+          <h5 className="mb-1.5 text-body font-medium text-[var(--color-text)]">{L.waited.length ? `Which jobs waited, on what, and what they held up` : `${L.party}'s ready jobs with nobody on them`}</h5>
           <LoadStrip load={L} jobs={jobs} held={L.waited.length ? L.down.held : L.downIdle.held} tz={tz} />
         </div>
       )}

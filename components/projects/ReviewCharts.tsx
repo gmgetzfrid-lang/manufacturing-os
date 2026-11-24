@@ -268,6 +268,20 @@ export function LoadStrip({ load: L, jobs, held, tz }: { load: PartyLoad; jobs: 
                 {j.spans.map((x, k) => <span key={k} className="absolute inset-y-0" style={{ left: left(x.from), width: width(x.from, x.to), background: x.kind === "party" ? WAIT : x.kind === "nobody" ? NOBODY : LATER, borderRadius: 3, opacity: x.kind === "party" ? 0.85 : 1 }} />)}
                 {j.start != null && <span className="absolute inset-y-0" style={{ left: left(j.start), width: width(j.start, j.finish ?? sc.to), background: WORK, borderRadius: 3 }} />}
               </div>
+              {/* What it waited on, in words: the crew's other jobs going
+                  while it waited (the crew was full), or that the crew had
+                  room and nobody was on it. */}
+              {(() => {
+                const waits = j.spans.filter((x) => x.kind === "party");
+                const on = waits.length ? L.jobs.filter((o) => o.id !== j.id && o.start != null && waits.some((x) => o.start! < x.to && (o.finish ?? L.to) > x.from)) : [];
+                const names = on.map(jobName);
+                return (
+                  <>
+                    {j.partyH > 0 && <div className="mt-0.5 text-[var(--color-text)]"><b className="font-medium">Waited {j.partyH} h: {P} was full.</b>{names.length ? <span className="text-[var(--color-text-muted)]"> It was on {names.slice(0, 4).join("; ")}{names.length > 4 ? `; and ${names.length - 4} more` : ""}.</span> : null}</div>}
+                    {j.nobodyH > 0 && <div className="mt-0.5 text-[var(--color-text)]"><b className="font-medium">Sat {j.nobodyH} h with nobody on it</b><span className="text-[var(--color-text-muted)]"> while {P} had room: the wait that needn&apos;t have been.</span></div>}
+                  </>
+                );
+              })()}
               {after.length > 0 && <div className="mt-0.5 text-[var(--color-text-muted)]">Held up after it: {after.map((h) => `${jobName(h)} (${h.party}) ${h.hours} h`).join("; ")}</div>}
             </li>
           );

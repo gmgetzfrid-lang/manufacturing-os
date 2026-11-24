@@ -100,7 +100,8 @@ export function AuthCard({ title, sub, children, footer, wide = false, status, s
       <main className="relative z-10 min-h-dvh flex flex-col justify-end pt-[38dvh] md:pt-[46dvh] md:pb-10 md:px-6 lg:p-14 lg:items-end pointer-events-none">
         <div className={`bp-rise pointer-events-auto w-full md:mx-auto lg:mx-0 ${wide ? "md:max-w-[640px]" : "md:max-w-[480px]"} rounded-t-[20px] md:rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-[var(--shadow-float)] flex flex-col overflow-hidden`}>
           <div className="order-1 px-5 pt-6 pb-5 sm:px-7 sm:pt-7">
-            <h1 className="font-display text-[30px] sm:text-[34px] leading-[1.1] font-bold text-[var(--color-text)]">{title}</h1>
+            {/* The full stop in the app's orange: its third color, as an accent. */}
+            <h1 className="font-display text-[30px] sm:text-[34px] leading-[1.1] font-bold text-[var(--color-text)]">{typeof title === "string" && title.endsWith(".") ? <>{title.slice(0, -1)}<span className="text-[var(--app-orange)]">.</span></> : title}</h1>
             {sub && <p className="mt-2 text-reading text-[var(--color-text-muted)]">{sub}</p>}
             <div className="mt-6">{children}</div>
           </div>
