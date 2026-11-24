@@ -61,7 +61,7 @@ export function computeNudges(snap: InboxSnapshot): Nudge[] {
       severity: "high",
       message: `${overdue.length} milestone${overdue.length === 1 ? " is" : "s are"} overdue${oldest?.__overdueDays ? ` (oldest ${oldest.__overdueDays}d late)` : ""}. Update the status or reschedule.`,
       actionLabel: overdue.length === 1 && oldest?.projectId ? "Update it" : "Go to projects",
-      href: overdue.length === 1 && oldest?.projectId ? `/projects/${oldest.projectId}?tab=plan&ask=late&m=${oldest.id ?? ""}` : "/projects",
+      href: overdue.length === 1 && oldest?.projectId ? `/projects/${oldest.projectId}?tab=work&ask=late&m=${oldest.id ?? ""}` : "/projects",
     });
   }
 

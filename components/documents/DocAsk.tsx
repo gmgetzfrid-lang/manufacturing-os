@@ -43,7 +43,11 @@ interface Props {
   canManage: boolean;
   onOpen: () => void;
   canOpen: boolean;
+  /** The file can't be shown here: Download is how they read it. */
+  onDownload?: () => void;
   onCheckout: (doc: DocumentRecord) => void;
+  /** Document control may release someone else's checkout. */
+  onForceUnlock?: (doc: DocumentRecord) => void;
   /** Something changed: the panel re-reads what it shows. */
   onChanged?: () => void;
 }
@@ -55,7 +59,7 @@ const sinceWords = (iso: string | null | undefined): NeededWhen | null => {
   const d = daysFromToday(iso);
   if (d == null) return null;
   const ago = -d;
-  return { text: `No due date. Asked ${plainDate(iso)}${ago > 0 ? `, ${ago} day${ago === 1 ? "" : "s"} ago` : ", today"}`, soon: ago >= 7, late: ago >= 14 };
+  return { text: `No due date. Asked ${plainDate(iso)}${ago > 0 ? `, ${ago} day${ago === 1 ? "" : "s"} ago` : ", today"}`, soon: ago >= 7 };
 };
 
 const where = (src: "document" | "collection" | "library" | null) =>
@@ -242,7 +246,7 @@ export default function DocAsk(p: Props) {
           if (p.canManage && uid) await markReviewed({ orgId, documentId: doc.id!, userId: uid, userName: userEmail, outcome: "needs_revision" });
           startRevision();
         })}>Needs changes</Button>
-        {p.canOpen && <Button variant="tertiary" onClick={p.onOpen}>Open it to check</Button>}
+        {p.canOpen ? <Button variant="tertiary" onClick={p.onOpen}>Open it to check</Button> : p.onDownload ? <Button variant="tertiary" onClick={p.onDownload}>Download it to check</Button> : null}
       </NeededFromYou>
     );
   }
@@ -260,7 +264,7 @@ export default function DocAsk(p: Props) {
           note={errLine ?? <>Your confirmation goes on the record with your signature.</>}
         >
           <Button loading={busy === "ack"} onClick={() => setSigning("ack")}>I&apos;ve read and understood it</Button>
-          {p.canOpen && <Button variant="secondary" onClick={p.onOpen}>Open it to read</Button>}
+          {p.canOpen ? <Button variant="secondary" onClick={p.onOpen}>Open it to read</Button> : p.onDownload ? <Button variant="secondary" onClick={p.onDownload}>Download it to read</Button> : null}
         </NeededFromYou>
         {signing === "ack" && (
           <SignatureCeremony
@@ -452,6 +456,21 @@ export default function DocAsk(p: Props) {
   if (ask === "checkout") {
     if (session) {
       const late = session.due ? (daysFromToday(session.due) ?? 0) < 0 : false;
+      const longHeld = session.startedAt ? (daysFromToday(session.startedAt) ?? 0) <= -7 : false;
+      // A fresh checkout (someone joined it, or a heads-up): say who has it
+      // and give Check in; the "keep it longer" ask is for one that's overdue.
+      if (!late && !longHeld) {
+        return (
+          <NeededFromYou
+            what={<>You have {label} checked out{note?.title ? `: ${note.title}` : ""}. Check it in when your change is done.</>}
+            why={note?.body ?? <>While you hold it, nobody else can check it out or publish over it.</>}
+            when={session.due ? { text: `Due back ${plainDate(session.due)}` } : null}
+            note={errLine}
+          >
+            <Button onClick={() => p.onCheckout(doc)}>Check in</Button>
+          </NeededFromYou>
+        );
+      }
       const when: NeededWhen | null = session.due
         ? (late ? { text: `Was due back ${plainDate(session.due)} (${-(daysFromToday(session.due) ?? 0)} days ago)`, late: true } : { text: `Due back ${plainDate(session.due)}`, soon: true })
         : session.startedAt ? { text: `No return date. Out since ${plainDate(session.startedAt)}`, soon: true } : null;
@@ -472,12 +491,20 @@ export default function DocAsk(p: Props) {
     }
     const other = doc.checkedOutBy && doc.checkedOutBy !== uid;
     if (other) {
+      // Document control sent here about someone else's long checkout: ask
+      // them to check it in, or release it when the work is done.
+      const who = doc.checkedOutByName || "Someone else";
       return (
         <NeededFromYou
-          what={<>{doc.checkedOutByName || "Someone else"} has {label} checked out. Talk to them before you change it.</>}
+          what={p.onForceUnlock
+            ? <>{who} has had {label} checked out since {plainDate(String(doc.checkedOutAt ?? "")) || "a while"}. Ask them to check it in, or release it if the work is done.</>
+            : <>{who} has {label} checked out. Talk to them before you change it.</>}
           why={note?.body ?? <>Their changes come in when they check it in; work on an old copy can be lost.</>}
-          when={doc.checkedOutAt ? { text: `Checked out ${plainDate(String(doc.checkedOutAt))}` } : null}
-        />
+          when={doc.checkedOutAt ? { text: `Checked out ${plainDate(String(doc.checkedOutAt))}`, soon: true } : null}
+          note={p.onForceUnlock ? <>Release ends their checkout; anything they haven&apos;t checked in stays with them.</> : null}
+        >
+          {p.onForceUnlock && <Button variant="secondary" onClick={() => p.onForceUnlock?.(doc)}>Release their checkout</Button>}
+        </NeededFromYou>
       );
     }
     return nothing(<>{note?.body ? `${note.body} ` : ""}You don&apos;t have {label} checked out now. Check it out again if you&apos;re still working on it.</>);

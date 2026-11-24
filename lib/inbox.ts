@@ -247,7 +247,22 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
     ? ((milestonesRes.value.data || []) as Array<Record<string, unknown>>).filter((r) => !r.cancelled_at).map(rowToMilestone)
     : [];
   // Mine = in one of my projects, or assigned directly (no projectId).
-  const myMilestones = allMilestones.filter((m) => !m.projectId || myProjectIds.has(m.projectId));
+  const mineAll = allMilestones.filter((m) => !m.projectId || myProjectIds.has(m.projectId));
+  // A task whose own row still reads "planned" while every step under it is
+  // done is done (the schedule rolls it up the same way): it isn't late and
+  // nothing is asked of anyone, so it stays off these lists.
+  const rolledUpDone = new Set<string>();
+  const parentIds = mineAll.map((m) => m.id).filter((id): id is string => !!id);
+  if (parentIds.length) {
+    const { data: kids } = await supabase.from("milestones").select("parent_id, status, cancelled_at").in("parent_id", parentIds.slice(0, 200));
+    const byParent = new Map<string, Array<{ status: string; cancelled_at: string | null }>>();
+    for (const k of (kids ?? []) as Array<{ parent_id: string; status: string; cancelled_at: string | null }>) {
+      if (k.cancelled_at) continue;
+      byParent.set(k.parent_id, [...(byParent.get(k.parent_id) ?? []), k]);
+    }
+    for (const [pid, list] of byParent) if (list.length && list.every((k) => k.status === "completed")) rolledUpDone.add(pid);
+  }
+  const myMilestones = mineAll.filter((m) => !m.id || !rolledUpDone.has(m.id));
   const msTime = (m: Milestone) => new Date(String(m.plannedAt ?? "")).getTime();
   // Due within the next 7 days — the forward-looking "this week" list.
   const milestonesUpcoming = myMilestones

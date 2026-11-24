@@ -1779,7 +1779,6 @@ export default function TicketDetailView() {
           onYou={onYou}
           stateWords={stateWords}
           main={mainAct ? { label: sentence(mainAct.label), run: () => initiateWorkflowAction(mainAct) } : null}
-          others={quietActs.map((a) => ({ label: sentence(a.label), run: () => initiateWorkflowAction(a) }))}
           busy={!!actionLoading}
           dueIso={ticket.targetCompletionAt ? toDate(ticket.targetCompletionAt).toISOString() : null}
           pastDue={pastDue}

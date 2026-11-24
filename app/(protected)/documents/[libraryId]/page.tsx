@@ -4131,7 +4131,7 @@ export default function LibraryExplorerPage() {
           url={selectedVersion.fileUrl}
           title={selectedDoc.title || "Document"}
           docNumber={selectedDoc.documentNumber || ""}
-          rev={selectedVersion.revisionLabel || ""}
+          rev={shownRevision(selectedVersion.revisionLabel, uploadedName(selectedDoc)) ?? ""}
           document={selectedDoc}
           userRole={activeRole}
           currentUserId={uid || undefined}

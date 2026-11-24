@@ -28,6 +28,8 @@ interface SecureDocViewerProps {
   size?: number | null;
   /** Download for the file card; when absent the card saves the file itself. */
   onDownload?: () => Promise<void> | void;
+  /** The host opens the file full size on a tap (the panel does). */
+  tapToOpen?: boolean;
   documentId?: string;
   orgId?: string;
   watermarkText?: string;
@@ -43,13 +45,19 @@ export default function SecureDocViewer({
   mime,
   size,
   onDownload,
+  tapToOpen = false,
   documentId,
   orgId, 
   watermarkText,
   zoomLevel 
 }: SecureDocViewerProps) {
   const { userEmail, uid, activeRole } = useRole();
-  const kind = previewKind({ fileName, mime, path: url });
+  // A browser without its own PDF viewer (Chrome on Android) downloads a
+  // PDF put in a frame, just like a Word file: there the preview is a tap
+  // to open it full size (drawn by the app's own viewer), never a frame.
+  const [pdfInFrame] = useState(() => typeof navigator === 'undefined' || (navigator as Navigator & { pdfViewerEnabled?: boolean }).pdfViewerEnabled !== false);
+  const fileKind = previewKind({ fileName, mime, path: url });
+  const kind = fileKind === 'pdf' && !pdfInFrame ? 'tap' as const : fileKind;
   const shownName = fileName || decodeURIComponent((url || '').split(/[?#]/)[0].split('/').pop() || '') || title;
   const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState<unknown>(null);
@@ -169,7 +177,7 @@ export default function SecureDocViewer({
 
     // Only files the browser can draw are fetched: a frame given a Word or
     // CAD file downloads it instead of showing it.
-    if (url && kind !== 'none') void show();
+    if (url && kind !== 'none' && kind !== 'tap') void show();
 
     // The local URL is this frame's own; the bytes stay in the cache.
     return () => {
@@ -261,7 +269,13 @@ export default function SecureDocViewer({
 
       {/* CONTENT AREA */}
       <div className="flex-1 relative bg-[var(--color-surface)]">
-        {kind === 'none' ? (
+        {kind === 'tap' ? (
+          <div className="absolute inset-0 z-[5] flex flex-col items-center justify-center gap-2 p-4 text-center bg-[var(--color-surface-2)] text-[var(--color-text)]">
+            <FileText aria-hidden className="w-8 h-8 text-[var(--color-text-muted)]" />
+            <p className="text-[15px] font-semibold break-words max-w-full">{shownName}</p>
+            <p className="text-[14px] text-[var(--color-text-muted)]">{[fileTypeName({ fileName: shownName, mime, path: url }), sizeWords(size)].filter(Boolean).join(', ')}. {tapToOpen ? 'Tap to open it full size.' : "This browser can't show a PDF inside the page."}</p>
+          </div>
+        ) : kind === 'none' ? (
           // A file the browser can't show: what it is, and a Download that
           // only runs when pressed.
           <div className="absolute inset-0 z-[60] flex items-center justify-center p-4 bg-[var(--color-surface-2)]">

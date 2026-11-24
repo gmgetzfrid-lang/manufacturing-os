@@ -73,6 +73,8 @@ import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 
 import { friendlyError } from "@/lib/friendlyError";
+import { previewKind, fileTypeName } from "@/lib/filePreview";
+import { shownRevision, uploadedName } from "@/lib/revisionShown";
 // Serve the pdfjs worker from our own /public so the viewer doesn't depend
 // on a CDN at all. The file is copied from node_modules during build via
 // `scripts/copy-pdfjs-worker.mjs` (wired into `prebuild`/`predev`). CDN
@@ -158,6 +160,10 @@ export default function FullScreenViewer({
   const canManageAssets = userRole === 'Admin' || userRole === 'Manager' || userRole === 'Supervisor'
     || (userRole?.includes('Engineer') ?? false) || userRole === 'Drafter' || userRole === 'DocCtrl';
   const router = useRouter();
+  // A Word, Excel or CAD file isn't a drawing this viewer can show: say so
+  // in words (the panel's Download saves it) instead of a PDF parse error.
+  const shownFileName = uploadedName(docRecord) || decodeURIComponent((url || "").split(/[?#]/)[0].split("/").pop() || "");
+  const notViewable = previewKind({ fileName: shownFileName, path: url }) === "none";
   const isMobile = useIsMobile();
   const [tagsBarOpen, setTagsBarOpen] = useState(true);
   // ─── Pre-fetched PDF bytes (one fetch for view AND save) ──────────────
@@ -932,7 +938,7 @@ export default function FullScreenViewer({
       const unit = metaVal(/\bunit\b|\barea\b/i) ?? "";
       const docNum = docNumber || d.documentNumber || "";
       const docTitle = title || d.title || "";
-      const docRev = rev || d.rev || "";
+      const docRev = rev || shownRevision(d.rev, uploadedName(d)) || "";
 
       // Capture any markups the user has drawn (including the live page).
       saveCurrentPage();
@@ -1214,7 +1220,7 @@ export default function FullScreenViewer({
         <header className="relative z-[60] shrink-0 border-b border-[var(--color-border)] px-3 sm:px-5 py-2.5 sm:py-3 flex flex-wrap lg:flex-nowrap items-center gap-x-3 gap-y-2">
           <div className="min-w-0 flex-1 basis-[calc(100%-56px)] lg:basis-auto">
             <div className={vKicker}>
-              {docNumber && docNumber !== title ? <>{docNumber} · </> : null}Rev {rev || "-"}
+              {docNumber && docNumber !== title ? <>{docNumber} · </> : null}{rev ? `Rev ${rev}` : "No revision set"}
               {vb && statusWord && (
                 <> · <span className={statusTone[vb.tone]} title="Status of the live version you're viewing. A copy you download or print is stamped separately.">{statusWord}</span></>
               )}
@@ -1507,8 +1513,8 @@ export default function FullScreenViewer({
               {!archivedInfo && fetchError && (
                 <div role="alert" className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center">
                   <ShieldAlert className="w-10 h-10 text-rose-400 mb-3" />
-                  <div className="text-[15px] font-bold text-[var(--color-text)] mb-1">Couldn&apos;t open this drawing</div>
-                  <div className="text-[13px] text-[var(--color-text-muted)] max-w-md">{fetchError}</div>
+                  <div className="text-[15px] font-bold text-[var(--color-text)] mb-1">{notViewable ? `${fileTypeName({ fileName: shownFileName, path: url })} can't be shown here` : "Couldn't open this drawing"}</div>
+                  <div className="text-[13px] text-[var(--color-text-muted)] max-w-md">{notViewable ? "Close this and use Download in the document's panel to open it in its own program." : fetchError}</div>
                 </div>
               )}
               {!archivedInfo && !fetchError && !resolvedUrl && (

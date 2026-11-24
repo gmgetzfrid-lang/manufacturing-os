@@ -41,8 +41,14 @@ const KIND_TODO: Record<string, string> = {
   markup_request: "Markups asked for",
   access_recert_due: "Recertify access",
   request_pending_approval: "Approve or assign",
-  deletion_requested: "Deletion asked for",
+  deletion_requested: "Delete it, or keep it",
   equipment_request: "Equipment asked for",
+  hold_opened: "On hold: stop work from it",
+  checkout_conflict: "Someone joined your checkout",
+  overlap_advisory: "Coordinate: parallel work",
+  review_complete: "Publish the approved revision",
+  ack_overdue: "Remind who hasn't acknowledged",
+  review_overdue: "Follow up on the sign-off",
 };
 
 /** Kinds whose title is "<what happened>: <document>", so the document is
@@ -51,6 +57,7 @@ const KIND_TODO: Record<string, string> = {
 const LABELLED_KINDS = new Set([
   "review_due", "review_overdue", "review_requested", "review_invalidated", "review_signed", "review_complete",
   "ack_overdue", "owner_behind", "access_recert_due", "owner_assigned",
+  "ack_requested", "deletion_requested",
 ]);
 
 /** "KE-DDRT-26-0003 do stuff" → ["KE-DDRT-26-0003", "do stuff"]. */

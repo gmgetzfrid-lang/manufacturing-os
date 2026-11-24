@@ -303,7 +303,7 @@ export default function InboxPage() {
       key: "late-ms", title: "Milestones past their date", tone: "bad", count: data.milestonesOverdue.length,
       rows: data.milestonesOverdue.slice(0, 6).map((m, i) => ({
         key: m.id ?? `mo-${i}`, late: true,
-        item: m.projectId ? <Link href={`/projects/${m.projectId}?tab=plan&ask=late&m=${m.id ?? ""}`} className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{m.name}</Link> : <span className="font-semibold">{m.name}</span>,
+        item: m.projectId ? <Link href={`/projects/${m.projectId}?tab=work&ask=late&m=${m.id ?? ""}`} className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{m.name}</Link> : <span className="font-semibold">{m.name}</span>,
         detail: m.__projectName ?? "",
         when: <StatusTag tone="overdue">{m.__overdueDays ?? 0} day{m.__overdueDays === 1 ? "" : "s"} late</StatusTag>,
       })),
@@ -314,7 +314,7 @@ export default function InboxPage() {
         const d = m.__dueInDays ?? 0;
         return {
           key: m.id ?? `m-${i}`,
-          item: m.projectId ? <Link href={`/projects/${m.projectId}?tab=plan&ask=due&m=${m.id ?? ""}`} className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{m.name}</Link> : <span className="font-semibold">{m.name}</span>,
+          item: m.projectId ? <Link href={`/projects/${m.projectId}?tab=work&ask=due&m=${m.id ?? ""}`} className="font-semibold text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{m.name}</Link> : <span className="font-semibold">{m.name}</span>,
           detail: m.__projectName ?? "",
           when: d <= 2 ? <StatusTag tone="held">{d === 0 ? "Due today" : `In ${d} day${d === 1 ? "" : "s"}`}</StatusTag> : <>In {d} days</>,
         };

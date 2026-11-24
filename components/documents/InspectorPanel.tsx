@@ -52,7 +52,7 @@ import { friendlyError } from "@/lib/friendlyError";
 import DocAsk from "@/components/documents/DocAsk";
 import type { Ask } from "@/lib/asks";
 import { shownRevision, uploadedName } from "@/lib/revisionShown";
-import { previewKind } from "@/lib/filePreview";
+import { previewKind, fileTypeName, sizeWords } from "@/lib/filePreview";
 import { downloadStoredFile } from "@/lib/fileDownload";
 interface InspectorPanelProps {
   selectedDoc: DocumentRecord | null;
@@ -426,7 +426,9 @@ export default function InspectorPanel({
           canManage={canPublishEff}
           canOpen={canPreview}
           onOpen={onFullScreen}
+          onDownload={selectedVersion?.fileUrl && !canPreview ? () => void downloadFile() : undefined}
           onCheckout={onCheckout}
+          onForceUnlock={isController && onForceUnlock ? onForceUnlock : undefined}
         />
       )}
 
@@ -619,8 +621,19 @@ export default function InspectorPanel({
       })()}
 
       {/* PREVIEW ────────────────────────────────────────────────────── */}
-      {selectedVersion?.fileUrl ? (
-        <div className={`relative group rounded-lg overflow-hidden ${canPreview ? "h-[40vh] min-h-72" : "h-64"} bg-[var(--color-ink)]`}>
+      {selectedVersion?.fileUrl && !canPreview ? (
+        // A file the browser can't show (Word, Excel, CAD): what it is, and
+        // Download in the buttons above. Nothing loads until it's pressed.
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4 flex items-start gap-3">
+          <FileText aria-hidden className="w-8 h-8 shrink-0 text-[var(--color-text-muted)]" />
+          <div className="min-w-0">
+            <p className="text-[15px] font-semibold text-[var(--color-text)] break-words">{fileName || title}</p>
+            <p className="text-[14px] text-[var(--color-text-muted)]">{[fileTypeName({ fileName, mime: selectedVersion.fileType, path: selectedVersion.fileUrl }), sizeWords(sizeBytes)].filter(Boolean).join(", ")}</p>
+            <p className="mt-2 text-[14px] text-[var(--color-text-muted)]">This file type can&apos;t be shown here. Download saves it so it opens in its own program.</p>
+          </div>
+        </div>
+      ) : selectedVersion?.fileUrl ? (
+        <div className="relative group rounded-lg overflow-hidden h-[40vh] min-h-72 bg-[var(--color-ink)]">
           <SecureDocViewer
             url={selectedVersion.fileUrl}
             title={title}
@@ -630,17 +643,18 @@ export default function InspectorPanel({
             mime={selectedVersion.fileType}
             size={sizeBytes ?? null}
             onDownload={downloadFile}
+            tapToOpen
             zoomLevel={75}
             watermarkText="PREVIEW"
           />
           {/* Click-catcher overlay — iframe absorbs pointer events otherwise */}
-          {canPreview && <button
+          <button
             type="button"
             onClick={onFullScreen}
             className="absolute inset-0 z-10 bg-black/0 hover:bg-black/10 transition-colors cursor-zoom-in"
             title="Open full size"
             aria-label="Open full size"
-          />}
+          />
         </div>
       ) : (
         <div className="h-40 rounded-lg bg-[var(--color-surface-2)] flex items-center justify-center text-[14px] text-[var(--color-text-muted)]">

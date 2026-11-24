@@ -780,7 +780,7 @@ export default function ProjectDetailPage() {
       {/* CONTENT: white cards on the paper, over the band's bottom edge. The
           schedule's tabs use the full width; the rest a reading width. */}
       <PageBody>
-        {askStep && project.id && <ProjectAsk stepId={askStep} projectId={project.id} />}
+        {askStep && project.id && <ProjectAsk stepId={askStep} projectId={project.id} onWorkTab={tab === "work"} />}
         {/* The work is done: what's left to close, as one path. */}
         {tab === "plan" && closing && (
           <ClosePath close={close} standings={standings} when={when} />
