@@ -9,7 +9,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   Loader2, Upload,
   Trash2, RefreshCw, AlertTriangle, Globe, Bot,
-  ChevronRight, Wand2, Eye, MessageSquare, ArrowRight, FolderUp, Search,
+  ChevronRight, Wand2, Eye, MessageSquare, ArrowRight, FolderUp, Search, Image as ImageIcon,
 } from "lucide-react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -31,6 +31,7 @@ import {
   type KnowledgeLibrary, type KnowledgeDocument,
   type KnowledgeLibraryLink,
   rebuildDrawingIndex,
+  readLibraryFigures,
 } from "@/lib/knowledge";
 import { listThreads, type ChatThread } from "@/lib/chatClient";
 import LibraryAiModal from "@/components/knowledge/LibraryAiModal";
@@ -615,6 +616,35 @@ export default function KnowledgeLibraryPage() {
                 className="inline-flex items-center gap-1.5 h-8 pointer-coarse:h-10 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
               >
                 <RefreshCw aria-hidden className="w-3.5 h-3.5" /> Re-index all
+              </button>
+            )}
+            {/* Figure pages indexed as their labels only (before the reader
+                looked at figures): re-read just those documents. */}
+            {isController && docs.length > 0 && (
+              <button
+                onClick={async () => {
+                  const ok = await appConfirm({
+                    title: "Read the figures?",
+                    message:
+                      "Finds figure pages that were indexed as their labels only, and re-reads those documents so "
+                      + "each drawing is looked at and described: what is attached to what, how, and its limits. "
+                      + "Pages already read are reused, and search keeps working while it runs. Uses your AI key.",
+                    confirmLabel: "Read figures",
+                  });
+                  if (!ok || !activeOrgId) return;
+                  try {
+                    const res = await readLibraryFigures(activeOrgId, libraryId);
+                    showToast(res.docs === 0
+                      ? { type: "success", title: "Every figure page has been read already." }
+                      : { type: "success", title: `Reading ${res.pages} figure ${res.pages === 1 ? "page" : "pages"} in ${res.docs} ${res.docs === 1 ? "document" : "documents"}. You can leave this page.` });
+                    void refresh();
+                  } catch (e) {
+                    showToast({ type: "error", title: friendlyError(e) });
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 h-8 pointer-coarse:h-10 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[13px] font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+              >
+                <ImageIcon aria-hidden className="w-3.5 h-3.5" /> Read figures
               </button>
             )}
             {isController && (

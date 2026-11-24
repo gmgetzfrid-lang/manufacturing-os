@@ -1106,6 +1106,12 @@ export async function rebuildDrawingIndex(orgId: string, libraryId: string): Pro
   return apiPost("/api/knowledge/drawing", { orgId, libraryId, action: "rebuild" });
 }
 
+/** Re-read the documents whose figure pages were indexed as labels only,
+ *  so their drawings are looked at (their pages stay searchable meanwhile). */
+export async function readLibraryFigures(orgId: string, libraryId: string): Promise<{ docs: number; pages: number }> {
+  return apiPost("/api/knowledge/drawing", { orgId, libraryId, action: "read-figures" });
+}
+
 export interface RecordedAuditSheet {
   sheetNumber: string;
   revision: string;

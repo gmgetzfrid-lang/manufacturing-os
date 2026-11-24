@@ -212,6 +212,9 @@ export interface FollowupPlan {
    *  the answer spans several distinct aspects and the model wants the asker
    *  to pick which one(s) before answering. */
   clarify: { question: string; options: string[] } | null;
+  /** Documents IN the library an engineer would open for this question,
+   *  chosen from the titles shown to the planner. Present only when given. */
+  open?: string[];
 }
 
 /** Parse the reference-chasing round: expects a JSON object
@@ -240,10 +243,12 @@ export function parseFollowupPlan(modelOutput: string): FollowupPlan {
     try {
       const v = JSON.parse(s) as Record<string, unknown>;
       if (v && typeof v === "object" && !Array.isArray(v)) {
+        const open = strings(v.open_documents ?? v.openDocuments).slice(0, 3);
         return {
           queries: strings(v.queries),
           missingDocs: strings(v.missing_documents ?? v.missingDocuments),
           clarify: clarifyOf(v.clarify),
+          ...(open.length > 0 ? { open } : {}),
         };
       }
     } catch { /* keep trying */ }

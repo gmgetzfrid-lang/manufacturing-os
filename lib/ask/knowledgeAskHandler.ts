@@ -53,6 +53,8 @@ import {
   parsePrefixMap, matchEquipmentListIntent, EQUIPMENT_CATEGORIES,
 } from "@/lib/drawingText";
 import { renderKnowledgePages, MAX_DEEP_READ_PAGES } from "@/lib/knowledgePageRender";
+import { labelsToResolve, pickPageTargets, type Anchor } from "@/lib/ask/pageTargets";
+import { designationMatch, routeCandidates } from "@/lib/ask/titleRouting";
 import { loadCodebookAdmin, codebookToDecoderText } from "@/lib/codebookServer";
 import { loadCatalog, loadEntries, ENTRY_KIND } from "@/lib/knowledgeCatalogServer";
 import { pressureClassOf, pressureClassesOf, pressureClassNote } from "@/lib/pressureClass";
@@ -1091,6 +1093,9 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
     // names) — candidates for whole-document reading below.
     const namedDocs: Array<{ id: string; name: string; libraryId: string }> = [];
     const questionDocIds = new Set<string>();
+    // Documents opened because the plan routed the question to them by
+    // title (the governing practice), read in full after the named ones.
+    const routedDocIds = new Set<string>();
     {
       const preview = chunks.length === 0
         ? "(nothing matched the first-round queries)"
@@ -1099,6 +1104,17 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       emit({ t: "status", text: chunks.length === 0
         ? "Nothing matched yet - rewriting the search"
         : `Reviewing ${chunks.length} passage${chunks.length === 1 ? "" : "s"} and chasing references` });
+      // The documents an engineer would OPEN: titles that share the
+      // question's words, and their siblings (lib/ask/titleRouting). Search
+      // matches words on pages; this matches the question to the practice
+      // that governs it ("weld a coupling into a blind" → Piping
+      // Fabrication), which page search alone never opened.
+      const routeList = routeCandidates({
+        docs: reachableDocs.map((d) => ({ id: d.id, name: d.name })),
+        question: [question, ...history.slice(-2).map((t) => t.question)].join(" "),
+        queries,
+        retrievedDocIds: chunks.map((c) => c.document_id),
+      });
       const refineOut = await callFast({
         system:
           'You review passages retrieved from technical document libraries to answer a question. These ' +
@@ -1119,19 +1135,33 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
               'the aspects found IN THE PASSAGES. Omit "clarify" for single-aspect questions - a needless ' +
               'clarification is worse than a long answer.\n'
             : '') +
-          'If the passages fully cover the question, reply {"queries": [], "missing_documents": []}.',
+          '- "open_documents": up to 3 designations, copied FROM THE TITLE LIST below, of the documents ' +
+          'an engineer would OPEN to answer this - the practice that governs what is being done (a ' +
+          'fabrication question opens the fabrication practice; a flange question opens the flange ' +
+          'practice), even when no passage above came from it. Governing practices before checklists, ' +
+          'data sheets and forms. Empty array if the passages already come from them.\n' +
+          'If the passages fully cover the question, reply {"queries": [], "missing_documents": [], "open_documents": []}.',
         user: (history.length > 0
           ? `EARLIER IN THIS CONVERSATION:\n${history.slice(-3).map((t) => `Q: ${truncateSafe(t.question, 200)}`).join("\n")}` +
             (conversationDocNames.size > 0
               ? `\nDocuments relied on so far: ${[...conversationDocNames.values()].slice(0, 4).join(", ")}`
               : "") + "\n\n"
-          : "") + `QUESTION: ${question}\n\nRETRIEVED SO FAR:\n${preview}`,
-        maxTokens: 800,
+          : "") + `QUESTION: ${question}\n\nRETRIEVED SO FAR:\n${preview}` +
+          (routeList.length > 0
+            ? `\n\nTITLE LIST - documents in these libraries that may govern this question:\n${routeList.map((d) => `- ${d.name}`).join("\n")}`
+            : ""),
+        maxTokens: 900,
       }).catch(() => null);
       const plan = refineOut
         ? parseFollowupPlan(refineOut.text)
         : { queries: [], missingDocs: [], clarify: null };
-      trace.stage("refine", { queries: plan.queries, missingDocs: plan.missingDocs, clarify: !!plan.clarify, failed: !refineOut });
+      trace.stage("refine", { queries: plan.queries, missingDocs: plan.missingDocs, open: plan.open ?? [], routeList: routeList.length, clarify: !!plan.clarify, failed: !refineOut });
+      // Documents the plan chose to open: only names that ARE in the list
+      // (a planner can't invent a document into the read).
+      const openDesignations = (plan.open ?? []).filter((o) => {
+        const sq = squashDes(o);
+        return sq.length >= 4 && routeList.some((d) => squashDes(d.name).includes(sq));
+      });
       // ── Clarify round (opt-in per library): the answer spans several
       //    distinct aspects — ask WHICH before answering, instead of burying
       //    the asker in mostly-irrelevant material. Returns before the big
@@ -1185,7 +1215,7 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       //    reserved passages that bypass ranking entirely.
       const squashName = squashDes;
       const designations = new Set<string>();
-      for (const src of [...plan.missingDocs, ...plan.queries, question]) {
+      for (const src of [question, ...openDesignations, ...plan.missingDocs, ...plan.queries]) {
         for (const m of src.matchAll(/\b[A-Za-z]{1,8}[- ]?\d+(?:[-.]\d+)*[A-Za-z]?\b/g)) {
           const sq = squashName(m[0]);
           if (sq.length >= 4 && /\d/.test(sq) && /[A-Z]/.test(sq)) designations.add(m[0].trim());
@@ -1195,13 +1225,24 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       if (designations.size > 0) {
         const docRows = reachableDocs;
         const targets: Array<{ doc: ReachableDoc; designation: string }> = [];
-        for (const des of designations) {
-          const sq = squashName(des);
-          for (const d of docRows) {
-            if (!squashName(d.name).includes(sq)) continue;
-            matchedDesignations.add(des);
-            if (!targets.some((t) => t.doc.id === d.id)) targets.push({ doc: d, designation: des });
-          }
+        // Each designation's own document first ("EP 5-5-1" is EP 5-5-1,
+        // not its checklist EP 5-5-1C, and never EP 5-5-10), in the order
+        // the designations were named; variants and mentions after.
+        const perDes = [...designations].map((des) => ({
+          des,
+          docs: docRows.map((d) => ({ d, q: designationMatch(des, d.name) }))
+            .filter((x) => x.q > 0).sort((a, b) => b.q - a.q),
+        }));
+        // Matched = a document IS that designation (or a variant of it). A
+        // title that only mentions it ("…Constructed to ASME B31.3") doesn't
+        // make B31.3 present.
+        for (const { des, docs } of perDes) if (docs.some((x) => x.q >= 2)) matchedDesignations.add(des);
+        for (const { des, docs } of perDes) {
+          const best = docs[0];
+          if (best && !targets.some((t) => t.doc.id === best.d.id)) targets.push({ doc: best.d, designation: des });
+        }
+        for (const { des, docs } of perDes) {
+          for (const x of docs.slice(1)) if (!targets.some((t) => t.doc.id === x.d.id)) targets.push({ doc: x.d, designation: des });
         }
         // The TOPIC behind the designation: the refine query that mentioned
         // it, minus the designation itself ("EP 5-1-1 suction line sizing" →
@@ -1213,6 +1254,7 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
         };
         for (const t of targets.slice(0, 3)) {
           namedDocs.push({ id: t.doc.id, name: t.doc.name, libraryId: t.doc.library_id });
+          if (openDesignations.includes(t.designation)) routedDocIds.add(t.doc.id);
         }
         const pulls = await Promise.all(targets.slice(0, 3).map(async ({ doc, designation }) => {
           let rows: RetrievedChunk[] = [];
@@ -1251,7 +1293,7 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       for (const m of question.matchAll(/\b[A-Za-z]{1,8}[- ]?\d+(?:[-.]\d+)*[A-Za-z]?\b/g)) {
         const sq = squashName(m[0]);
         if (sq.length < 4 || !/\d/.test(sq) || !/[A-Z]/.test(sq)) continue;
-        for (const d of reachableDocs) if (squashName(d.name).includes(sq)) questionDocIds.add(d.id);
+        for (const d of reachableDocs) if (designationMatch(m[0], d.name) >= 2) questionDocIds.add(d.id);
       }
       // A follow-up that names no document is about the one the
       // conversation has been reading. It joins the named documents (after
@@ -1263,26 +1305,28 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
         const d = reachableDocs.find((x) => x.id === docId);
         if (d) namedDocs.push({ id: d.id, name: d.name, libraryId: d.library_id });
       }
-      // Validate claimed-missing docs. A NAME match above proves presence. A
-      // content probe that hits real passages proves it too — and those
-      // passages now JOIN the pool instead of being thrown away (they used
-      // to be discarded after counting, so the route could prove a document
-      // existed and still answer without it).
+      // Validate claimed-missing docs. Only a NAME match proves presence;
+      // the passages a probe finds join the pool either way.
       for (const docRef of plan.missingDocs.slice(0, 4)) {
         const sqRef = squashName(docRef);
         if ([...matchedDesignations].some((d) =>
           sqRef.includes(squashName(d)) || squashName(d).includes(sqRef))) continue;
+        // Present means a document by that NAME is in the libraries. Pages
+        // that merely cite it ("per ASME B16.5") prove it is referenced, not
+        // that it is here: counting those as presence is how "B16.5 isn't
+        // in your library" went unsaid while EP 5-2-2 sent every flange to it.
+        const des = designationsIn(docRef)[0];
+        const inLibrary = reachableDocs.some((d) => designationMatch(des ?? docRef, d.name) >= 2);
+        if (inLibrary) continue;
         const probes = await runSearches([docRef]);
         const flat = probes.flat();
-        if (flat.length < 2) {
-          // Only a document a passage actually points to is "needed" — not
-          // one the reviewing model thought of on its own.
-          const des = designationsIn(docRef)[0];
-          const referenced = des ? chunks.some((c) => designationMatcher(des).test(c.content.toUpperCase())) : false;
-          trace.stage("missing_doc", { docRef, probeHits: flat.length, referenced });
-          if (referenced) missingDocs.push(docRef);
-          continue;
-        }
+        // Only a document a passage actually points to is "needed" — not
+        // one the reviewing model thought of on its own.
+        const referenced = des ? [...chunks, ...flat].some((c) => designationMatcher(des).test(c.content.toUpperCase())) : false;
+        trace.stage("missing_doc", { docRef, probeHits: flat.length, referenced });
+        if (referenced) missingDocs.push(docRef);
+        // The passages that cite it join the pool: they say what the
+        // missing standard is relied on for.
         const have = new Set(chunks.map((c) => c.id));
         for (const c of flat.slice(0, 3)) {
           if (!have.has(c.id)) { chunks.push(c); have.add(c.id); }
@@ -1306,7 +1350,7 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       let charBudget = WHOLE_DOC_CHAR_BUDGET;
       // Read order: what the question names, then what the conversation is
       // about, then documents the refine plan brought up.
-      const readRank = (id: string) => questionDocIds.has(id) ? 0 : conversationDocIds.includes(id) ? 1 : 2;
+      const readRank = (id: string) => questionDocIds.has(id) ? 0 : conversationDocIds.includes(id) ? 1 : routedDocIds.has(id) ? 2 : 3;
       const readOrder = [...namedDocs].sort((a, b) => readRank(a.id) - readRank(b.id));
       for (const nd of readOrder.slice(0, 2)) {
         if (charBudget <= 0) break;
@@ -1778,69 +1822,65 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
     let anchorFacts = "";
     let pageImages: Array<{ base64: string; mediaType: string; page: number; documentId: string }> = [];
     if (visionEnabled && chunks.length > 0) {
-      const targets: Array<{ documentId: string; page: number }> = [];
-      const seen = new Set<string>();
-      const addTarget = (documentId: string, page: number) => {
-        const key = `${documentId}:${page}`;
-        if (!seen.has(key)) { seen.add(key); targets.push({ documentId, page }); }
-      };
-      // (a) top-ranked passage pages
-      for (const c of chunks.slice(0, 3)) addTarget(c.document_id, c.page);
-      // (b) referenced table/figure pages. Ingestion records where every
-      // caption LIVES (kind 'anchor'), so "see Table 3" resolves by lookup
-      // — deterministic, zero extra search — with the old text hunt kept as
-      // the fallback for corpora indexed before anchors existed.
-      const refCounts = new Map<string, number>();
-      for (const c of [...chunks, { content: question } as { content: string }]) {
-        for (const m of c.content.matchAll(/\b(?:Table|Fig(?:ure)?\.?|Chart|Detail)\s+[A-Z0-9][A-Z0-9.\-]{0,10}/gi)) {
-          const label = m[0].replace(/\s+/g, " ").trim();
-          refCounts.set(label, (refCounts.get(label) ?? 0) + 1);
-        }
-      }
-      const topRefs = [...refCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4);
-      const normalizeLabel = (l: string) => l.toUpperCase()
-        .replace(/^FIG\.?\s/, "FIGURE ").replace(/\s+/g, " ").trim();
-      const wantedAnchors = [...new Set(topRefs.map(([l]) => normalizeLabel(l)))];
-      const anchorHits: Array<{ tag: string; document_id: string; page: number }> = [];
-      if (wantedAnchors.length > 0) {
+      // Which pages to LOOK at (lib/ask/pageTargets): what the person named
+      // in this question or their recent turns, what the passages most
+      // about the question point to (in their own document), figure pages
+      // among those passages, then the top passages. Never another
+      // document's namesake "Table 1".
+      const asked = [question, ...history.slice().reverse().map((t) => t.question)].slice(0, 3);
+      const labels = labelsToResolve(asked, chunks);
+      let anchors: Anchor[] = [];
+      if (labels.length > 0) {
         try {
           const libIds = [libraryId, ...linkedLibraries.map((l) => l.id)];
+          // Tags are kept as indexing read them, sometimes with a stray
+          // period ("FIGURE 5A.").
+          const tags = [...new Set(labels.flatMap((l) => [l, `${l}.`]))];
           const { data: aRows } = await supabaseAdmin
             .from("knowledge_page_entities")
             .select("tag, document_id, page")
-            .in("library_id", libIds).eq("kind", "anchor").in("tag", wantedAnchors)
-            .limit(200);
-          const retrievedDocs = new Set(chunks.map((c) => c.document_id));
-          for (const tag of wantedAnchors) {
-            const rows = ((aRows ?? []) as typeof anchorHits).filter((r) => r.tag === tag);
-            // The Table 3 in the SAME document the prose came from, not a
-            // namesake in another standard.
-            // Then: a document the question names, then the one the
-            // conversation is about — "table 1" three turns into an EP 5-2-1
-            // discussion is EP 5-2-1's Table 1, not a SEMI table elsewhere.
-            const best = rows.find((r) => questionDocIds.has(r.document_id))
-              ?? rows.find((r) => conversationDocIds.includes(r.document_id))
-              ?? rows.find((r) => retrievedDocs.has(r.document_id)) ?? rows[0];
-            if (best && !excludedDocIds.has(best.document_id)) anchorHits.push(best);
-          }
+            .in("library_id", libIds).eq("kind", "anchor").in("tag", tags)
+            .limit(500);
+          anchors = ((aRows ?? []) as Anchor[]).filter((a) => !excludedDocIds.has(a.document_id));
         } catch { /* anchors are additive */ }
       }
-      const resolved = new Set(anchorHits.map((a) => a.tag));
-      for (const a of anchorHits) addTarget(a.document_id, a.page);
-      for (const [label] of topRefs) {
-        if (resolved.has(normalizeLabel(label))) continue;
-        for (const hit of await findPagesByText([label], 2)) addTarget(hit.documentId, hit.page);
+      const picked = pickPageTargets({
+        asked, passages: chunks, anchors,
+        namedDocIds: [...questionDocIds], conversationDocIds, max: MAX_DEEP_READ_PAGES,
+      });
+      // A figure the person named that the index has no location for
+      // (corpora indexed before locations were recorded): find it by its
+      // caption, but only in the documents in play.
+      const inPlay = new Set([...questionDocIds, ...conversationDocIds, ...chunks.map((c) => c.document_id)]);
+      const namedResolved = new Set(picked.filter((t) => t.why === "named").map((t) => t.label));
+      for (const text of asked.slice(0, 1)) {
+        for (const m of text.matchAll(/\b(?:Table|Fig(?:ure)?\.?|Chart|Detail)\s+[A-Z0-9][A-Z0-9.\-]{0,10}/gi)) {
+          const label = m[0].replace(/\s+/g, " ").trim();
+          if (namedResolved.has(label.toUpperCase().replace(/^FIG(?:URE)?\.?\s*/, "FIGURE ").replace(/[.\-]+$/, ""))) continue;
+          for (const hit of await findPagesByText([label], 6)) {
+            if (picked.length >= MAX_DEEP_READ_PAGES) break;
+            if (!inPlay.has(hit.documentId) || picked.some((t) => t.documentId === hit.documentId && t.page === hit.page)) continue;
+            picked.splice(namedResolved.size, 0, { documentId: hit.documentId, page: hit.page, why: "named", label });
+            break;
+          }
+        }
       }
-      if (anchorHits.length > 0) {
-        anchorFacts =
-          "\n\nREFERENCED TABLES & FIGURES - recorded at indexing, where each one lives:\n" +
-          anchorHits.map((a) =>
-            `- ${a.tag} → ${docName.get(a.document_id) ?? "document"} p.${a.page}` +
-            " (its page image is attached - read values from the IMAGE, not from prose about it)").join("\n");
-      }
-      if (targets.length > 0) emit({ t: "status", text: `Reading ${Math.min(targets.length, MAX_DEEP_READ_PAGES)} printed page${Math.min(targets.length, MAX_DEEP_READ_PAGES) === 1 ? "" : "s"} as images` });
+      const targets = picked.slice(0, MAX_DEEP_READ_PAGES).map((t) => ({ documentId: t.documentId, page: t.page }));
+      if (targets.length > 0) emit({ t: "status", text: `Reading ${targets.length} printed page${targets.length === 1 ? "" : "s"} as images` });
       pageImages = await renderTargets(targets, MAX_DEEP_READ_PAGES);
-      trace.stage("deep_read", { targets: targets.slice(0, 12), rendered: pageImages.length });
+      const labelled = picked.filter((t) => t.label && pageImages.some((im) => im.documentId === t.documentId && im.page === t.page));
+      if (labelled.length > 0) {
+        anchorFacts =
+          "\n\nREFERENCED TABLES & FIGURES - where each one lives (its page image is attached; read the drawing, " +
+          "dimensions and values from the IMAGE, not from text about it):\n" +
+          labelled.map((a) =>
+            `- ${a.label} → ${docName.get(a.documentId) ?? "document"} p.${a.page}` +
+            (a.why === "named" ? " - the person named this one; look at it before answering" : "")).join("\n");
+      }
+      trace.stage("deep_read", {
+        targets: picked.slice(0, 12).map((t) => ({ documentId: t.documentId, page: t.page, why: t.why, label: t.label })),
+        rendered: pageImages.length,
+      });
     }
 
     // ── Step 2: passages → cited answer ──────────────────────────────────
@@ -2204,6 +2244,19 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       "Spell out codes and shorthand on first use (AES = Aggressive Environmental Service; P8 = " +
       "the austenitic stainless weld group; S5 = full radiography of the seam; CMTR = certified " +
       "mill test report).\n\n" +
+      "FIGURES DECIDE ARRANGEMENTS: when the question is about a physical arrangement (attach, " +
+      "weld, set into, make one part out of another, a connection detail), the standard's detail " +
+      "figures and tables are the evidence. Look at every attached page image of a figure before " +
+      "answering and say in plain words what it shows. A figure that shows the arrangement makes it " +
+      "a permitted detail within that figure's notes and limits: the verdict is YES, WITH " +
+      "CONDITIONS, citing the figure. Never call an arrangement a deviation, \"not covered\", or " +
+      "\"no passage permits or prohibits\" while the governing practice has a figure or table on that " +
+      "kind of work you have not looked at: name that figure and its page, and Fetch it. When the " +
+      "deciding table lives in a standard listed under KNOWN GAPS, say the library does not hold it " +
+      "and name the table to add - never fill it in from memory as if the library said it.\n\n" +
+      "PROOF IS ABOUT THE QUESTION: every Why bullet must bear on the exact arrangement asked about. " +
+      "General requirements for the trade (preheat, PWHT, consumables) are not proof; they go under " +
+      "Before you act, and only when the work is going ahead.\n\n" +
       "RESOLUTION PATH: when the verdict is NOT SETTLED, or the user has something different from " +
       "what was specified or ordered, the answer must tell them how to settle it: the exact " +
       "document/entry to check, what each possible outcome means (\"if the line class lists welded " +

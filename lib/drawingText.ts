@@ -707,11 +707,44 @@ export function pageNeedsVision(pageText: string, tagsFound: number): boolean {
   // requiring a handful on a thin page separates the two cases cleanly and
   // costs nothing on drawings that were readable all along.
   const thin = text.length <= THIN_PAGE_MAX_CHARS;
+  // A standard's figure page — a caption ("Figure 4 – Permissible
+  // Attachment Details for Couplings") over a drawing — is looked at even
+  // though its labels give it some text: the drawing IS the content. Its
+  // text layer alone kept "Type 1 - Set In Type … 1/8 In. Max." and lost
+  // what is attached to what.
+  if (text.length <= THIN_PAGE_MAX_CHARS * 1.4 && hasFigureCaption(text) && proseSentences(text) <= 2) return true;
   if (tagsFound >= (thin ? MIN_TAGS_THIN_PAGE : 1)) return false;
   if (!thin) return false;
-  // Sentence enders are the prose signal — drawings are labels, not prose.
-  const sentences = (text.match(/[.!?](\s|$)/g) ?? []).length;
-  return sentences <= 2;
+  // Sentences are the prose signal — drawings are labels, not prose.
+  return proseSentences(text) <= 2;
+}
+
+/** Drawing-label abbreviations that end in a period without ending a
+ *  sentence: "1/8 In. Max.", "Min. Rad.", "Typ.", "Nom. Dia.". */
+const LABEL_ABBREVIATIONS = new Set([
+  "in", "max", "min", "rad", "typ", "nom", "dia", "ref", "no", "rev", "fig", "approx", "thk",
+  "mm", "ft", "lb", "lbs", "sq", "req", "reqd", "ea", "pl", "ctr", "cl", "el", "elev", "dwg", "sht",
+  "det", "sec", "id", "od", "avg", "std", "sch", "deg", "galv", "conn", "spec", "dim", "dims",
+]);
+
+/** Sentences of prose: a word ending in . ! or ? that isn't a drawing
+ *  label's abbreviation. Dimension labels ("1/8 In. Max.", "Min. Rad.")
+ *  end in periods too, and used to make a figure look like prose. */
+export function proseSentences(text: string): number {
+  let n = 0;
+  for (const m of text.matchAll(/(\S+?)[.!?](?=\s|$)/g)) {
+    const word = m[1].replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9)]+$/g, "");
+    if (word.length < 2) continue;
+    if (LABEL_ABBREVIATIONS.has(word.toLowerCase())) continue;
+    if (/^\d+(?:\/\d+)?$/.test(word)) continue;   // "1/2." on a dimension
+    n++;
+  }
+  return n;
+}
+
+/** "Figure 4 – …", "FIGURE 5A - …", "Fig. 2: …" as a caption. */
+export function hasFigureCaption(text: string): boolean {
+  return /\bFig(?:ure)?\.?\s*\d+[A-Z]?\.?\s*[–—:-]\s*\S/i.test(text);
 }
 
 // ── Equipment-list intent ──────────────────────────────────────────────────

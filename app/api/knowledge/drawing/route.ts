@@ -13,6 +13,14 @@
 //                                           drawing_audit_logs, keyed by
 //                                           (sheet, revision) so an unrevised
 //                                           sheet is never re-audited
+//   POST { orgId, libraryId, action:"read-figures" }
+//                                         → figure pages indexed as labels
+//                                           only (lib/figurePages): their
+//                                           documents re-read, pages kept
+//                                           meanwhile; the indexer reuses
+//                                           what it has and looks only at
+//                                           the figures.
+//
 //   POST { orgId, libraryId, action:"rebuild" }
 //                                         → re-extract everything: docs go
 //                                           stale, chunks + entities clear,
@@ -34,6 +42,7 @@ import {
 import { loadCodebookAdmin, codebookToDecoderText } from "@/lib/codebookServer";
 import { verdictsForSheets, verdictRows, type AuditSheet } from "@/lib/drawingAuditLog";
 import { fetchAllRows } from "@/lib/fetchAllRows";
+import { figurePagesToRead, type StoredPassage } from "@/lib/figurePages";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -355,6 +364,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (body.action === "record-audit") return recordAudit(orgId, libraryId, user.id);
+  if (body.action === "read-figures") return readFigures(orgId, libraryId);
   if (body.action !== "rebuild") return bad("Unknown action");
 
   // Reset every doc to stale + clear derived data; the page's auto-indexer
@@ -375,6 +385,31 @@ export async function POST(req: NextRequest) {
       .in("id", slice);
   }
   return NextResponse.json({ ok: true, docs: ids.length });
+}
+
+/**
+ * Re-read the documents whose figure pages were indexed as their labels
+ * only. Their stored pages stay (search keeps working, and every page
+ * already read is reused); marking them stale hands them to the library
+ * page's indexer, which now looks at figure pages as images.
+ */
+async function readFigures(orgId: string, libraryId: string) {
+  const { rows, error } = await fetchAllRows<StoredPassage>((from, to) => supabaseAdmin
+    .from("knowledge_chunks")
+    .select("document_id, page, content")
+    .eq("org_id", orgId).eq("library_id", libraryId)
+    .ilike("content", "%fig%")
+    .order("document_id").order("page").range(from, to));
+  if (error) return bad(`Couldn't read the library's pages: ${error}`, 500);
+  const toRead = figurePagesToRead(rows);
+  const ids = [...toRead.keys()];
+  const pages = [...toRead.values()].reduce((n, p) => n + p.length, 0);
+  for (let i = 0; i < ids.length; i += 50) {
+    await supabaseAdmin.from("knowledge_documents")
+      .update({ status: "stale", pages_indexed: 0, last_section: null, error: null })
+      .in("id", ids.slice(i, i + 50)).eq("org_id", orgId).eq("status", "ready");
+  }
+  return NextResponse.json({ ok: true, docs: ids.length, pages });
 }
 
 /**

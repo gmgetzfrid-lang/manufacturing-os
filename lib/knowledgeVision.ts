@@ -45,8 +45,13 @@ const VISION_SYSTEM =
   "- all notes, legends, and callouts, in reading order;\n" +
   "- table contents row by row, keeping columns aligned with ' | ' separators. Put the table's " +
   "caption (e.g. 'TABLE 3 - BOLT TORQUE') on its own line DIRECTLY above its first row, and start " +
-  "the rows with the header row. For figures/charts, transcribe the caption line, then describe " +
-  "the figure in one sentence and list any values it presents.\n\n" +
+  "the rows with the header row.\n" +
+  "- figures, details and sketches: transcribe the caption line, then DESCRIBE THE DRAWING in " +
+  "engineering terms, in full sentences, one per view or type shown: the parts (pipe, run, branch, coupling, " +
+  "flange, blind flange, pad, nozzle, plate, shell ...), how they are joined and how each sits " +
+  "(set-in, set-on, through-drilled, socket weld, fillet weld, full penetration ...), the weld " +
+  "symbols and sizes, and every dimension or limit with what it applies to. Write the part names " +
+  "out in words so the figure can be found by them. Describe only what is drawn.\n\n" +
   "Preserve exact alphanumerics - a tag transcribed wrong is worse than one omitted. " +
   "If a region is genuinely illegible, write [illegible] rather than guessing.";
 
