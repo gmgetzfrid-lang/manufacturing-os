@@ -14,7 +14,8 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Check, ChevronDown, FileSpreadsheet, FileText, Paperclip, Upload } from "lucide-react";
+import { Check, ChevronDown, FileSpreadsheet, FileText, Paperclip, Upload, Package, CalendarRange, Handshake } from "lucide-react";
+import { planningPath, type PathKey } from "@/lib/planningPath";
 import { Button } from "@/components/ui/Button";
 import { ErrorNote } from "@/components/ui/ErrorNote";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -27,10 +28,8 @@ import { loadScope, readSheets, saveScope, scheduleFacts, LIST_ACCEPT, OPEN_SCHE
 
 const SHOW = 6;
 const when = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
 interface Facts { wos: string[]; crews: string[]; steps: number; awarded: number }
-type Step = { key: string; name: string; done: boolean; state: string; action?: { label: string; run?: () => void; href?: string } };
 
 export default function ScopeList({ orgId, projectId, projectName, uid, canManage, noSchedule, actorEmail, finish }: {
   orgId: string; projectId: string; projectName: string; uid: string | null; canManage: boolean; noSchedule: boolean; actorEmail?: string;
@@ -101,7 +100,7 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
   // ── Packages ──
   const pickPackage = (wo: string) => {
     // Where packages are filed is asked once, at the top: go there to ask it.
-    if (!home?.place) { setNeedPlace(true); setError(null); document.getElementById("path-title")?.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
+    if (!home?.place) { setNeedPlace(true); setError(null); document.querySelector("[aria-label='Planning path']")?.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
     pkgFor.current = wo; pkgInput.current?.click();
   };
   const attach = async (file: File | undefined) => {
@@ -157,55 +156,57 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
   const firstWithout = scope.items.find((x) => !x.pkg && !x.drafted);
   const onSched = new Set(vs?.on.map((x) => x.wo) ?? []);
 
-  // The planning path: each step's state; the first one not done is next.
-  const steps: Step[] = [
-    { key: "scope", name: "Scope", done: n > 0, state: `${n} work orders${scope.coming.length ? `; ${scope.coming.length} still adding scope` : ""}` },
-    { key: "pkg", name: "Packages", done: n > 0 && approved === n, state: `${withPkg} of ${n} attached, ${approved} approved`,
-      action: firstWithout ? { label: `Attach the package for ${firstWithout.tag || `WO ${firstWithout.wo}`}`, run: () => { if (home?.place) document.getElementById(`wo-${firstWithout.wo}`)?.scrollIntoView({ behavior: "smooth", block: "center" }); pickPackage(firstWithout.wo); } }
-        : approved < n ? { label: "Approve the packages", run: () => document.getElementById("scope-list")?.scrollIntoView({ behavior: "smooth" }) } : undefined },
-    { key: "sched", name: "Schedule", done: !!vs && vs.missing.length === 0,
-      state: !facts?.steps ? "Not imported" : vs ? `${vs.on.length} of ${n} work orders on it${vs.missing.length ? `, ${vs.missing.length} missing` : ""}${vs.extra.length ? `, ${vs.extra.length} not in the list` : ""}` : "Imported, with no work order numbers on it",
-      action: { label: facts?.steps ? "Import the schedule again" : "Import the schedule", run: () => window.dispatchEvent(new Event(OPEN_SCHEDULE_IMPORT)) } },
-    { key: "rfq", name: "RFQ", done: rfqs.length > 0, state: rfqs.length ? `Written for ${[...new Set(rfqs.flatMap((r) => r.to))].join(", ")} (last ${day(rfqs[rfqs.length - 1].at)})` : "Not written",
-      action: { label: rfqs.length ? "Write another RFQ" : "Write the RFQ", run: () => setRfqOpen(true) } },
-    { key: "award", name: "Award", done: !!facts?.awarded, state: facts?.awarded ? `${facts.awarded} contract${facts.awarded === 1 ? "" : "s"} awarded` : "Quotes in, then award",
-      action: { label: "Open quotes", href: `/projects/${projectId}?tab=costs` } },
-  ];
-  const nextIdx = steps.findIndex((s) => !s.done);
-  const next = nextIdx >= 0 ? steps[nextIdx] : null;
+  // The planning path (lib/planningPath): where each step stands; the
+  // first one not done is next. Here, what each step's button does.
+  const path = planningPath(scope, facts);
+  const nextIdx = path.next;
+  const actions: Partial<Record<PathKey, { label: string; run?: () => void; href?: string }>> = {
+    pkg: firstWithout ? { label: `Attach the package for ${firstWithout.tag || `WO ${firstWithout.wo}`}`, run: () => { if (home?.place) document.getElementById(`wo-${firstWithout.wo}`)?.scrollIntoView({ behavior: "smooth", block: "center" }); pickPackage(firstWithout.wo); } }
+      : approved < n ? { label: "Approve the packages", run: () => document.getElementById("scope-list")?.scrollIntoView({ behavior: "smooth" }) } : undefined,
+    sched: { label: facts?.steps ? "Import the schedule again" : "Import the schedule", run: () => window.dispatchEvent(new Event(OPEN_SCHEDULE_IMPORT)) },
+    rfq: { label: rfqs.length ? "Write another RFQ" : "Write the RFQ", run: () => setRfqOpen(true) },
+    award: { label: "Open quotes", href: `/projects/${projectId}?tab=costs` },
+  };
+  const ICON: Record<PathKey, React.ComponentType<{ className?: string }>> = { scope: FileSpreadsheet, pkg: Package, sched: CalendarRange, rfq: FileText, award: Handshake };
 
   return (
     <div className="grid gap-4">
       {fileInput}
       <input ref={pkgInput} type="file" className="sr-only" tabIndex={-1} aria-hidden onChange={(e) => { void attach(e.target.files?.[0]); e.target.value = ""; }} />
 
-      {/* The planning path: where the project is, and the one thing to do next. */}
-      <section aria-labelledby="path-title" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 grid gap-4">
-        <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
-          <div className="min-w-0 flex-1 basis-full sm:basis-auto">
-            <p className="text-caption text-[var(--color-text-muted)]">Planning, step {next ? nextIdx + 1 : steps.length} of {steps.length}</p>
-            <h2 id="path-title" className="font-display text-section font-semibold text-[var(--color-text)]">{next ? `Next: ${next.name}` : "Planning is done. Next: the work."}</h2>
-            {next && <p className="text-body text-[var(--color-text-muted)]">{next.state}</p>}
-          </div>
-          {next?.action && canManage && (next.action.href
-            ? <Link href={next.action.href} className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg,#fff)] text-body font-semibold hover:opacity-95">{next.action.label}</Link>
-            : <Button onClick={next.action.run} loading={next.key === "pkg" && !!attaching}>{next.action.label}</Button>)}
-        </div>
-        <ol className="grid gap-0 sm:grid-cols-5 border-t border-[var(--color-border)] pt-3">
-          {steps.map((s, i) => (
-            <li key={s.key} className="py-1.5 sm:py-0 sm:pr-3">
-              <div className="flex items-center gap-2">
-                <span aria-hidden className={`shrink-0 inline-flex items-center justify-center w-5 h-5 rounded-full text-caption font-semibold ${s.done ? "bg-[var(--state-released)] text-white" : i === nextIdx ? "border-2 border-[var(--color-current)] text-[var(--color-text)]" : "border border-[var(--color-border-strong)] text-[var(--color-text-muted)]"}`}>{s.done ? <Check className="w-3 h-3" /> : i + 1}</span>
-                <span className={`text-body ${i === nextIdx ? "font-semibold" : ""} text-[var(--color-text)]`}>{s.name}{s.done ? <span className="sr-only"> (done)</span> : null}</span>
-              </div>
-              <p className="mt-0.5 pl-7 text-caption text-[var(--color-text-muted)] min-w-0">{s.state}</p>
-              {s.action && canManage && i !== nextIdx && (s.action.href
-                ? <Link href={s.action.href} className="ml-7 inline-flex items-center min-h-9 pointer-coarse:min-h-11 text-caption font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">{s.action.label}</Link>
-                : <button type="button" onClick={s.action.run} className="ml-7 inline-flex items-center min-h-9 pointer-coarse:min-h-11 text-caption font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">{s.action.label}</button>)}
-            </li>
-          ))}
+      {/* The planning path: the five steps in order. The current one stands
+          out (shaded, its button in it); done ones are checked; later ones
+          sit back. The page's header says the next step in words. */}
+      <section aria-label="Planning path" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 sm:p-4 grid gap-3">
+        {/* Six columns: the current step takes two, so it and its button stand out. */}
+        <ol className="grid gap-2 sm:grid-cols-6 sm:gap-3">
+          {path.steps.map((s, i) => {
+            const Icon = ICON[s.key];
+            const now = i === nextIdx;
+            const act = actions[s.key];
+            return (
+              <li key={s.key} className={`rounded-lg p-3 grid gap-1 content-start ${now ? "bg-[var(--color-surface-2)] ring-1 ring-inset ring-[var(--color-border-strong)] sm:col-span-2" : nextIdx < 0 && i === path.steps.length - 1 ? "sm:col-span-2" : ""}`}>
+                <div className="flex items-center gap-2">
+                  <span aria-hidden className={`shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-full ${s.done ? "bg-[var(--state-released)] text-white" : now ? "bg-[var(--color-text)] text-[var(--color-surface)]" : "border border-[var(--color-border-strong)] text-[var(--color-text-faint)]"}`}>
+                    {s.done ? <Check className="w-4 h-4" /> : <Icon className="w-3.5 h-3.5" />}
+                  </span>
+                  <span className={`text-body ${now ? "font-semibold text-[var(--color-text)]" : s.done ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+                    <span className="text-[var(--color-text-faint)] tabular-nums">{i + 1}.</span> {s.name}{s.done ? <span className="sr-only"> (done)</span> : now ? <span className="sr-only"> (next)</span> : null}
+                  </span>
+                </div>
+                <p className={`text-caption min-w-0 ${now ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{s.state}</p>
+                {act && canManage && (now
+                  ? (act.href
+                    ? <Link href={act.href} className="mt-1 inline-flex items-center justify-center gap-1.5 min-h-10 pointer-coarse:min-h-11 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-semibold hover:bg-[var(--color-accent-hover)]">{act.label}</Link>
+                    : <Button className="mt-1 justify-self-start max-w-full" onClick={act.run} loading={s.key === "pkg" && !!attaching}>{act.label}</Button>)
+                  : !s.done && (act.href
+                    ? <Link href={act.href} className="inline-flex items-center min-h-9 pointer-coarse:min-h-11 text-caption font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">{act.label}</Link>
+                    : <button type="button" onClick={act.run} className="justify-self-start inline-flex items-center min-h-9 pointer-coarse:min-h-11 text-caption font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">{act.label}</button>))}
+              </li>
+            );
+          })}
         </ol>
-        <p className="text-caption text-[var(--color-text-muted)]">After the award: the work (a shift report every shift, on the Shift tab), then close-out. The project takes you to each.</p>
+        <p className="px-1 text-caption text-[var(--color-text-muted)]">{nextIdx < 0 ? "Planning is done. " : ""}After the award: the work (a shift report every shift, on the Shift tab), then close-out. The project takes you to each.</p>
         {needPlace && home && uid && (
           <div className="rounded-lg border border-[var(--color-border-strong)] p-3 grid gap-2">
             <p className="text-body text-[var(--color-text)]">First, pick where this project&apos;s packages are filed in document control. It&apos;s asked once.</p>

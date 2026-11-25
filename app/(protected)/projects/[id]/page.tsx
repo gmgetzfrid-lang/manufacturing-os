@@ -53,7 +53,8 @@ import EventOrganization from "@/components/projects/EventOrganization";
 import ProjectCoach from "@/components/projects/ProjectCoach";
 import ProjectNeeds from "@/components/projects/ProjectNeeds";
 import ScopeList from "@/components/projects/setup/ScopeList";
-import { loadScope } from "@/lib/scopeStore";
+import { loadScope, scheduleFacts } from "@/lib/scopeStore";
+import { planningPath, NEXT_WORDS, STEP_NOUN, type PathStep } from "@/lib/planningPath";
 import SetupHost from "@/components/projects/SetupHost";
 import { isWatching, watch, unwatch } from "@/lib/subscriptions";
 import { openProjectReport } from "@/lib/projectReport";
@@ -496,11 +497,16 @@ function ProjectDetail() {
   // A project in planning (no schedule yet): where its scope stands, from the
   // work order list (lib/scopeStore), for the header.
   const unscheduled0 = !!stepRows && !!standings && standings.every((s) => s.state === "no schedule");
-  const [planning, setPlanning] = useState<{ wos: number; drafted: number; coming: number } | null>(null);
+  const [planning, setPlanning] = useState<{ wos: number; withPkg: number; next: PathStep | null; step: number; after: string[] } | null>(null);
   useEffect(() => {
     if (!unscheduled0 || !project?.id) return;
     let on = true;
-    void loadScope(project.id).then((s) => { if (on) setPlanning(s ? { wos: s.items.length, drafted: s.items.filter((x) => x.drafted).length, coming: s.coming.length } : null); }, () => undefined);
+    void Promise.all([loadScope(project.id), scheduleFacts(project.id).catch(() => null)]).then(([s, f]) => {
+      if (!on) return;
+      if (!s) { setPlanning(null); return; }
+      const p = planningPath(s, f);
+      setPlanning({ wos: s.items.length, withPkg: s.items.filter((x) => x.pkg || x.drafted).length, next: p.next >= 0 ? p.steps[p.next] : null, step: p.next + 1, after: p.next >= 0 ? p.steps.slice(p.next + 1).map((x) => STEP_NOUN[x.key]) : [] });
+    }, () => undefined);
     return () => { on = false; };
   }, [unscheduled0, project?.id, tab]);
 
@@ -567,12 +573,13 @@ function ProjectDetail() {
   else if (project.status === "completed") { answer = workDone ? "Project complete." : "Marked complete."; facts = [finishFact(true), stepsFact]; }
   else if (!standings || !stepRows) answer = project.name;
   else if (noSchedule && planning) {
-    // Planning from the work order list: the scope and the packages, until
-    // there's a schedule to track.
-    answer = `Planning: ${planning.wos} work order${planning.wos === 1 ? "" : "s"}.`;
-    sub = planning.coming ? `Scope still coming from ${planning.coming}. Next: draft the packages.` : "Next: draft the packages.";
-    facts = [{ label: "Packages drafted", value: `${planning.drafted} of ${planning.wos}`, tone: planning.drafted < planning.wos ? "warn" : undefined, hero: true },
-      ...(planning.coming ? [{ label: "Still adding scope", value: planning.coming }] : []), { label: "Schedule", value: "Not yet" }];
+    // Planning from the work order list: the one next step as the answer
+    // (lib/planningPath), its own number big, what follows it said after.
+    const nx = planning.next;
+    answer = nx ? `Next: ${NEXT_WORDS[nx.key]}.` : "Planning is done.";
+    sub = nx ? `${nx.state}.${planning.after.length ? ` Then ${planning.after.join(", ")}.` : ""}` : "Next: the work, a shift report every shift.";
+    facts = [{ label: "Packages attached", value: `${planning.withPkg} of ${planning.wos}`, tone: planning.withPkg < planning.wos ? "warn" : undefined, hero: true },
+      { label: "Work orders", value: planning.wos }];
   }
   else if (noSchedule) { answer = "No schedule yet."; sub = "Import it on Plan to track the work."; }
   else if (workDone) {
@@ -651,7 +658,10 @@ function ProjectDetail() {
     };
   });
   const closeNote = project.status === "completed" ? "Complete" : close ? (close.open.length ? <><span className="max-sm:hidden">{close.open[0].name}</span><span className="sm:hidden">{close.open.length} left</span></> : "Ready to close") : workDone ? "Next" : "After the work";
-  const lineSteps = standings ? [...bandSteps, { label: "Close-out", state: (project.status === "completed" ? "done" : workDone ? "now" : "next") as "done" | "now" | "next", note: closeNote, short: closeNote }] : null;
+  const lineSteps = standings ? [
+    // A project in planning: planning is where it is, before the work.
+    ...(noSchedule && planning ? [{ label: "Planning", state: (planning.next ? "now" : "done") as "done" | "now" | "next", note: planning.next ? `Step ${planning.step} of 5: ${planning.next.name}` : "Done", short: planning.next ? planning.next.name : "Done" }] : []),
+    ...bandSteps, { label: "Close-out", state: (project.status === "completed" ? "done" : workDone ? "now" : "next") as "done" | "now" | "next", note: closeNote, short: closeNote }] : null;
 
   // The one orange action: what's next for the project, unless the tab
   // that does it is the one open (its own button is the orange one there).
@@ -660,6 +670,8 @@ function ProjectDetail() {
       // Paused: putting it back to work is the next thing, in sight (not in a menu).
       : project.status === "paused" ? { label: "Resume project", tab: "closeout", run: () => setPendingStatus("active") }
       : !standings ? null
+      // Planning from the work order list: its next step, on the Plan tab.
+      : noSchedule && planning?.next ? { label: NEXT_WORDS[planning.next.key].replace(/^\w/, (c) => c.toUpperCase()), tab: "plan", run: () => goTab("plan") }
       : noSchedule ? { label: "Import the schedule", tab: "plan", run: () => goTab("plan") }
         : workDone ? (close && close.open.length === 0 ? { label: "Mark complete", tab: "closeout", run: () => setPendingStatus("completed") } : { label: "Finish close-out", tab: "closeout", run: () => goTab("closeout") })
           : state?.scheduledDone && unscheduled.length ? { label: `Import ${unscheduled[0].name}'s schedule`, tab: "plan", run: () => { setPhase(unscheduled[0].id); goTab("plan"); } }

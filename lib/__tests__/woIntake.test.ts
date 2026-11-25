@@ -112,3 +112,21 @@ describe("packages, the schedule and the RFQ from the scope", () => {
     expect(rfqDocx(f).byteLength).toBeGreaterThan(1000);
   });
 });
+
+describe("the planning path says the next step", () => {
+  it("packages first, then the schedule, the RFQ and the award, from what's done", async () => {
+    const { planningPath, NEXT_WORDS } = await import("@/lib/planningPath");
+    const r = readScope(approved);
+    const scope = { items: r.items, coming: r.coming, source: { file: "x.xlsx", sheet: r.sheet, headers: r.headers, map: r.map }, imports: [] };
+    let p = planningPath(scope, null);
+    expect(p.steps[p.next].key).toBe("pkg");
+    expect(NEXT_WORDS[p.steps[p.next].key]).toBe("attach the packages");
+    expect(p.steps[1].state).toBe("1 of 4 attached, 0 approved");
+    const done = { ...scope, items: r.items.map((x) => ({ ...x, drafted: true, approved: true })) };
+    p = planningPath(done, { wos: ["400101", "400102", "400103"], steps: 10, awarded: 0 });
+    expect(p.steps[p.next].key).toBe("sched");
+    expect(p.steps[2].state).toBe("3 of 4 work orders on it, 1 missing");
+    p = planningPath({ ...done, rfqs: [{ at: "2027-01-02T12:00:00Z", service: "Mech", to: ["Contractor A"] }] }, { wos: r.items.map((x) => x.wo), steps: 10, awarded: 1 });
+    expect(p.next).toBe(-1);
+  });
+});
