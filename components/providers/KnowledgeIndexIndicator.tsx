@@ -29,6 +29,7 @@ import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import { ingestKnowledgeDocument, isIngestActive } from "@/lib/knowledge";
 import { isUploading, onUploadActivity } from "@/lib/uploadActivity";
+import { publishRunning, useRunningDocked } from "@/lib/runningWork";
 
 const POLL_MS = 120_000;
 
@@ -152,7 +153,31 @@ export default function KnowledgeIndexIndicator() {
     return () => { alive = false; clearInterval(t); off(); };
   }, [activeOrgId, isController]);
 
-  if (!state || hidden) return null;
+  // On a desktop the side menu shows this, with progress, while it runs
+  // (lib/runningWork); the corner card is for when there's no side menu.
+  useEffect(() => {
+    if (!state || hidden) { publishRunning("reading", []); return; }
+    const pct = state.total ? Math.min(100, Math.round((state.indexed / state.total) * 100)) : null;
+    if (state.phase === "working") {
+      const where = state.total ? `${state.docName}, page ${state.indexed} of ${state.total}` : state.docName;
+      publishRunning("reading", [{
+        id: "reading", kind: "reading", title: "Reading the library",
+        detail: state.waiting ?? (state.queued > 0 ? `${where} (${state.queued} more queued)` : where),
+        pct, right: pct !== null ? `${pct}%` : undefined, state: "running",
+      }]);
+    } else {
+      publishRunning("reading", [{
+        id: "reading", kind: "reading",
+        title: state.heldBack > 0 ? `${state.heldBack} couldn't finish` : "Library read",
+        detail: state.heldBack > 0 ? "Tried again in 30 minutes. Library health shows why." : `${state.finished} document${state.finished === 1 ? "" : "s"} read`,
+        pct: null, state: state.heldBack > 0 ? "error" : "done", dismiss: () => setHidden(true),
+      }]);
+    }
+  }, [state, hidden]);
+  useEffect(() => () => publishRunning("reading", []), []);
+  const docked = useRunningDocked();
+
+  if (!state || hidden || docked) return null;
   const working = state.phase === "working";
 
   // Minimized: a small pill in the corner — progress at a glance, one click

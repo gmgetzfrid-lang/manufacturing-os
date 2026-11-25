@@ -7,12 +7,17 @@
 // Because every upload in the app goes through uploadToPath, this single mounted
 // component gives consistent "it's working" feedback for a file attach ANYWHERE,
 // regardless of which screen triggered it.
+//
+// Where it shows: on a desktop, in the side menu (lib/runningWork), with the
+// same Try again and close; the corner cards below only when there's no side
+// menu on screen (a phone).
 
 import React, { useEffect, useState } from "react";
 import { subscribeUploads, type UploadActivity } from "@/lib/storage";
 import { subscribeUploadRetries } from "@/lib/uploadRetry";
 import { Loader2, CheckCircle2, AlertCircle, X } from "lucide-react";
 import { CornerPortal } from "@/components/ui/CornerDock";
+import { publishRunning, useRunningDocked, type RunningItem } from "@/lib/runningWork";
 
 type Tracked = UploadActivity & { _t: number; _p0?: { t: number; pct: number }; retry?: () => void };
 
@@ -86,7 +91,40 @@ export default function UploadIndicator() {
   const failed = all.filter((u) => u.status === "error");
   const grouped = failed.length > 3;
   const list = grouped ? all.filter((u) => u.status !== "error") : all;
-  if (all.length === 0) return null;
+
+  // The side menu's lines: the files going up as one line (how many are
+  // done, the one going now), then each that didn't upload.
+  useEffect(() => {
+    const lines: RunningItem[] = [];
+    const moving = all.filter((u) => u.status !== "error");
+    const going = moving.filter((u) => u.status === "uploading");
+    if (going.length) {
+      const done = moving.length - going.length;
+      const now = going[0]!;
+      const pct = Math.round(moving.reduce((n, u) => n + (u.status === "done" ? 100 : u.percent), 0) / moving.length);
+      lines.push({
+        id: "uploads", kind: "upload",
+        title: moving.length > 1 ? `Uploading ${moving.length} files` : "Uploading",
+        detail: now.retrying && now.percent === 0 ? `${now.name}, trying again` : (timeLeft(now, Date.now()) ? `${now.name}, ${timeLeft(now, Date.now())}` : now.name),
+        pct, right: moving.length > 1 ? `${done} of ${moving.length}` : `${pct}%`, state: "running",
+      });
+    }
+    if (grouped) {
+      lines.push({
+        id: "uploads-failed", kind: "upload", title: `${failed.length} files didn't upload`, detail: failed[0]?.error, pct: null, state: "error",
+        retry: failed.some((u) => u.retry) ? () => failed.forEach((u) => u.retry?.()) : undefined,
+        dismiss: () => failed.forEach((u) => dismiss(u.id)),
+      });
+    } else {
+      for (const u of failed) lines.push({ id: u.id, kind: "upload", title: "Didn't upload", detail: u.name, error: u.error, pct: null, state: "error", retry: u.retry, dismiss: () => dismiss(u.id) });
+    }
+    publishRunning("uploads", lines);
+  }, [items]); // eslint-disable-line react-hooks/exhaustive-deps -- derived from items only
+  useEffect(() => () => publishRunning("uploads", []), []);
+
+  // The side menu shows them; the corner stays clear.
+  const docked = useRunningDocked();
+  if (all.length === 0 || docked) return null;
 
   return (
     <CornerPortal>

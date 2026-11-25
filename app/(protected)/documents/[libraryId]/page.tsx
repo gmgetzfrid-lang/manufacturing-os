@@ -2,6 +2,7 @@
 
 import { nudgeKnowledgeSources } from "@/lib/knowledge";
 import React, { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { setPresenceWhere } from "@/lib/orgPresence";
 import dynamic from "next/dynamic";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
@@ -414,6 +415,16 @@ export default function LibraryExplorerPage() {
     if (!docId || !activeOrgId || !uid) return;
     void import("@/lib/recentDocs").then((m) => m.recordDocView(activeOrgId, uid, docId));
   }, [selectedDoc?.id, activeOrgId, uid]);
+
+  // "On now" in others' side menus: which document this person has open.
+  const viewingLabel = selectedDoc ? (selectedDoc.documentNumber || selectedDoc.title || selectedDoc.name || "a document") : null;
+  const viewingLib = selectedDoc?.libraryId ?? null;
+  useEffect(() => {
+    const docId = selectedDoc?.id;
+    if (!docId || !viewingLabel || !viewingLib) return;
+    setPresenceWhere({ verb: "Viewing", label: viewingLabel, href: `/documents/${viewingLib}?doc=${docId}` });
+    return () => setPresenceWhere(null);
+  }, [selectedDoc?.id, viewingLabel, viewingLib]);
 
   // Sweep expired ad-hoc holds where they actually block people — the library
   // page — so a lapsed 24h cap releases on the next visit, not at the nightly

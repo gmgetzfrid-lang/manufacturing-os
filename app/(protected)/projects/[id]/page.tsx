@@ -102,6 +102,7 @@ import type {
   Project, ProjectMember, ProjectMemberRole, ProjectActivity, CheckoutSession, ProjectStatus, Timestamp,
 } from "@/types/schema";
 import { sayError } from "@/components/projects/sayError";
+import { setPresenceWhere } from "@/lib/orgPresence";
 
 type Tab = "plan" | "today" | "work" | "reports" | "closeout" | "materials" | "documents" | "intake" | "costs" | "quality" | "activity" | "members";
 const SCHEDULE_TABS = ["plan", "today", "work", "reports"] as const;
@@ -534,6 +535,13 @@ function ProjectDetail() {
     }, () => undefined);
     return () => { on = false; };
   }, [unscheduled0, project?.id, tab, scopeRev]);
+
+  // "On now" in others' side menus: which project this person is in.
+  useEffect(() => {
+    if (!project?.id || !project.name) return;
+    setPresenceWhere({ verb: "In", label: project.name, href: `/projects/${project.id}` });
+    return () => setPresenceWhere(null);
+  }, [project?.id, project?.name]);
 
   const goBack = () => { if (window.history.length > 1) router.back(); else router.push("/projects"); };
 

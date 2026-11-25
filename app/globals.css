@@ -380,6 +380,15 @@ body {
   color: var(--side-text, #ffffff);
 }
 
+/* The side menu's panel: the deep color with depth instead of one flat
+   slab: a little lighter at the top, a soft glow of the workspace's color
+   in the top corner (none on a light menu), deepest at the bottom. */
+.surface-side.side-panel {
+  background:
+    radial-gradient(120% 55% at 0% 0%, color-mix(in srgb, var(--side-glow, transparent) 30%, transparent), transparent 70%),
+    linear-gradient(180deg, color-mix(in oklab, var(--side-bg, #081d48) 90%, white) 0%, var(--side-bg, #081d48) 40%, color-mix(in oklab, var(--side-bg, #081d48) 94%, black) 100%);
+}
+
 /* The sheet's own colors, kept so anything opened from a dark or tinted
    area (a menu, a help popover) can return to them. */
 :root, .dark {

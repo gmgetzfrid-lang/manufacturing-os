@@ -77,6 +77,17 @@ export default function ProjectsPage() {
     return () => clearTimeout(t);
   }, [search]);
   const [showCreate, setShowCreate] = useState(false);
+  // "+" on Projects in the side menu: /projects?new=1 opens the form (the
+  // address goes back to /projects); already here, it says so directly.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("new") === "1") {
+      setShowCreate(true);
+      window.history.replaceState(null, "", "/projects");
+    }
+    const open = () => setShowCreate(true);
+    window.addEventListener("mfgos:new-project", open);
+    return () => window.removeEventListener("mfgos:new-project", open);
+  }, []);
   const hasLoadedOnce = useRef(false);
   // The projects you own or are a member of: the page shows these unless
   // you switch to All projects (remembered on this device).
