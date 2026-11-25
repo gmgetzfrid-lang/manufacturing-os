@@ -45,7 +45,7 @@ import {
   ScrollText, Activity, MailPlus, BookMarked, FileOutput,
   ChevronLeft, ChevronRight, ChevronDown,
   FolderKanban, ShieldCheck, UsersRound, FileStack, Palette,
-  Plus, Check, Image as ImageIcon, X, Bot, CreditCard, DatabaseBackup, ArchiveRestore, Compass,
+  Check, Image as ImageIcon, X, Bot, CreditCard, DatabaseBackup, ArchiveRestore, Compass,
   HardHat,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
@@ -226,12 +226,6 @@ export default function Sidebar({
     ...(canEditBranding ? [{ icon: <ImageIcon aria-hidden className="w-4 h-4" />, label: logoUrl ? 'Change logo' : 'Add your logo', line: orgOptions.length > 1, onClick: () => setLogoModalOpen(true) }] : []),
     ...(isAdmin ? [{ icon: <Settings aria-hidden className="w-4 h-4" />, label: 'Workspace settings', line: orgOptions.length > 1 && !canEditBranding, onClick: () => router.push('/admin/settings') }] : []),
   ];
-  // Started from anywhere: a project (not for viewers and contractors) and a
-  // drafting request.
-  const newItems: MoreItem[] = activeOrgId ? [
-    ...(activeRole !== 'Viewer' && activeRole !== 'Contractor' ? [{ icon: <Briefcase aria-hidden className="w-4 h-4" />, label: 'New project', onClick: () => router.push('/projects?new=1') }] : []),
-    { icon: <MailPlus aria-hidden className="w-4 h-4" />, label: 'New drafting request', onClick: () => router.push('/requests/new') },
-  ] : [];
 
   const isPathActive = useCallback((path: string) => {
     if (!pathname) return false;
@@ -335,57 +329,41 @@ export default function Sidebar({
       )}
       <aside
         aria-hidden={isMobile && !mobileOpen}
-        className={`${collapsed ? 'w-16' : 'w-64'} vt-side surface-side h-full flex flex-col text-[var(--color-text-muted)] shrink-0 fixed inset-y-0 left-0 z-[70] md:relative md:inset-auto md:z-auto transition-[transform,width] duration-200 ease-out bg-[var(--color-canvas)] shadow-[inset_-1px_0_0_var(--color-border)] ${mobileOpen ? 'translate-x-0 ui-float' : '-translate-x-full'} md:translate-x-0`}
+        className={`${collapsed ? 'w-16' : 'w-64'} vt-side surface-side h-full flex flex-col text-[var(--color-text-muted)] shrink-0 fixed inset-y-0 left-0 z-[70] md:relative md:inset-auto md:z-[35] transition-[transform,width] duration-200 ease-out bg-[var(--color-canvas)] shadow-[inset_-1px_0_0_var(--color-border)] ${mobileOpen ? 'translate-x-0 ui-float' : '-translate-x-full'} md:translate-x-0`}
       >
 
-      {/* THE WORKSPACE: one header. Its logo (or its initials and name) is
-          the button that opens everything about the workspace: switch to
-          another, change the logo, its settings. Never the name twice. */}
-      <div className={`h-16 flex items-center border-b border-[var(--color-border)] shrink-0 ${collapsed ? 'justify-center px-2' : 'pl-3 pr-3 gap-2'}`}>
+      {/* THE WORKSPACE: one block. The logo (or the initials and name) is
+          the button for everything about the workspace: switch to another,
+          change the logo, its settings. Its arrow sits inside it, so nothing
+          floats beside it. Collapse (or close, on a phone) is a small round
+          button on the menu's edge, apart from the brand. */}
+      <button
+        type="button"
+        onClick={() => (isMobile ? onMobileClose?.() : setRailCollapsed((v) => !v))}
+        title={isMobile ? 'Close menu' : collapsed ? 'Expand (⌘B)' : 'Collapse (⌘B)'}
+        aria-label={isMobile ? 'Close menu' : collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        className="ui-hit absolute z-[75] top-7 -right-3.5 w-7 h-7 inline-flex items-center justify-center rounded-full border border-[var(--color-border-strong)] bg-[var(--color-canvas)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] shadow-[var(--shadow-control)] transition-colors"
+      >
+        {isMobile ? <X className="w-3.5 h-3.5" /> : collapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronLeft className="w-3.5 h-3.5" />}
+      </button>
+      <div className={`shrink-0 ${collapsed ? 'px-2 pt-4 pb-3 flex justify-center' : 'px-3 pt-4 pb-3'}`}>
         {collapsed ? (
-          <button
-            onClick={() => setRailCollapsed(false)}
-            title="Expand sidebar (⌘B)"
-            aria-label="Expand sidebar"
-            className="group relative w-10 h-10 rounded-lg flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-colors"
-          >
-            {/* The workspace's initials (a logo is too wide for the rail); the arrow shows on hover and focus. */}
-            {orgName ? <span className="transition-opacity group-hover:opacity-0 group-focus-visible:opacity-0"><OrgInitials name={orgName} /></span>
-              : <AppMark size={28} ring className="transition-opacity group-hover:opacity-0 group-focus-visible:opacity-0" />}
-            <ChevronRight className="ui-chevron w-5 h-5 group-hover:translate-x-0.5 absolute opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100" />
-          </button>
+          // The rail: the workspace's initials (a wordmark is too wide here).
+          workspaceItems.length > 0 ? (
+            <MoreMenu items={workspaceItems} label={`Workspace: ${orgName ?? 'Manufacturing OS'}. Switch, logo and settings`}
+              triggerClass="w-10 h-10 inline-flex items-center justify-center rounded-lg hover:bg-[var(--color-surface)] transition-colors"
+              trigger={orgName ? <OrgInitials name={orgName} /> : <AppMark size={28} ring />} />
+          ) : (orgName ? <OrgInitials name={orgName} /> : <AppMark size={28} ring />)
+        ) : workspaceItems.length > 0 ? (
+          <MoreMenu items={workspaceItems} label={`Workspace: ${orgName ?? 'Manufacturing OS'}. Switch, logo and settings`} boxClass="w-full"
+            triggerClass="w-full text-left rounded-xl transition-shadow hover:shadow-[var(--shadow-float)] focus-visible:shadow-[var(--shadow-float)]"
+            trigger={<WorkspaceCard logoUrl={logoUrl} name={orgName} menu />} />
         ) : (
-          <>
-            {workspaceItems.length > 0 ? (
-              <MoreMenu items={workspaceItems} label={`Workspace: ${orgName ?? 'Manufacturing OS'}. Switch, logo and settings`} boxClass="flex-1 min-w-0"
-                triggerClass="group w-full h-12 pointer-coarse:min-h-12 flex items-center gap-2 pl-1 pr-2 rounded-lg hover:bg-[var(--color-surface)] transition-colors text-left"
-                trigger={<><WorkspaceFace logoUrl={logoUrl} name={orgName} /><ChevronDown aria-hidden className="ui-chevron w-4 h-4 shrink-0 text-[var(--color-text-muted)] group-hover:text-[var(--color-text)] group-aria-expanded:rotate-180" /></>} />
-            ) : (
-              <div className="flex-1 min-w-0 h-12 flex items-center gap-2 pl-1"><WorkspaceFace logoUrl={logoUrl} name={orgName} /></div>
-            )}
-            <button
-              onClick={() => (isMobile ? onMobileClose?.() : setRailCollapsed((v) => !v))}
-              title={isMobile ? 'Close menu' : 'Collapse (⌘B)'}
-              aria-label={isMobile ? 'Close menu' : 'Collapse sidebar'}
-              className="w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 inline-flex items-center justify-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] shrink-0 transition-colors"
-            >
-              {isMobile ? <X className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
-            </button>
-          </>
+          <WorkspaceCard logoUrl={logoUrl} name={orgName} />
         )}
       </div>
-
-      {/* NEW: the things people start from anywhere, in one quiet button
-          (the page's own main button stays the one in color). */}
-      {newItems.length > 0 && (
-        <div className={`shrink-0 ${collapsed ? 'px-2 pt-3 flex justify-center' : 'px-3 pt-3'}`}>
-          <MoreMenu items={newItems} label="New" boxClass={collapsed ? '' : 'w-full'}
-            triggerClass={collapsed
-              ? 'w-10 h-10 inline-flex items-center justify-center rounded-lg border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-colors'
-              : 'w-full h-10 pointer-coarse:h-11 inline-flex items-center gap-2 px-3 rounded-lg border border-[var(--color-border-strong)] text-reading font-medium text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-colors'}
-            trigger={collapsed ? <Plus aria-hidden className="w-4 h-4" /> : <><Plus aria-hidden className="w-4 h-4" />New<span aria-hidden className="ml-auto text-caption font-normal text-[var(--color-text-muted)]">Project, request</span></>} />
-        </div>
-      )}
+      {/* A short line between the brand and the menu, inset like the menu. */}
+      <div aria-hidden className={`shrink-0 h-px bg-[var(--color-border)] ${collapsed ? 'mx-3' : 'mx-5'}`} />
 
       {logoModalOpen && <LogoUploadModal onClose={() => setLogoModalOpen(false)} />}
 
@@ -419,15 +397,16 @@ export default function Sidebar({
               )}
               {/* The projects this person opened last: straight back in. */}
               {section.id === 'work' && !collapsed && recentProjects.length > 0 && (
-                <div className="mt-5">
-                  <div className="px-2.5 mb-1 text-caption font-medium text-[var(--color-text-muted)]">Recent projects</div>
-                  <ul className="space-y-0.5">
+                <div className="mt-6">
+                  <div className="px-2.5 mb-1.5 text-caption font-medium text-[var(--color-text-muted)]">Recent projects</div>
+                  {/* A second list in its own card, apart from the menu. */}
+                  <ul className="rounded-xl bg-[var(--color-surface)] p-1 space-y-0.5">
                     {recentProjects.map((p) => {
                       const here = pathname?.startsWith(`/projects/${p.id}`) ?? false;
                       return (
                         <li key={p.id}>
                           <Link href={`/projects/${p.id}`} aria-current={here ? 'page' : undefined} title={p.name}
-                            className={`flex items-center gap-2.5 h-9 pointer-coarse:h-11 px-2.5 rounded-lg text-body transition-colors ${here ? 'bg-[var(--color-surface)] text-[var(--color-text)] font-medium' : 'text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)]'}`}>
+                            className={`flex items-center gap-2.5 h-9 pointer-coarse:h-11 px-2 rounded-lg text-body transition-colors ${here ? 'bg-[var(--color-canvas)] text-[var(--color-text)] font-medium' : 'text-[var(--color-text-muted)] hover:bg-[var(--color-canvas)] hover:text-[var(--color-text)]'}`}>
                             <span aria-hidden className={`shrink-0 w-[17px] flex justify-center`}><span className={`w-1.5 h-1.5 rounded-full ${here ? 'bg-[var(--color-current)]' : 'bg-[var(--color-text-faint)]'}`} /></span>
                             <span className="truncate">{p.name}</span>
                           </Link>
@@ -572,36 +551,31 @@ function SidebarLeaf({
   );
 }
 
-// ─── The workspace's face in the header ──────────────────────
-// Its logo on a white plate (logos are drawn for white), filling the header,
-// or its initials and name when it has no logo yet. The logo already says
-// the name, so the name isn't repeated beside it.
-function WorkspaceFace({ logoUrl, name }: { logoUrl: string | null | undefined; name: string | null }) {
+// ─── The workspace card at the top ───────────────────────────
+// With a logo: the logo on a white plate (logos are drawn for white), as big
+// as the menu is wide; the logo already says the name, so it isn't repeated.
+// Without one: the initials and the name. When it opens a menu, its arrow
+// sits inside the card, quietly, at the right.
+function WorkspaceCard({ logoUrl, name, menu = false }: { logoUrl: string | null | undefined; name: string | null; menu?: boolean }) {
   if (logoUrl) {
     return (
-      <span className="flex-1 min-w-0 h-10 inline-flex items-center">
-        <span className="max-w-full h-full inline-flex items-center rounded-lg px-2 shadow-[var(--shadow-control)]" style={{ background: 'var(--side-logo-plate, transparent)' }}>
+      <span className="flex items-center gap-2 w-full h-14 pl-3 pr-2.5 rounded-xl shadow-[var(--shadow-control)]" style={{ background: 'var(--side-logo-plate, var(--color-surface))' }}>
+        <span className="flex-1 min-w-0 h-full flex items-center">
           {/* eslint-disable-next-line @next/next/no-img-element -- org logo is a signed storage URL */}
-          <img src={logoUrl} alt={name ? `${name} logo` : 'Workspace logo'} className="max-h-8 w-auto max-w-full object-contain" draggable={false} />
+          <img src={logoUrl} alt={name ? `${name} logo` : 'Workspace logo'} className="max-h-10 w-auto max-w-full object-contain" draggable={false} />
         </span>
-      </span>
-    );
-  }
-  if (!name) {
-    return (
-      <span className="flex-1 min-w-0 inline-flex items-center gap-2.5">
-        <AppMark size={30} ring />
-        <span className="font-display text-section font-semibold text-[var(--color-text)] leading-none truncate">Manufacturing OS</span>
+        {menu && <ChevronDown aria-hidden className="shrink-0 w-4 h-4 text-[var(--side-logo-ink)]" />}
       </span>
     );
   }
   return (
-    <span className="flex-1 min-w-0 inline-flex items-center gap-2.5">
-      <OrgInitials name={name} />
-      <span className="min-w-0">
-        <span className="block font-display text-reading font-semibold text-[var(--color-text)] leading-tight truncate">{name}</span>
-        <span className="block text-caption text-[var(--color-text-muted)] leading-tight">Manufacturing OS</span>
+    <span className="flex items-center gap-2.5 w-full h-14 px-2.5 rounded-xl bg-[var(--color-surface)]">
+      {name ? <OrgInitials name={name} /> : <AppMark size={30} ring />}
+      <span className="flex-1 min-w-0">
+        <span className="block font-display text-reading font-semibold text-[var(--color-text)] leading-tight truncate">{name ?? 'Manufacturing OS'}</span>
+        {name && <span className="block text-caption text-[var(--color-text-muted)] leading-tight">Workspace</span>}
       </span>
+      {menu && <ChevronDown aria-hidden className="shrink-0 w-4 h-4 text-[var(--color-text-muted)]" />}
     </span>
   );
 }

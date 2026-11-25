@@ -97,14 +97,16 @@ export function themeVars(mode: ThemeMode, p: Palette): Record<string, string> {
       "--side-bg": deep, "--side-surface": fromOklch(dl + 0.06, 0.04, dh), "--side-text": "#ffffff",
       "--side-muted": "rgb(255 255 255 / 0.78)", "--side-faint": "rgb(255 255 255 / 0.6)",
       "--side-border": "rgb(255 255 255 / 0.12)", "--side-border-strong": "rgb(255 255 255 / 0.22)",
-      "--side-accent-text": sc[200], "--side-logo-plate": "#ffffff", ...current,
+      // The logo's white plate, and a quiet gray for anything drawn on it
+      // (the workspace menu's arrow).
+      "--side-accent-text": sc[200], "--side-logo-plate": "#ffffff", "--side-logo-ink": "#5b6675", ...current,
     });
   } else {
     Object.assign(v, {
       "--side-bg": mode === "dark" ? n.surface : "#ffffff", "--side-surface": n.surface2, "--side-text": mode === "dark" ? "#e8ebf0" : "#1f2733",
       "--side-muted": mode === "dark" ? "#a9b2bf" : "#4f5b6b", "--side-faint": mode === "dark" ? "#8a94a3" : "#677283",
       "--side-border": n.border, "--side-border-strong": n.borderStrong,
-      "--side-accent-text": mode === "dark" ? sc[300] : sc[700], "--side-logo-plate": "transparent", ...current,
+      "--side-accent-text": mode === "dark" ? sc[300] : sc[700], "--side-logo-plate": "transparent", "--side-logo-ink": mode === "dark" ? "#a9b2bf" : "#4f5b6b", ...current,
     });
   }
   return v;
