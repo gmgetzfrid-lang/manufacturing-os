@@ -77,6 +77,14 @@ export default function ProjectsPage() {
     return () => clearTimeout(t);
   }, [search]);
   const [showCreate, setShowCreate] = useState(false);
+  // "New project" from the side menu (or a link): /projects?new=1 opens the
+  // form; the address goes back to /projects.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("new") !== "1") return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- opened once from the address after mount
+    setShowCreate(true);
+    window.history.replaceState(null, "", "/projects");
+  }, []);
   const hasLoadedOnce = useRef(false);
   // The projects you own or are a member of: the page shows these unless
   // you switch to All projects (remembered on this device).

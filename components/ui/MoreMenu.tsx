@@ -15,7 +15,14 @@ export type MoreItem = { icon: React.ReactNode; label: string; onClick: () => vo
 /** ⋯ More: the project's less-used actions in one menu. `label` and
  *  `triggerClass` dress the button (a tab bar's "More"); `iconOnly` keeps
  *  just the dots, with the label for screen readers. */
-export default function MoreMenu({ items, label = "More", triggerClass, iconOnly }: { items: MoreItem[]; label?: string; triggerClass?: string; iconOnly?: boolean }) {
+export default function MoreMenu({ items, label = "More", triggerClass, iconOnly, trigger, boxClass }: {
+  items: MoreItem[]; label?: string; triggerClass?: string; iconOnly?: boolean;
+  /** The button's own face (a workspace's logo, "+ New") instead of ⋯ and
+   *  the label; `label` then names it for screen readers. */
+  trigger?: React.ReactNode;
+  /** Classes for the wrapper (e.g. "flex-1 min-w-0" for a full-width face). */
+  boxClass?: string;
+}) {
   const [open, setOpen] = useState(false);
   // Where the menu goes: under the button, toward the side with room (the
   // button sits on the left on a phone).
@@ -41,11 +48,11 @@ export default function MoreMenu({ items, label = "More", triggerClass, iconOnly
   // Escape closes the open menu first, not the screen or dialog under it.
   useEscapeClose(() => setOpen(false), open);
   return (
-    <div ref={box} className="relative">
-      <button type="button" aria-haspopup="menu" aria-expanded={open} aria-label={iconOnly ? label : undefined} onClick={(e) => { place(e.currentTarget.getBoundingClientRect()); setOpen((o) => !o); }}
+    <div ref={box} className={`relative ${boxClass ?? ""}`}>
+      <button type="button" aria-haspopup="menu" aria-expanded={open} aria-label={iconOnly || trigger ? label : undefined} onClick={(e) => { place(e.currentTarget.getBoundingClientRect()); setOpen((o) => !o); }}
         title={iconOnly ? label : undefined}
         className={triggerClass ?? "inline-flex items-center justify-center gap-1.5 h-10 pointer-coarse:h-11 px-3 rounded-lg border text-body font-medium transition-colors border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-control)]"}>
-        <MoreHorizontal className="w-4 h-4" />{!iconOnly && <span>{label}</span>}
+        {trigger ?? <><MoreHorizontal className="w-4 h-4" />{!iconOnly && <span>{label}</span>}</>}
       </button>
       {open && typeof document !== "undefined" && createPortal(
         // It floats (the one shadow for things above the page) and grows
