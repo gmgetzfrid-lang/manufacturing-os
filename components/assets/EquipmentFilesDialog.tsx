@@ -17,6 +17,8 @@ import { sayError } from "@/components/projects/sayError";
 import { supabase } from "@/lib/supabase";
 import { planTree, type EquipmentTree, type TreeAsset, type TreeType, type TreeUnit } from "@/lib/equipmentLibrary";
 import { loadTree, pushTree, treeInputs } from "@/lib/equipmentLibraryPush";
+import { accessWords, defaultLibraryAccess } from "@/lib/libraryAccess";
+import type { AccessControl } from "@/types/schema";
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
 
@@ -31,7 +33,10 @@ export default function EquipmentFilesDialog({ orgId, uid, email, onClose, onDon
   const types = useMemo(() => data?.types ?? [], [data]);
   const assets = useMemo(() => data?.assets ?? [], [data]);
   const [tree, setTree] = useState<EquipmentTree | null | undefined>(undefined);
-  const [libs, setLibs] = useState<Array<{ id: string; name: string }>>([]);
+  const [libs, setLibs] = useState<Array<{ id: string; name: string; acl: AccessControl | null }>>([]);
+  // A new library copies the access of one you have ("" = Admin and Document
+  // Control add, everyone sees). Never made with no rules.
+  const [accessFrom, setAccessFrom] = useState("");
   const [own, setOwn] = useState(true);
   const [name, setName] = useState("Equipment Files");
   const [libId, setLibId] = useState("");
@@ -44,10 +49,11 @@ export default function EquipmentFilesDialog({ orgId, uid, email, onClose, onDon
 
   useEffect(() => {
     let on = true;
-    void Promise.all([loadTree(orgId).catch(() => null), supabase.from("libraries").select("id, name").eq("org_id", orgId).order("name")]).then(([t, l]) => {
+    void Promise.all([loadTree(orgId).catch(() => null), supabase.from("libraries").select("id, name, acl").eq("org_id", orgId).order("name")]).then(([t, l]) => {
       if (!on) return;
-      const ls = (l.data ?? []) as Array<{ id: string; name: string }>;
+      const ls = (l.data ?? []) as Array<{ id: string; name: string; acl: AccessControl | null }>;
       setLibs(ls); setTree(t);
+      setAccessFrom(ls.find((x) => /drawing/i.test(x.name) && x.acl?.rules?.length)?.id ?? "");
       if (t?.assets) {
         setOwn(!!t.own);
         if (t.own) setName(t.libraryName ?? "Equipment Files"); else setLibId(t.libraryId);
@@ -63,12 +69,15 @@ export default function EquipmentFilesDialog({ orgId, uid, email, onClose, onDon
   const unitsWithEquipment = new Set(assets.map((a) => a.unitCode).filter(Boolean)).size;
   const emptyUnits = Math.max(0, units.filter((u) => !assets.some((a) => a.unitCode === u.code)).length);
   const total = plan.folders.length;
+  // Who sees it and adds to it: the library that's there, or the new one's copy.
+  const existingLib = own ? libs.find((l) => l.name.trim().toLowerCase() === name.trim().toLowerCase()) ?? null : libs.find((l) => l.id === libId) ?? null;
+  const access = accessWords(existingLib ? existingLib.acl : (libs.find((l) => l.id === accessFrom)?.acl ?? defaultLibraryAccess(orgId).acl));
   const placeWords = own ? (name.trim() || "Equipment Files") : `${libs.find((l) => l.id === libId)?.name ?? "…"} › ${folderName.trim() || "Equipment Files"}`;
 
   const go = async () => {
     setErr(null); setBusy("Starting");
     try {
-      const r = await pushTree({ orgId, uid, email, where: own ? { own: true, name } : { own: false, libraryId: libId, folderName }, allUnits, equipmentFolders: perEquipment, onStep: setBusy });
+      const r = await pushTree({ orgId, uid, email, where: own ? { own: true, name, accessFrom: accessFrom || null } : { own: false, libraryId: libId, folderName }, allUnits, equipmentFolders: perEquipment, onStep: setBusy });
       setDone(r); onDone?.(r.tree);
     } catch (e) { setErr(sayError(e)); } finally { setBusy(null); }
   };
@@ -129,6 +138,21 @@ export default function EquipmentFilesDialog({ orgId, uid, email, onClose, onDon
                   </div>
                 </div>
               )}
+            </section>
+
+            <section className="grid gap-2">
+              <h3 className="text-body font-semibold text-[var(--color-text)]">Who sees it and adds files</h3>
+              {own && !existingLib ? (
+                <div>
+                  <label htmlFor="ef-access" className="block text-body font-medium text-[var(--color-text)] mb-1.5">Access</label>
+                  <select id="ef-access" value={accessFrom} onChange={(e) => setAccessFrom(e.target.value)} className={fieldCls} disabled={!!busy}>
+                    {libs.filter((l) => l.acl?.rules?.length).map((l) => <option key={l.id} value={l.id}>Same as {l.name}</option>)}
+                    <option value="">Admin and Document Control add files; everyone sees them</option>
+                  </select>
+                </div>
+              ) : <p className="text-body text-[var(--color-text-muted)]">As {existingLib?.name ?? "the library"} has it{own ? "" : "; the folders inherit it"}.</p>}
+              <p className="text-body text-[var(--color-text)]">{access.view} see{access.view === "Everyone in the workspace" ? "s" : ""} the files. {access.add[0].toUpperCase() + access.add.slice(1)} can add and change them.{existingLib || own ? " Change it any time in Libraries." : ""}</p>
+              {access.open && <p className="text-body text-[var(--state-held-text)]">{existingLib?.name ?? "This library"} has no access rules, so every member can add and change its files. Set its access in Libraries first.</p>}
             </section>
 
             <section className="grid gap-2">

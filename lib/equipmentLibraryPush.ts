@@ -9,13 +9,14 @@
 // unit's page gets its folder pinned ("Equipment files").
 
 import { supabase } from "@/lib/supabase";
-import { createFolder, createLibrary } from "@/lib/libraryCollections";
+import { createFolder } from "@/lib/libraryCollections";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { listAssets, listAssetTypes } from "@/lib/assets";
 import { loadCodebook, saveUnitLinks, type UnitResourceLink } from "@/lib/codebook";
 import { mutateConfig, readConfig } from "@/lib/woPackages";
 import { NO_UNIT, planTree, typeKeyOf, type EquipmentTree, type PlannedFolder, type TreeAsset } from "@/lib/equipmentLibrary";
 import { eqtypeId } from "@/lib/estate/folderMarks";
+import { defaultLibraryAccess } from "@/lib/libraryAccess";
 
 export const TREE_KEY = "equipment_files_place";
 
@@ -38,6 +39,47 @@ export async function treeInputs(orgId: string) {
 }
 
 type Col = { id: string; name: string; parent_id: string | null; path_names: string[] | null; path_ids: string[] | null };
+
+/** The tree without folders that are gone or in the trash (a controller
+ *  deleted one): those are made again, never filed into. */
+export async function liveTree(tree: EquipmentTree): Promise<EquipmentTree> {
+  const ids = [...new Set([...Object.values(tree.units ?? {}), ...Object.values(tree.types ?? {}), ...Object.values(tree.assets ?? {}), ...(tree.collectionId ? [tree.collectionId] : [])])];
+  if (!ids.length) return tree;
+  const live = new Set<string>();
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await supabase.from("collections").select("id").in("id", ids.slice(i, i + 200)).is("deleted_at", null);
+    if (error) return tree; // Can't tell: keep the map as it is.
+    for (const r of (data ?? []) as Array<{ id: string }>) live.add(r.id);
+  }
+  if (live.size === ids.length) return tree;
+  const keep = (m?: Record<string, string>) => m ? Object.fromEntries(Object.entries(m).filter(([, id]) => live.has(id))) : m;
+  return { ...tree, units: keep(tree.units), types: keep(tree.types), assets: keep(tree.assets), collectionId: tree.collectionId && !live.has(tree.collectionId) ? null : tree.collectionId };
+}
+
+/** The columns that carry a library's access (and its look), copied as one;
+ *  only these, by name (never its id or name). */
+const ACCESS_KEYS = ["type", "custom_columns", "write_access", "admin_access", "read_access", "visible_to", "folder_security", "default_new_visibility", "default_new_acl", "acl", "acl_index"] as const;
+const ACCESS_COLS = ACCESS_KEYS.join(", ");
+
+/** A new library for equipment files, with the same access as `accessFrom`
+ *  (your Drawings library, say), else the library wizard's default.
+ *  Never made with no rules: that would let every member add and change. */
+async function makeLibrary(orgId: string, name: string, uid: string, accessFrom?: string | null): Promise<{ id: string; name: string }> {
+  let access: Record<string, unknown> | null = null;
+  if (accessFrom) {
+    const { data } = await supabase.from("libraries").select(ACCESS_COLS).eq("id", accessFrom).eq("org_id", orgId).maybeSingle();
+    const row = data as Record<string, unknown> | null;
+    if (row && row.acl) access = Object.fromEntries(ACCESS_KEYS.filter((k) => k in row).map((k) => [k, row[k]]));
+  }
+  const now = new Date().toISOString();
+  const { data, error } = await supabase.from("libraries").insert({
+    ...(access ?? defaultLibraryAccess(orgId)),
+    name, description: "Equipment drawings and files, filed by operating area, equipment type and equipment.",
+    org_id: orgId, created_at: now, created_by: uid, updated_at: now, updated_by: uid,
+  }).select("id, name").single();
+  if (error || !data) throw new Error(error?.message || "Couldn't make the library.");
+  return data as { id: string; name: string };
+}
 
 /** Make the folders in `plan` that aren't there, level by level; returns
  *  the tree with every folder mapped. */
@@ -132,7 +174,10 @@ export async function wireGraph(orgId: string, tree: EquipmentTree, actor: { use
   return n;
 }
 
-export type Where = { own: true; name: string } | { own: false; libraryId: string; folderName: string };
+export type Where =
+  /** Its own library; `accessFrom` is the library whose access it copies. */
+  | { own: true; name: string; accessFrom?: string | null }
+  | { own: false; libraryId: string; folderName: string };
 
 /** Make or grow the Equipment Files library. */
 export async function pushTree(input: {
@@ -141,7 +186,8 @@ export async function pushTree(input: {
   onStep?: (words: string) => void;
 }): Promise<{ tree: EquipmentTree; made: number; pinned: number; marked: number }> {
   const say = input.onStep ?? (() => undefined);
-  const before = await loadTree(input.orgId);
+  const stored = await loadTree(input.orgId);
+  const before = stored ? await liveTree(stored) : null;
   // Where it goes: the library (made once, or the one already named so).
   let libraryId: string, libraryName: string, collectionId: string | null = null;
   if (input.where.own) {
@@ -151,7 +197,7 @@ export async function pushTree(input: {
       const { data } = await supabase.from("libraries").select("id, name").eq("org_id", input.orgId);
       const same = ((data ?? []) as Array<{ id: string; name: string }>).find((l) => l.name.trim().toLowerCase() === name.toLowerCase());
       if (same) { libraryId = same.id; libraryName = same.name; }
-      else { say(`Making the ${name} library`); const l = await createLibrary({ orgId: input.orgId, name, createdBy: input.uid }); libraryId = l.id; libraryName = l.name; }
+      else { say(`Making the ${name} library`); const l = await makeLibrary(input.orgId, name, input.uid, input.where.accessFrom); libraryId = l.id; libraryName = l.name; }
     }
   } else {
     libraryId = input.where.libraryId;
@@ -195,12 +241,24 @@ export async function pushTree(input: {
   return { tree: saved, made, pinned, marked };
 }
 
-/** A piece of equipment's folder, made when it's new since the push (its
- *  unit and type folders too). Null when there's no Equipment Files tree. */
-export async function ensureAssetFolder(orgId: string, uid: string, asset: TreeAsset): Promise<{ id: string; path: string[] } | null> {
-  const tree = await loadTree(orgId);
-  if (!tree?.assets) return null;
-  let id: string | null = tree.assets[asset.id] ?? null;
+/** Where a piece of equipment's files go in Equipment Files: its own
+ *  folder, made when it's new since the push (its unit and type folders too)
+ *  by someone who may make folders (Admin, Document Control: the database
+ *  holds the same rule). Anyone else files into the nearest folder there is
+ *  (its type's, its unit's, the top) and `own` is false; the next update
+ *  of the library gives it its own folder. Null when there's no tree. */
+export async function ensureAssetFolder(orgId: string, uid: string, asset: TreeAsset, opts: { canMake: boolean } = { canMake: true }): Promise<{ id: string | null; path: string[]; own: boolean } | null> {
+  const stored = await loadTree(orgId);
+  if (!stored?.assets) return null;
+  const tree = await liveTree(stored);
+  let id: string | null = tree.assets?.[asset.id] ?? null;
+  let own = !!id;
+  if (!id && !opts.canMake) {
+    const near = tree.types?.[typeKeyOf(asset.unitCode || NO_UNIT, asset.typeId)] ?? tree.units?.[asset.unitCode || NO_UNIT] ?? tree.collectionId ?? null;
+    if (!near) return { id: null, path: [], own: false };
+    const { data } = await supabase.from("collections").select("path_names").eq("id", near).maybeSingle();
+    return { id: near, path: ((data as { path_names?: string[] } | null)?.path_names ?? []), own: false };
+  }
   if (!id) {
     const types = await listAssetTypes(orgId).then((t) => t.map((x) => ({ id: x.id, name: x.name })), () => []);
     const cb = await loadCodebook(orgId);
@@ -211,9 +269,10 @@ export async function ensureAssetFolder(orgId: string, uid: string, asset: TreeA
     const before = new Set([...Object.values(tree.units ?? {}), ...Object.values(tree.types ?? {}), ...Object.values(tree.assets ?? {})]);
     const fresh = new Set([...Object.values(grown.units ?? {}), ...Object.values(grown.types ?? {}), ...Object.values(grown.assets ?? {})].filter((f) => !before.has(f)));
     if (fresh.size) await wireGraph(orgId, grown, { userId: uid, name: null }, fresh).catch(() => undefined);
+    own = !!grown.assets?.[asset.id];
     id = grown.assets?.[asset.id] ?? grown.types?.[typeKeyOf(asset.unitCode || NO_UNIT, asset.typeId)] ?? null;
   }
   if (!id) return null;
   const { data } = await supabase.from("collections").select("path_names").eq("id", id).maybeSingle();
-  return { id, path: ((data as { path_names?: string[] } | null)?.path_names ?? []) };
+  return { id, path: ((data as { path_names?: string[] } | null)?.path_names ?? []), own };
 }

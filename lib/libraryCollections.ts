@@ -4,6 +4,7 @@
 import { supabase } from "@/lib/supabase";
 import { buildAclIndex } from "@/lib/acl";
 import type { LibraryCollection, NodeVisibility, AccessControl, AclIndex, LibraryCustomColumn, PageConfig, LibraryHomeConfig } from "@/types/schema";
+import { defaultLibraryAccess } from "@/lib/libraryAccess";
 
 const TABLE = "collections";
 
@@ -123,17 +124,11 @@ export async function createLibrary(input: { orgId: string; name: string; type?:
     .from("libraries")
     .insert({
       name: input.name.trim(),
+      // The library wizard's default access, never none: a library with no
+      // rules would let every member add and change files.
+      ...defaultLibraryAccess(input.orgId),
       type: input.type ?? "Engineering",
       description: "",
-      custom_columns: [],
-      write_access: [],
-      admin_access: [],
-      read_access: "ALL",
-      visible_to: [],
-      folder_security: "Inherited",
-      default_new_visibility: "normal",
-      default_new_acl: null,
-      acl: null,
       org_id: input.orgId,
       created_at: now,
       created_by: input.createdBy,

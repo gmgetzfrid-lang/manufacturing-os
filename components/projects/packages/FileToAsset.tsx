@@ -17,9 +17,10 @@ import { sayError } from "@/components/projects/sayError";
 import { deleteFile } from "@/lib/storage";
 import { fetchStored } from "@/lib/packageOps";
 import {
-  assetWords, existingDoc, fileToAsset, folderFor, hasTree, listLibraries, loadEquipmentPlace, numberFromName, saveEquipmentPlace, suggestLibrary,
+  assetWords, existingDoc, fileToAsset, folderFor, hasTree, listLibraries, loadEquipmentPlace, makesFolders, mayFileTo, numberFromName, saveEquipmentPlace, suggestLibrary,
   type EquipmentFilesPlace, type LibraryLite, type PackageAsset,
 } from "@/lib/equipmentFiles";
+import { useRole } from "@/components/providers/RoleContext";
 import type { PkgItem } from "@/lib/woPackages";
 
 export interface Filed { itemId: string; documentId: string; libraryId: string; versionId: string | null; rev: string | null; title: string; deletePath?: string }
@@ -48,6 +49,16 @@ export default function FileToAsset({ orgId, projectId, asset, items, nothingOnF
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [taken, setTaken] = useState<Record<string, { id: string; libraryId: string; currentVersionId: string | null; rev: string | null }>>({});
+  // The library's own rules decide who adds to it (as on the library page);
+  // folders are made by Admin and Document Control only (so the database says).
+  const { roles, hasAnyRole } = useRole();
+  const canMake = makesFolders(roles);
+  // Making the library is Operating areas (Admin) or the site codebook (Document Control).
+  const setUpHref = hasAnyRole(["Admin"]) ? "/admin/assets?equipmentFiles=1" : hasAnyRole(["DocCtrl"]) ? "/admin/codebook" : null;
+  const [may, setMay] = useState<{ ok: boolean; who: string; unknown?: boolean } | null>(null);
+  // Equipment new since the library was set up, filed by someone who can't
+  // make its folder: it goes in the nearest folder, and that's said.
+  const [nearest, setNearest] = useState(false);
 
   useEffect(() => {
     let on = true;
@@ -61,14 +72,21 @@ export default function FileToAsset({ orgId, projectId, asset, items, nothingOnF
   // Where they'd land, in words.
   const libId = !place || changing ? lib : place.libraryId;
   useEffect(() => {
-    if (!libId) { setWhere(null); return; }
+    if (!libId) { setWhere(null); setMay(null); return; }
     let on = true;
     const p: EquipmentFilesPlace = place && !changing ? place : { libraryId: libId, collectionId: null };
-    // Equipment new since the push gets its folder when it's filed: said, not made yet.
-    if (hasTree(p) && !p.assets?.[asset.id]) { setWhere(`${p.libraryName ?? "Equipment Files"} › a new folder for ${asset.tag}`); return; }
-    void folderFor(orgId, p, asset).then((w) => { if (on) setWhere(w.words); }, () => { if (on) setWhere(null); });
+    // A preview: nothing is made here (canMake false never writes).
+    void folderFor(orgId, p, asset, uid, { canMake: false }).then(async (w) => {
+      if (!on) return;
+      // No folder of its own (new since the push, or its folder was deleted).
+      const isNew = hasTree(p) && !w.own;
+      setNearest(isNew && !canMake);
+      // New since the push, filed by Admin or Document Control: its folder is made when it's filed.
+      setWhere(isNew && canMake ? `${w.words} › a new folder for ${asset.tag}` : w.words);
+      setMay(uid ? await mayFileTo(p.libraryId, w.collectionId, { uid, orgId, roles }).catch(() => null) : null);
+    }, () => { if (on) { setWhere(null); setMay(null); } });
     return () => { on = false; };
-  }, [orgId, libId, place, changing, asset]);
+  }, [orgId, libId, place, changing, asset, uid, canMake, roles]);
 
   const chosen = items.filter((it) => pick[it.id]?.on);
   const asking = place === null || changing;
@@ -81,7 +99,8 @@ export default function FileToAsset({ orgId, projectId, asset, items, nothingOnF
     setErr(null); setBusy("Filing");
     const p: EquipmentFilesPlace = asking ? { libraryId: libId, collectionId: null } : place!;
     try {
-      if (asking) { await saveEquipmentPlace(orgId, p); setPlace(p); setChanging(false); }
+      // The workspace's place is set by Admin or Document Control; anyone else files there this once.
+      if (asking && canMake) { await saveEquipmentPlace(orgId, p); setPlace(p); setChanging(false); }
       const done: Filed[] = [];
       const clash: typeof taken = {};
       let words = where ?? "";
@@ -94,7 +113,7 @@ export default function FileToAsset({ orgId, projectId, asset, items, nothingOnF
         if (there) { clash[it.id] = there; continue; }
         const bytes = await fetchStored(it.path);
         const file = new File([bytes as BlobPart], `${number}.${it.mime === "image/png" ? "png" : it.mime === "image/jpeg" ? "jpg" : "pdf"}`, { type: it.mime || "application/pdf" });
-        const r = await fileToAsset({ orgId, place: p, asset, file, number, title: number, from, projectId, actorUserId: uid, actorEmail });
+        const r = await fileToAsset({ orgId, place: p, asset, file, number, title: number, from, projectId, actorUserId: uid, actorEmail, canMakeFolders: canMake });
         words = r.words;
         done.push({ itemId: it.id, documentId: r.documentId, libraryId: r.libraryId, versionId: r.versionId, rev: "0", title: number, deletePath: it.path });
       }
@@ -127,15 +146,15 @@ export default function FileToAsset({ orgId, projectId, asset, items, nothingOnF
       {place === undefined ? <p role="status" className="text-body text-[var(--color-text-muted)]">Checking where equipment files go…</p>
         : setUpFirst ? (
           <div className="rounded-lg bg-[var(--color-surface-2)] p-3 grid gap-2">
-            <p className="text-body text-[var(--color-text)]"><b>Equipment files don&apos;t have their library yet.</b> Make it once in Operating areas: a library laid out like your units, equipment types and equipment, so this lands in {asset.tag}&apos;s own folder and shows on {asset.tag}&apos;s page. Then come back and file it.</p>
+            <p className="text-body text-[var(--color-text)]"><b>Equipment files don&apos;t have their library yet.</b> {setUpHref ? "Make it once" : "An admin makes it once"} in Operating areas: a library laid out like your units, equipment types and equipment, so this lands in {asset.tag}&apos;s own folder and shows on {asset.tag}&apos;s page. Then come back and file it.</p>
             <div className="flex flex-wrap items-center gap-2">
-              <a href="/admin/assets?equipmentFiles=1" className="inline-flex items-center min-h-10 pointer-coarse:min-h-11 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Set it up in Operating areas</a>
+              {setUpHref && <a href={setUpHref} className="inline-flex items-center min-h-10 pointer-coarse:min-h-11 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">{setUpHref.includes("codebook") ? "Set it up in the site codebook" : "Set it up in Operating areas"}</a>}
               <button type="button" onClick={() => setForNow(true)} className="min-h-9 pointer-coarse:min-h-11 text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Or file it to a library for now</button>
             </div>
           </div>
         ) : asking ? (
           <div className="grid gap-1.5">
-            <label htmlFor="fta-lib" className="text-body font-medium text-[var(--color-text)]">Where equipment files go <span className="font-normal text-[var(--color-text-muted)]">(set once for the workspace)</span></label>
+            <label htmlFor="fta-lib" className="text-body font-medium text-[var(--color-text)]">{canMake ? "Where equipment files go" : "Which library"} <span className="font-normal text-[var(--color-text-muted)]">{canMake ? "(set once for the workspace)" : "(for these files)"}</span></label>
             {libs.length ? (
               <select id="fta-lib" value={lib} onChange={(e) => setLib(e.target.value)} className={fieldCls}>
                 {libs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
@@ -144,9 +163,15 @@ export default function FileToAsset({ orgId, projectId, asset, items, nothingOnF
             <p className="text-caption text-[var(--color-text-muted)]">Each file goes in its unit&apos;s folder when the library has one. The equipment registry lists them; it doesn&apos;t keep a second copy. The Equipment Files library (Operating areas) gives each piece of equipment its own folder.</p>
           </div>
         ) : (
-          <p className="text-body text-[var(--color-text)] inline-flex flex-wrap items-center gap-x-2"><Library aria-hidden className="w-4 h-4 text-[var(--color-text-muted)]" />Goes to {where ?? "…"}
-            <button type="button" onClick={() => setChanging(true)} className="min-h-9 pointer-coarse:min-h-11 text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Change</button></p>
+          <div className="grid gap-1">
+            <p className="text-body text-[var(--color-text)] inline-flex flex-wrap items-center gap-x-2"><Library aria-hidden className="w-4 h-4 text-[var(--color-text-muted)]" />Goes to {where ?? "…"}
+              {canMake && <button type="button" onClick={() => setChanging(true)} className="min-h-9 pointer-coarse:min-h-11 text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Change</button>}</p>
+            {nearest && may?.ok !== false && <p className="text-body text-[var(--color-text-muted)]">{asset.tag} has no folder of its own yet, and only Admin or Document Control make folders. It goes here, tagged to {asset.tag}, and shows on {asset.tag}&apos;s page; {asset.tag} gets its own folder the next time an admin updates the library.</p>}
+          </div>
         )}
+      {may && !may.ok && !setUpFirst && (
+        <p role="status" className="text-body text-[var(--state-held-text)]">{may.unknown ? "Couldn't check who can add files to this library. Try again in a moment." : `Only ${may.who} can add files to this library. Ask one of them to file it; it stays in this package until then.`}</p>
+      )}
 
       <ul className="grid gap-2">
         {items.map((it) => {
@@ -174,7 +199,7 @@ export default function FileToAsset({ orgId, projectId, asset, items, nothingOnF
 
       {err && <p className="text-body font-medium text-[var(--state-overdue-text)]">{err}</p>}
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="secondary" onClick={() => void go()} loading={!!busy} disabled={!chosen.length || !libId || place === undefined || setUpFirst}><Check className="w-4 h-4" /> {busy && busy !== "Filing" ? busy : `File ${chosen.length || ""} to ${asset.tag}`.replace("  ", " ")}</Button>
+        <Button variant="secondary" onClick={() => void go()} loading={!!busy} disabled={!chosen.length || !libId || place === undefined || setUpFirst || may?.ok === false}><Check className="w-4 h-4" /> {busy && busy !== "Filing" ? busy : `File ${chosen.length || ""} to ${asset.tag}`.replace("  ", " ")}</Button>
         <Button variant="ghost" onClick={onCancel} disabled={!!busy}>Not now</Button>
       </div>
     </section>

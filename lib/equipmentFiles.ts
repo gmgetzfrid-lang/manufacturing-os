@@ -20,6 +20,10 @@ import { linkAssetFile } from "@/lib/assets";
 import { docsByIds, equipDocs, folderForUnit, tagKey, type FindDoc } from "@/lib/findEverywhere";
 import { ensureAssetFolder, loadTree, saveTree } from "@/lib/equipmentLibraryPush";
 import type { EquipmentTree } from "@/lib/equipmentLibrary";
+import { accessWords } from "@/lib/libraryAccess";
+import { canWithAclChain } from "@/lib/permissions";
+import { getMyTeamIds } from "@/lib/teams";
+import type { AccessControl, Role } from "@/types/schema";
 import type { ScopeWO } from "@/lib/woIntake";
 
 export interface PackageAsset { id: string; tag: string; code: string | null; unitCode: string | null; description: string | null; typeId?: string | null }
@@ -83,32 +87,66 @@ export function suggestLibrary(libs: LibraryLite[]): LibraryLite | null {
   return libs.find((l) => /equipment/i.test(l.name)) ?? libs.find((l) => /drawing/i.test(l.name)) ?? null;
 }
 
-/** Where a file for this equipment goes: the unit's folder in the place's
- *  library when it has one, else the place's own folder. */
-export async function folderFor(orgId: string, place: EquipmentFilesPlace, asset: PackageAsset, uid?: string | null): Promise<{ collectionId: string | null; folderPath: string[]; words: string }> {
+/** Who is filing: their roles decide what they may add and make. */
+export interface Filer { uid: string; orgId: string; roles: Role[] }
+/** Admin and Document Control make folders (the database holds the same rule). */
+export const makesFolders = (roles: Role[]) => roles.some((r) => r === "Admin" || r === "DocCtrl");
+
+/** May they add files there? The library's own rules decide, the same way
+ *  the library page decides (Admin and Document Control always may). When
+ *  they can't, `who` says who can ("Admin and Document Control"). */
+export async function mayFileTo(libraryId: string, folderId: string | null, who: Filer): Promise<{ ok: boolean; who: string; unknown?: boolean }> {
+  const [libRes, folderRes, teamIds] = await Promise.all([
+    supabase.from("libraries").select("acl").eq("id", libraryId).maybeSingle(),
+    folderId ? supabase.from("collections").select("acl, path_ids").eq("id", folderId).maybeSingle() : Promise.resolve({ data: null }),
+    getMyTeamIds(who.uid).catch(() => [] as string[]),
+  ]);
+  // The library's rules are the only gate on adding files (the database
+  // allows members), so a library that can't be read is a no, never a yes.
+  if (libRes.error || !libRes.data) return { ok: false, who: "", unknown: true };
+  const libAcl = ((libRes.data as { acl?: AccessControl | null } | null)?.acl) ?? undefined;
+  const folder = folderRes.data as { acl?: AccessControl | null; path_ids?: string[] | null } | null;
+  const chain: Array<AccessControl | undefined> = [libAcl];
+  if (folder) {
+    const ids = folder.path_ids ?? [];
+    if (ids.length) {
+      const { data } = await supabase.from("collections").select("id, acl").in("id", ids);
+      const aclOf = new Map(((data ?? []) as Array<{ id: string; acl: AccessControl | null }>).map((c) => [c.id, c.acl ?? undefined]));
+      chain.push(...ids.map((id) => aclOf.get(id)));
+    }
+    chain.push(folder.acl ?? undefined);
+  }
+  const roles = who.roles.length ? who.roles : (["Viewer"] as Role[]);
+  const ok = roles.some((role) => canWithAclChain({ principal: { uid: who.uid, role, orgId: who.orgId, teamIds, isActiveMember: true }, action: "upload", aclChain: chain }));
+  return { ok, who: accessWords(libAcl).add };
+}
+
+/** Where a file for this equipment goes: its own folder in Equipment Files
+ *  (made when it's new since the push, by someone who may make folders;
+ *  anyone else files into the nearest folder there is and `own` is false),
+ *  else the unit's folder in the place's library, else the place's folder.
+ *  `canMake: false` never writes: it's how the screen previews the place. */
+export async function folderFor(orgId: string, place: EquipmentFilesPlace, asset: PackageAsset, uid?: string | null, opts: { canMake?: boolean } = {}): Promise<{ collectionId: string | null; folderPath: string[]; words: string; own: boolean }> {
   const { data: lib } = await supabase.from("libraries").select("name").eq("id", place.libraryId).maybeSingle();
   const libName = String((lib as { name?: string } | null)?.name ?? "the library");
-  // The equipment's own folder in Equipment Files (made when it's new since the push).
   if (hasTree(place)) {
-    const known = place.assets?.[asset.id];
-    const f = known || uid
-      ? await ensureAssetFolder(orgId, uid ?? "", { id: asset.id, tag: asset.tag, code: asset.code, unitCode: asset.unitCode, typeId: asset.typeId ?? null, description: asset.description }).catch(() => null)
-      : null;
-    if (f) return { collectionId: f.id, folderPath: f.path, words: [libName, ...f.path].join(" › ") };
+    const canMake = (opts.canMake ?? true) && !!uid;
+    const f = await ensureAssetFolder(orgId, uid ?? "", { id: asset.id, tag: asset.tag, code: asset.code, unitCode: asset.unitCode, typeId: asset.typeId ?? null, description: asset.description }, { canMake }).catch(() => null);
+    if (f) return { collectionId: f.id, folderPath: f.path, words: [libName, ...f.path].join(" › "), own: f.own };
   }
   if (asset.unitCode) {
     const unit = await folderForUnit(orgId, asset.unitCode, place.libraryId).catch(() => null);
     if (unit && unit.libraryId === place.libraryId) {
       const names = unit.chain.map((c) => c.name);
-      return { collectionId: unit.chain[unit.chain.length - 1].id, folderPath: names, words: [libName, ...names].join(" › ") };
+      return { collectionId: unit.chain[unit.chain.length - 1].id, folderPath: names, words: [libName, ...names].join(" › "), own: false };
     }
   }
   if (place.collectionId) {
     const { data: col } = await supabase.from("collections").select("name").eq("id", place.collectionId).maybeSingle();
     const name = String((col as { name?: string } | null)?.name ?? "");
-    return { collectionId: place.collectionId, folderPath: name ? [name] : [], words: [libName, name].filter(Boolean).join(" › ") };
+    return { collectionId: place.collectionId, folderPath: name ? [name] : [], words: [libName, name].filter(Boolean).join(" › "), own: false };
   }
-  return { collectionId: null, folderPath: [], words: libName };
+  return { collectionId: null, folderPath: [], words: libName, own: false };
 }
 
 /** A document number from a file's name ("X-1 Bundle Drawing.pdf" → "X-1 Bundle Drawing"). */
@@ -130,8 +168,10 @@ export async function fileToAsset(input: {
   /** The project whose work package it came from: listed there too. */
   projectId?: string;
   actorUserId: string; actorEmail?: string;
-}): Promise<{ documentId: string; libraryId: string; versionId: string | null; words: string }> {
-  const where = await folderFor(input.orgId, input.place, input.asset, input.actorUserId);
+  /** Admin or Document Control: may make the equipment's folder when it's new. */
+  canMakeFolders?: boolean;
+}): Promise<{ documentId: string; libraryId: string; versionId: string | null; words: string; own: boolean }> {
+  const where = await folderFor(input.orgId, input.place, input.asset, input.actorUserId, { canMake: input.canMakeFolders ?? false });
   const { documentId } = await createDocumentWithFile({
     orgId: input.orgId, libraryId: input.place.libraryId, collectionId: where.collectionId, folderPath: where.folderPath,
     documentNumber: input.number, title: input.title || input.number, file: input.file,
@@ -149,5 +189,5 @@ export async function fileToAsset(input: {
   ).then(() => undefined, () => undefined);
   if (input.actorUserId) await linkAssetFile({ orgId: input.orgId, assetId: input.asset.id, documentId, createdBy: input.actorUserId }).catch(() => undefined);
   const { data: d } = await supabase.from("documents").select("current_version_id").eq("id", documentId).maybeSingle();
-  return { documentId, libraryId: input.place.libraryId, versionId: (d as { current_version_id?: string | null } | null)?.current_version_id ?? null, words: where.words };
+  return { documentId, libraryId: input.place.libraryId, versionId: (d as { current_version_id?: string | null } | null)?.current_version_id ?? null, words: where.words, own: where.own };
 }
