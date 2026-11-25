@@ -241,9 +241,12 @@ export async function POST(req: NextRequest) {
   // Finished = the slice looked for a passage without a vector and found
   // none. That's exact, and needs no count.
   const exhausted = slice.exhausted && !lastError;
-  // The closing count only if it fits; otherwise last known + this call.
+  // The closing count only when the library is finished (and it fits):
+  // each count reads every passage row (about 2.4 s on a big library), and
+  // running it after every slice competed with the build. Mid-build the
+  // numbers are last known + this call, corrected by the final count.
   const countRoom = arrived + RESPOND_BY_MS - Date.now() - 2_000;
-  const counted = countRoom >= 2_000 ? await coverage(orgId, libraryId, Math.min(COUNT_BUDGET_MS, countRoom)) : "busy" as const;
+  const counted = exhausted && countRoom >= 2_000 ? await coverage(orgId, libraryId, Math.min(COUNT_BUDGET_MS, countRoom)) : "busy" as const;
   const after: Coverage | null = typeof counted === "object" ? counted
     // Too busy to count: last known + what this call wrote. Shown as is;
     // the next successful count corrects it.

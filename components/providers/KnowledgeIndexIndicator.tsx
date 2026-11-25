@@ -70,7 +70,14 @@ export default function KnowledgeIndexIndicator() {
     if (!activeOrgId || !isController) return;
     let alive = true;
 
+    // One tab per browser indexes; the others wait their turn (every open
+    // tab used to run its own loop, each writing to the same database).
     const drain = async () => {
+      const locks = typeof navigator !== "undefined" ? (navigator as Navigator & { locks?: LockManager }).locks : undefined;
+      if (!locks) return drainHere();
+      await locks.request("mfgos.knowledge-drain", { ifAvailable: true }, async (lock) => { if (lock) await drainHere(); });
+    };
+    const drainHere = async () => {
       if (runningRef.current) return;
       // Uploads are foreground work with someone watching. Indexing yields:
       // both compete for the same connections and the same database, and an

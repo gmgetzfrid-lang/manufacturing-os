@@ -37,6 +37,12 @@ export interface EmbedSliceResult {
   usage: { inputTokens: number; outputTokens: number };
 }
 
+/** Vector writes sent at once. */
+export const WRITE_GROUP = 2;
+/** A group of vector writes slower than this means the database is straining:
+ *  the slice stops after its batch and the rest waits for the next call. */
+export const SLOW_WRITE_MS = 1_500;
+
 /** Database errors that mean "busy right now, ask again", not "broken". A
  *  meaning-index build rewrites every passage row and its vector index, and
  *  on a small database that load surfaces as these. */
@@ -104,8 +110,8 @@ export async function embedLibrarySlice(opts: {
         ? await reuseTwinVectors(orgId, batch, connection.model, () => sig(6_000))
         : new Map<string, string>();
       if (reused.size > 0) {
-        for (let i = 0; i < batch.length && !lastError && !busy; i += 8) {
-          const group = batch.slice(i, i + 8).filter((c) => reused.has(c.id));
+        for (let i = 0; i < batch.length && !lastError && !busy; i += WRITE_GROUP) {
+          const group = batch.slice(i, i + WRITE_GROUP).filter((c) => reused.has(c.id));
           const results = await Promise.all(group.map((c) =>
             supabaseAdmin.from("knowledge_chunks")
               .update({ embedding: reused.get(c.id)!, embedding_model: connection.model })
@@ -161,22 +167,30 @@ export async function embedLibrarySlice(opts: {
       break;
     }
 
-    // Write-back in parallel groups of 8 — primary-key updates are
-    // independent, and sequential round trips were a third of the budget.
+    // Write-back in small parallel groups. Each vector write also updates the
+    // vector index and is streamed to live updates, so it is the heaviest
+    // write the app makes: 8 at once kept a small database at 97% CPU (and
+    // sign-in, which waits on the same database, timed out). Two at a time,
+    // and when a group comes back slow the slice stops (busy) and leaves the
+    // rest for the next call: the index waits, people don't.
     // These vectors are already PAID for: a write the database was too busy
     // to take is retried one at a time before anything is given up.
     const write = (k: number) => supabaseAdmin.from("knowledge_chunks")
       .update({ embedding: toVectorLiteral(vectors[k]), embedding_model: connection.model })
       .eq("id", batch[k].id).abortSignal(sig(15_000));
     const retry: number[] = [];
-    for (let i = 0; i < batch.length && !lastError; i += 8) {
-      const idx = batch.slice(i, i + 8).map((_, j) => i + j);
+    let strained = false;
+    for (let i = 0; i < batch.length && !lastError; i += WRITE_GROUP) {
+      const idx = batch.slice(i, i + WRITE_GROUP).map((_, j) => i + j);
+      const t0 = Date.now();
       const results = await Promise.all(idx.map(write));
       results.forEach((r, j) => {
         if (!r.error) embedded += 1;
         else if (isBusyDbError(r.error.message)) retry.push(idx[j]);
         else lastError = r.error.message;
       });
+      // The database is straining: finish this batch, then give it room.
+      if (Date.now() - t0 > SLOW_WRITE_MS) strained = true;
     }
     for (const k of retry) {
       if (lastError) break;
@@ -187,6 +201,7 @@ export async function embedLibrarySlice(opts: {
       else fail(r.error.message);
     }
     if (lastError || busy) break;
+    if (strained) { busy = true; break; }
   }
 
   return { embedded, rateLimited, fetchedNone, exhausted, busy, error: lastError, usage };
