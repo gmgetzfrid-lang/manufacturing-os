@@ -545,17 +545,17 @@ export default function Sidebar({
       <div className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-canvas)] p-2">
         {collapsed ? (
           <div className="flex flex-col items-center gap-1.5">
-            <Link href="/profile" title={`${userEmail ?? 'Profile'} · ${activeRole ?? ''}`} className="hover:opacity-90 transition-opacity">
+            <Link href="/profile" title={`${userEmail ?? 'Profile'} · ${activeRole ?? ''}`} className="ui-hit hover:opacity-90 transition-opacity">
               <UserAvatar uid={uid} email={userEmail} size={40} rounded="xl" />
             </Link>
             <button onClick={handleLogout} title="Sign out"
-              className="w-10 h-10 inline-flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)] rounded-xl transition-colors">
+              className="w-10 h-10 pointer-coarse:w-11 pointer-coarse:h-11 inline-flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)] rounded-xl transition-colors">
               <LogOut className="w-4 h-4" />
             </button>
           </div>
         ) : (
           <div className="rounded-md hover:bg-[var(--color-surface)] p-1.5 transition-colors flex items-center gap-2">
-            <Link href="/profile" className="flex items-center min-w-0 flex-1 group" title="Open profile">
+            <Link href="/profile" className="flex items-center min-w-0 flex-1 group pointer-coarse:min-h-11" title="Open profile">
               <UserAvatar uid={uid} email={userEmail} size={36} rounded="lg" />
               <div className="ml-2.5 overflow-hidden">
                 <div className="text-body font-medium text-[var(--color-text)] truncate">{userEmail?.split('@')[0] ?? '-'}</div>
@@ -564,7 +564,8 @@ export default function Sidebar({
             </Link>
             <button
               onClick={handleLogout}
-              className="p-2 text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)] rounded-lg transition-colors shrink-0"
+              aria-label="Sign out"
+              className="w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 inline-flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface-2)] rounded-lg transition-colors shrink-0"
               title="Sign out"
             >
               <LogOut className="w-3.5 h-3.5" />

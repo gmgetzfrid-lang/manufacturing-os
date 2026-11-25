@@ -7,13 +7,16 @@
 // the owner called it noise.)
 //
 // On a desktop the sheet fills the screen and the title block sits bottom
-// right, where it lives on a real drawing. On a phone the drawing is the
-// top of the screen and the title block rises from the bottom. The form is
+// right, where it lives on a real drawing. On a phone it all fits one
+// screen: the title block sits at the bottom (in reach of a thumb) and the
+// drawing fills what is left above it, never a fixed share that pushes the
+// card off the screen. One left edge for the words and the card. The form is
 // there at once: the drawing never makes anyone wait to type. It plays in
 // full once per session (then appears drawn); reduced motion shows it
 // finished. Only real information is written on it.
 
 import React, { useSyncExternalStore } from "react";
+import Link from "next/link";
 import { Check } from "lucide-react";
 import { Blueprint } from "@/components/auth/Blueprint";
 import { ORG_NAME_KEY } from "@/lib/deviceWorkspace";
@@ -72,9 +75,10 @@ export function AuthCard({ title, sub, children, footer, wide = false, status, s
   const time = signed ? signed.at.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
 
   return (
-    <div className={`relative min-h-dvh bg-[var(--color-canvas)] [overflow-x:clip] ${mode === "quick" ? "bp-quick" : ""} ${leaving ? "bp-leaving" : ""}`}>
-      {/* The sheet. */}
-      <div className="bp-stage surface-side absolute inset-x-0 top-0 h-[46dvh] md:h-[52dvh] lg:fixed lg:inset-0 lg:h-auto overflow-hidden">
+    <div className={`relative min-h-dvh flex flex-col md:block bg-[var(--color-canvas)] [overflow-x:clip] ${mode === "quick" ? "bp-quick" : ""} ${leaving ? "bp-leaving" : ""}`}>
+      {/* The sheet. On a phone it takes the room the card leaves (at least
+          enough for the words) and runs under the card's round corners. */}
+      <div className="bp-stage surface-side relative flex-1 min-h-[10.5rem] -mb-5 md:mb-0 md:absolute md:inset-x-0 md:top-0 md:h-[52dvh] lg:fixed lg:inset-0 lg:h-auto overflow-hidden">
         {mode && <div className="bp-camera"><Blueprint /></div>}
         <div aria-hidden className="bp-border inset-2.5 lg:inset-5" />
         <div aria-hidden className="bp-zones top-[3px] inset-x-8 lg:top-[3px] lg:inset-x-16">
@@ -84,23 +88,29 @@ export function AuthCard({ title, sub, children, footer, wide = false, status, s
           {["A", "B", "C", "D"].map((z) => <span key={z}>{z}</span>)}
         </div>
         {/* On a phone the words sit over the drawing: the top fades back. */}
-        <div aria-hidden className="md:hidden absolute inset-x-0 top-0 h-36" style={{ background: "linear-gradient(var(--side-bg, #081d48) 45%, transparent)" }} />
-        <div className="bp-intro absolute left-6 right-6 top-7 lg:left-16 lg:top-16 lg:right-auto max-w-[30rem]">
+        <div aria-hidden className="md:hidden absolute inset-x-0 top-0 h-44" style={{ background: "linear-gradient(var(--side-bg, #081d48) 58%, transparent)" }} />
+        <div className="bp-intro absolute left-5 right-5 top-6 sm:left-7 sm:right-7 lg:left-16 lg:top-16 lg:right-auto max-w-[30rem]">
           <p className="text-caption font-medium uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Manufacturing OS</p>
           <p className="mt-2 font-display text-section sm:text-[26px] lg:text-[34px] leading-[1.15] font-semibold text-[var(--color-text)]">
             Your site&apos;s drawings, equipment and work, in one place.
           </p>
         </div>
+        {/* The one way out of the front door that isn't a door: on the
+            heading's line, at the other edge. */}
+        <Link href="/about"
+          className="bp-intro ui-hit absolute right-5 top-6 sm:right-7 lg:right-16 lg:top-16 text-caption font-medium uppercase tracking-[0.14em] text-[var(--color-text)] underline underline-offset-4 decoration-[color-mix(in_srgb,var(--color-text)_40%,transparent)] hover:decoration-current">
+          About
+        </Link>
       </div>
 
       {/* The title block: the sign-in. */}
-      <main className="relative z-10 min-h-dvh flex flex-col justify-end pt-[38dvh] md:pt-[46dvh] md:pb-10 md:px-6 lg:p-14 lg:items-end pointer-events-none">
+      <main className="relative z-10 flex flex-col justify-end md:min-h-dvh md:pt-[46dvh] md:pb-10 md:px-6 lg:p-14 lg:items-end pointer-events-none">
         <div className={`bp-rise pointer-events-auto w-full md:mx-auto lg:mx-0 ${wide ? "md:max-w-[640px]" : "md:max-w-[480px]"} rounded-t-[20px] md:rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)] shadow-[var(--shadow-float)] flex flex-col overflow-hidden`}>
-          <div className="order-1 px-5 pt-6 pb-5 sm:px-7 sm:pt-7">
+          <div className="order-1 px-5 pt-6 pb-4 sm:px-7 sm:pt-7 sm:pb-5">
             {/* The full stop in the app's orange: its third color, as an accent. */}
             <h1 className="font-display text-[30px] sm:text-[34px] leading-[1.1] font-bold text-[var(--color-text)]">{typeof title === "string" && title.endsWith(".") ? <>{title.slice(0, -1)}<span className="text-[var(--app-orange)]">.</span></> : title}</h1>
             {sub && <p className="mt-2 text-reading text-[var(--color-text-muted)]">{sub}</p>}
-            <div className="mt-6">{children}</div>
+            <div className="mt-5 sm:mt-6">{children}</div>
           </div>
 
           {/* The status row: under the doors, and on a phone only once there
@@ -116,7 +126,7 @@ export function AuthCard({ title, sub, children, footer, wide = false, status, s
             </div>
           </div>
 
-          {footer && <div className="order-4 px-5 sm:px-7 py-5 border-t border-[var(--color-border)] space-y-3 pb-[max(1.25rem,env(safe-area-inset-bottom))]">{footer}</div>}
+          {footer && <div className="order-4 px-5 sm:px-7 pt-4 sm:pt-5 border-t border-[var(--color-border)] space-y-1 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-[max(1.25rem,env(safe-area-inset-bottom))]">{footer}</div>}
         </div>
       </main>
     </div>

@@ -516,13 +516,10 @@ export default function LoginPage() {
         : error ? "Not signed in"
         : "Ready to sign in"}
       footer={<>
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-body">
-          <p className="text-[var(--color-text-muted)]">
-            New company?{" "}
-            <Link href="/signup" className={link}>Start a workspace</Link>
-          </p>
-          <Link href="/about" className={link}>About Manufacturing OS</Link>
-        </div>
+        <p className="text-body text-[var(--color-text-muted)]">
+          New company?{" "}
+          <Link href="/signup" className={link}>Start a workspace</Link>
+        </p>
         <p className="text-caption text-[var(--color-text-muted)]">No account? Your workspace admin adds you. Authorized use only.</p>
       </>}
     >
@@ -547,11 +544,13 @@ export default function LoginPage() {
               {lastDoor === "microsoft" && <LastUsed />}
             </div>
 
-            {/* The email form, folded into one quiet button until it's wanted. */}
+            {/* The email form, folded into one quiet button until it's wanted:
+                the same shape as the Microsoft door, one step quieter (gray
+                words, regular weight), so the two stack as one group. */}
             {!emailOpen && (
               <div className="relative mt-3">
-                <Button variant="ghost" onClick={() => { setEmailOpen(true); requestAnimationFrame(() => document.getElementById("si-email")?.focus()); }}
-                  aria-expanded={false} aria-controls="si-form" className={`${authBtn} gap-2 text-[var(--color-text-muted)]`}>
+                <Button variant="secondary" onClick={() => { setEmailOpen(true); requestAnimationFrame(() => document.getElementById("si-email")?.focus()); }}
+                  aria-expanded={false} aria-controls="si-form" className={`${authBtn} gap-2 !font-normal !text-[var(--color-text-muted)]`}>
                   <Mail aria-hidden className="w-4 h-4" /> Continue with email
                 </Button>
               </div>
@@ -607,7 +606,7 @@ export default function LoginPage() {
             )}
 
             {/* For both doors: kept on this device only. */}
-            <label className="mt-5 flex items-center gap-2.5 min-h-8 pointer-coarse:min-h-11 cursor-pointer select-none">
+            <label className="mt-3 flex items-center gap-2.5 min-h-8 pointer-coarse:min-h-11 cursor-pointer select-none">
               <input
                 type="checkbox"
                 checked={keepSignedIn}
