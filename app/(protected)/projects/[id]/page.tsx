@@ -613,7 +613,7 @@ function ProjectDetail() {
     const starts = !noSchedule && upcoming?.plannedStart ? ` The work starts ${when(upcoming.plannedStart).split(",").slice(0, 2).join(",")}.` : "";
     sub = nx ? `${nx.state}.${planning.after.length ? ` Then ${planning.after.join(", ")}.` : starts ? "" : " Then the work."}${starts}` : "Next: the work, a shift report every shift.";
     facts = !planning.wos ? [] : planning.pkgSkipped ? [{ label: "Jobs", value: planning.wos, hero: true }]
-      : [{ label: "Packages attached", value: `${planning.withPkg} of ${planning.wos}`, tone: planning.withPkg < planning.wos ? "warn" : undefined, hero: true },
+      : [{ label: "Packages built", value: `${planning.withPkg} of ${planning.wos}`, tone: planning.withPkg < planning.wos ? "warn" : undefined, hero: true },
         { label: "Jobs", value: planning.wos }];
   }
   else if (noSchedule) { answer = "No schedule yet."; sub = "Import it on Plan to track the work."; }

@@ -120,8 +120,8 @@ describe("the planning path says the next step", () => {
     const scope = { items: r.items, coming: r.coming, source: { file: "x.xlsx", sheet: r.sheet, headers: r.headers, map: r.map }, imports: [] };
     let p = planningPath(scope, null);
     expect(p.steps[p.next].key).toBe("pkg");
-    expect(NEXT_WORDS[p.steps[p.next].key]).toBe("attach the packages");
-    expect(p.steps[1].state).toBe("1 of 4 attached, 0 approved");
+    expect(NEXT_WORDS[p.steps[p.next].key]).toBe("build the packages");
+    expect(p.steps[1].state).toBe("1 of 4 built, 0 approved");
     const done = { ...scope, items: r.items.map((x) => ({ ...x, drafted: true, approved: true })) };
     p = planningPath(done, { wos: ["400101", "400102", "400103"], steps: 10, awarded: 0 });
     expect(p.steps[p.next].key).toBe("sched");

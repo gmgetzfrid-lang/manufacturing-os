@@ -9,7 +9,7 @@ import { resolve } from "node:path";
 
 export default defineConfig({
   test: {
-    include: ["lib/__tests__/**/*.test.ts"],
+    include: ["lib/__tests__/**/*.test.ts", "lib/scan/__tests__/**/*.test.ts"],
     environment: "node",
     globals: false,
     setupFiles: ["./lib/__tests__/setup.ts"],

@@ -61,6 +61,20 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // ── Package returns links: the page is the packages' returns (their own
+  // API, /api/package-returns); here only what the portal's frame needs. ──
+  if (purpose === "package-returns") {
+    return NextResponse.json({
+      purpose: "package-returns",
+      projectName: (project?.name as string | null) ?? "Project",
+      orgName: (org?.name as string | null) ?? null,
+      orgLogo,
+      companyName: link.company_name,
+      allowAutoSupersede: false,
+      items: [],
+    });
+  }
+
   // ── Quote links: the register is the company's own quote submissions,
   // not a document list. ──
   if (purpose === "quote") {

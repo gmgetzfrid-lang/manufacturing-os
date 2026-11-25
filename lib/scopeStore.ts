@@ -6,6 +6,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { fetchAllRows } from "@/lib/fetchAllRows";
+import { packagesKey, packageStage, PACKAGES_CHANGED, type ProjectPackages } from "@/lib/woPackagesCore";
 import { scheduleByWo, type ColumnMap, type ScopeComing, type ScopeWO, type SchedRow, type ScopePackage, type Sheet, type WoOnSchedule } from "@/lib/woIntake";
 
 export interface ScopeRfq { at: string; by?: string; service: string; to: string[] }
@@ -79,7 +80,21 @@ const pkgCache = new Map<string, Promise<Map<string, ScopePackage>>>();
 export function scopePackages(projectId: string): Promise<Map<string, ScopePackage>> {
   let p = pkgCache.get(projectId);
   if (!p) {
-    p = loadScope(projectId).then((s) => new Map((s?.items ?? []).filter((x) => x.pkg).map((x) => [x.wo, x.pkg!])));
+    // Attached package files, then packages built in the app (they win: the
+    // link opens the package with where it stands).
+    p = Promise.all([
+      loadScope(projectId),
+      Promise.resolve(supabase.from("org_configurations").select("data").eq("key", packagesKey(projectId)).maybeSingle()).then(({ data }) => ((data as { data?: ProjectPackages } | null)?.data ?? null), () => null),
+    ]).then(([s, built]) => {
+      const m = new Map((s?.items ?? []).filter((x) => x.pkg).map((x) => [x.wo, x.pkg!]));
+      for (const pk of Object.values(built?.packages ?? {})) {
+        const st = packageStage(pk);
+        const word = pk.status === "filed" ? "filed" : pk.status === "issued" ? `printed${st.forms ? `, ${st.signed} of ${st.forms} forms back` : ""}` : pk.status === "approved" ? "approved" : "draft";
+        const link: ScopePackage = { documentId: "", label: `Work package (${word})`, href: `/projects/${projectId}?tab=plan&package=${encodeURIComponent(pk.key)}`, at: pk.updatedAt };
+        for (const wo of pk.wos.length ? pk.wos : [pk.key]) m.set(wo, link);
+      }
+      return m;
+    });
     p.catch(() => pkgCache.delete(projectId));
     pkgCache.set(projectId, p);
   }
@@ -95,8 +110,11 @@ export function useScopePackages(projectId?: string | null): Map<string, ScopePa
     const read = () => { scopePackages(projectId).then((m) => { if (live) setGot({ id: projectId, m }); }, () => undefined); };
     read();
     const on = (e: Event) => { if ((e as CustomEvent).detail === projectId) read(); };
+    // A package built, printed or filed: read again.
+    const onPkg = (e: Event) => { if ((e as CustomEvent<{ projectId: string }>).detail?.projectId === projectId) { pkgCache.delete(projectId); read(); } };
     window.addEventListener(SCOPE_CHANGED, on);
-    return () => { live = false; window.removeEventListener(SCOPE_CHANGED, on); };
+    window.addEventListener(PACKAGES_CHANGED, onPkg);
+    return () => { live = false; window.removeEventListener(SCOPE_CHANGED, on); window.removeEventListener(PACKAGES_CHANGED, onPkg); };
   }, [projectId]);
   return got.id === projectId ? got.m : null;
 }

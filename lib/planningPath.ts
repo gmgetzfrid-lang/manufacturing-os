@@ -13,9 +13,9 @@ export interface PathStep { key: PathKey; name: string; done: boolean; state: st
   ask?: string }
 export interface PathFacts { wos: string[]; named?: string[]; steps: number; awarded: number }
 
-/** What the next step asks, said as a task ("attach the packages"). */
+/** What the next step asks, said as a task ("build the packages"). */
 export const NEXT_WORDS: Record<PathKey, string> = {
-  scope: "add the work", pkg: "attach the packages", sched: "import the schedule", rfq: "write the RFQ", award: "award the work",
+  scope: "add the work", pkg: "build the packages", sched: "import the schedule", rfq: "write the RFQ", award: "award the work",
 };
 
 /** Each step as a noun in a sentence ("Then the schedule, the RFQ, the award"). */
@@ -51,7 +51,7 @@ export function planningPath(scopeIn: ScopeState | null, facts: PathFacts | null
   const raw: PathStep[] = [
     { key: "scope", name: "Scope", done: n > 0 || noNumbers,
       state: noNumbers ? "The schedule's steps (no work order numbers on it)" : n ? `${n} ${fromSchedule ? `work order${n === 1 ? "" : "s"}, from the schedule` : `job${n === 1 ? "" : "s"}`}${scope.coming.length ? `, ${scope.coming.length} still adding scope` : ""}` : "No work added yet" },
-    { key: "pkg", name: "Packages", done: noNumbers || (n > 0 && approved === n), state: noNumbers ? "No work orders on the schedule to package" : n ? `${withPkg} of ${n} attached, ${approved} approved` : "After the work is added" },
+    { key: "pkg", name: "Packages", done: noNumbers || (n > 0 && approved === n), state: noNumbers ? "No work orders on the schedule to package" : n ? `${withPkg} of ${n} built, ${approved} approved` : "After the work is added" },
     { key: "sched", name: "Schedule", done: noNumbers || (typed ? !!facts?.steps : !!vs && vs.missing.length === 0), ...(typed && !facts?.steps ? { ask: "make the schedule" } : !typed && !noNumbers && facts?.steps && vs?.missing.length ? { ask: "match the schedule to the list" } : {}),
       state: !facts?.steps ? (typed ? "Not made yet" : "Not imported yet") : noNumbers ? `${facts.steps} steps` : typed ? "On the Schedule tab" : vs ? `${vs.on.length} of ${n} work orders on it${vs.missing.length ? `, ${vs.missing.length} missing` : ""}${vs.extra.length ? `, ${vs.extra.length} not in the list` : ""}` : "Imported, with no work order numbers on it" },
     { key: "rfq", name: "RFQ", done: rfqs.length > 0, state: rfqs.length ? `Written for ${[...new Set(rfqs.flatMap((r) => r.to))].join(", ")} (last ${day(rfqs[rfqs.length - 1].at)})` : "Not written yet" },

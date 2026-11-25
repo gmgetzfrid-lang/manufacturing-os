@@ -24,6 +24,7 @@ import { useFileDrag } from "@/hooks/useFileDrag";
 import { tryUpload } from "@/lib/uploadRetry";
 import FileThumb from "@/components/ui/FileThumb";
 import { useDraft } from "@/hooks/useDraft";
+import PackageReturns from "@/components/projects/packages/PackageReturns";
 
 const sizeOf = (n: number) => (n >= 1024 * 1024 ? `${(n / (1024 * 1024)).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`);
 
@@ -74,7 +75,7 @@ interface Resolved {
   allowAutoSupersede: boolean; items: IntakeItem[];
   redlineRequests?: RedlineRequest[];
   /** 'quote' links submit prices, not drawings — the portal reshapes. */
-  purpose?: "documents" | "quote";
+  purpose?: "documents" | "quote" | "package-returns";
   rfqGroup?: string | null;
   quotes?: SubmittedQuote[];
 }
@@ -197,6 +198,9 @@ export default function IntakePortal({ params }: { params: Promise<{ token: stri
       </Shell>
     );
   }
+
+  // ── Package returns links: send signed package forms back ──
+  if (data.purpose === "package-returns") return <PackageReturns token={token} />;
 
   // ── Quote links: submit your PRICE, see your bid's status ──
   if (data.purpose === "quote") {

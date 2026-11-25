@@ -62,6 +62,9 @@ export async function POST(req: NextRequest) {
   // ── Quote branch: this link submits PRICES, not drawings. The file lands
   // as a cost_document (kind 'quote') for the project's bid tabulation —
   // it never touches document control. ──
+  // A package returns link only sends signed forms (its own route).
+  if (purpose === "package-returns") return bad("This link is for returning signed package forms. Use the page it opens.");
+
   if (purpose === "quote") {
     const orgIdQ = String(link.org_id);
     const projectIdQ = String(link.project_id);

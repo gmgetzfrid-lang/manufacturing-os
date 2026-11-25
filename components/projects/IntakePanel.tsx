@@ -72,7 +72,7 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
     try {
       const [{ data: lk, error: lkErr }, { data: proj, error: projErr }, { data: ls }] = await Promise.all([
         supabase.from("project_intake_links")
-          .select("id, token, company_name, contact_email, allow_auto_supersede, expires_at, revoked_at, submission_count, last_used_at, assigned_doc_ids")
+          .select("id, token, company_name, contact_email, allow_auto_supersede, expires_at, revoked_at, submission_count, last_used_at, assigned_doc_ids, purpose")
           .eq("project_id", projectId).order("created_at", { ascending: false }),
         supabase.from("projects").select("intake_library_id, intake_collection_id").eq("id", projectId).maybeSingle(),
         supabase.from("libraries").select("id, name").eq("org_id", orgId).order("name"),
@@ -81,7 +81,9 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       if (lkErr) throw lkErr;
       if (projErr) throw projErr;
       const linkRows = (((lk ?? []) as Array<Record<string, unknown>>)).map((r) => ({
-        id: String(r.id), token: String(r.token), companyName: String(r.company_name),
+        // Package returns links (made from the packages bar) say so here,
+        // where every link on the project can be turned off.
+        id: String(r.id), token: String(r.token), companyName: `${String(r.company_name)}${r.purpose === "package-returns" ? " (package returns)" : ""}`,
         contactEmail: (r.contact_email as string | null) ?? null,
         allowAutoSupersede: !!r.allow_auto_supersede,
         expiresAt: (r.expires_at as string | null) ?? null,

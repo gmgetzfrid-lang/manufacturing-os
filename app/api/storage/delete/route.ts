@@ -52,7 +52,19 @@ export async function DELETE(req: NextRequest) {
     const ownFolder =
       path.startsWith(`orgs/${orgId}/user_private/${user.id}/`) ||
       path.startsWith(`orgs/${orgId}/chat/pending/${user.id}/`);
-    if (!controller && !ownFolder) {
+    // A work order package's working copies (photos, files, signed scans:
+    // orgs/<org>/packages/<project>/...) are deleted by the people on that
+    // project once the package is filed to the network drive.
+    let onPackageProject = false;
+    const pkg = path.match(/^orgs\/[0-9a-fA-F-]{36}\/packages\/([0-9a-fA-F-]{36})\//);
+    if (!controller && pkg) {
+      const [{ data: proj }, { data: pm }] = await Promise.all([
+        supabaseAdmin.from("projects").select("owner_user_id, org_id").eq("id", pkg[1]).maybeSingle(),
+        supabaseAdmin.from("project_members").select("user_id").eq("project_id", pkg[1]).eq("user_id", user.id).maybeSingle(),
+      ]);
+      onPackageProject = !!proj && String(proj.org_id) === orgId && (String(proj.owner_user_id ?? "") === user.id || !!pm);
+    }
+    if (!controller && !ownFolder && !onPackageProject) {
       return NextResponse.json({ error: "Only Admin or Doc Control can delete this file." }, { status: 403 });
     }
   }

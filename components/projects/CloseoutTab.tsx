@@ -22,6 +22,7 @@ import { useShiftTimes } from "@/lib/shiftTimesStore";
 import { gatherProjectSnapshot } from "@/lib/projectSnapshot";
 import type { ProjectStateSnapshot } from "@/lib/projectHealth";
 import { listChecklists, listChecklistItems, computeChecklistProgress, type Checklist } from "@/lib/checklists";
+import { loadPackages, packageStage, type ProjectPackages } from "@/lib/woPackages";
 import { listTurnoverItems, seedTurnoverItems, addTurnoverItem, updateTurnoverItem, attachTurnoverDocument, reviewTurnoverItem, seedsForJobKind, type TurnoverItem } from "@/lib/turnover";
 import { uploadProjectFile, projectFileHome, type ProjectFileHome } from "@/lib/projectUpload";
 import ProjectFilePlace from "@/components/projects/ProjectFilePlace";
@@ -94,7 +95,7 @@ export function openCloseoutView(v: "steps" | "review"): void { pendingView = v;
 // One reading for the close-out's steps and the project page's band, so
 // both say the same number.
 
-export type CloseItemId = "pssr" | "turnover" | "punch" | "co";
+export type CloseItemId = "pssr" | "turnover" | "punch" | "co" | "packages";
 export interface CloseItem { id: CloseItemId; name: string; detail: string }
 /** The close-out steps after the work: open ones in order, then the clear ones. */
 export interface CloseOpen { open: CloseItem[]; clear: CloseItem[] }
@@ -124,8 +125,16 @@ function pssrState(phases: ProjectPhase[], pssrs: PssrList[], settings: Closeout
 
 /** The open and clear close-out steps from what was read. A part that
  *  couldn't be read (null) is left out rather than called clear. */
-export function closeOpenOf(x: { phases: ProjectPhase[]; pssrs: PssrList[] | null; settings: CloseoutSettings; items: TurnoverItem[] | null; snap: ProjectStateSnapshot | null }): CloseOpen {
+export function closeOpenOf(x: { phases: ProjectPhase[]; pssrs: PssrList[] | null; settings: CloseoutSettings; items: TurnoverItem[] | null; snap: ProjectStateSnapshot | null; packages?: ProjectPackages | null }): CloseOpen {
   const all: Array<CloseItem & { ok: boolean }> = [];
+  // Work order packages: each filed to the network drive (with its signed forms).
+  const pk = Object.values(x.packages?.packages ?? {});
+  if (pk.length) {
+    const filed = pk.filter((p) => p.status === "filed").length;
+    const st = pk.map((p) => packageStage(p));
+    const back = st.reduce((n, s) => n + s.signed, 0), forms = st.reduce((n, s) => n + s.forms, 0);
+    all.push({ id: "packages", name: "Work order packages filed", detail: filed === pk.length ? `All ${pk.length} on the network drive` : `${filed} of ${pk.length} filed${forms ? `; ${back} of ${forms} signed forms back` : ""}`, ok: filed === pk.length });
+  }
   if (x.pssrs) { const s = pssrState(x.phases, x.pssrs, x.settings); all.push({ id: "pssr", name: x.phases.length ? "PSSR for each phase" : "PSSR", detail: s.detail, ok: s.ok }); }
   if (x.items) {
     const required = x.items.filter((i) => i.required);
@@ -148,13 +157,14 @@ export function useCloseOpen(orgId: string | undefined, projectId: string | unde
     if (!on || !orgId || !projectId) return;
     let live = true;
     void (async () => {
-      const [pssrs, settings, items, snap] = await Promise.all([
+      const [pssrs, settings, items, snap, packages] = await Promise.all([
         readPssrs(orgId, projectId),
         loadCloseoutSettings(projectId).catch(() => ({} as CloseoutSettings)),
         listTurnoverItems(orgId, projectId).catch(() => null),
         gatherProjectSnapshot(orgId, projectId).catch(() => null),
+        loadPackages(orgId, projectId).catch(() => null),
       ]);
-      if (live) setV(closeOpenOf({ phases, pssrs, settings, items, snap }));
+      if (live) setV(closeOpenOf({ phases, pssrs, settings, items, snap, packages }));
     })();
     return () => { live = false; };
   }, [orgId, projectId, phases, on, key]);
@@ -230,6 +240,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
   // Every PSSR on the project (a project in phases has one a phase).
   const [pssrs, setPssrs] = useState<PssrList[] | undefined>(undefined);
   const [items, setItems] = useState<TurnoverItem[] | null>(null);
+  const [pkgs, setPkgs] = useState<ProjectPackages | null>(null);
   const [settings, setSettings] = useState<CloseoutSettings>({});
   // The AFE and its last change: where the final cost is measured from, and who set it.
   const [afe, setAfe] = useState<{ afe: Afe | null; last: AfeRevision | null } | null>(null);
@@ -274,7 +285,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
       const failed: string[] = [];
       const miss = <T,>(what: string, v: T) => () => { failed.push(what); return v; };
       const rows = <T,>(table: string) => fetchAllRows<T>((from, to) => supabase.from(table).select("*").eq("project_id", projectId).order("id").range(from, to) as unknown as PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>);
-      const [m, l, lines, entries, proj, s, lists, t, cs, h] = await Promise.all([
+      const [m, l, lines, entries, proj, s, lists, t, cs, h, pk] = await Promise.all([
         listMilestones({ orgId, projectId, includeGhost: true }).catch(miss("the schedule", [] as Milestone[])),
         loadProgressLog(projectId),
         rows<CostLine>("cost_accounts"), rows<CostEntry>("cost_entries"),
@@ -284,6 +295,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
         listTurnoverItems(orgId, projectId).catch(miss("the turnover documents", [] as TurnoverItem[])),
         loadCloseoutSettings(projectId).catch(() => ({} as CloseoutSettings)),
         projectFileHome(orgId, projectId).catch(() => null),
+        loadPackages(orgId, projectId).catch(() => null),
       ]);
       const stepNotes = await notesFor(m.map((x) => x.id!).filter(Boolean)).catch(() => [] as MilestoneNote[]);
       const mine = lists.filter((c) => c.kind === "pssr" && c.status !== "void");
@@ -292,7 +304,7 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
       setMs(m); setLog(l); setNotes(stepNotes);
       const a = (proj.data as { authorized_amount?: number | null } | null)?.authorized_amount;
       setMoney0({ lines: lines.rows, entries: entries.rows, afe: a == null ? null : Number(a) });
-      setSnap(s); setItems(t); setSettings(cs); setHome(h);
+      setSnap(s); setItems(t); setSettings(cs); setHome(h); setPkgs(pk);
       setPssrs(withProg);
       setReadFailed(failed);
     })();
@@ -380,8 +392,8 @@ export default function CloseoutTab({ orgId, projectId, projectName, projectStat
   useEffect(() => { said.current = onOpen; });
   useEffect(() => {
     if (!ms || pssrs === undefined) return;
-    said.current?.(closeOpenOf({ phases, pssrs, settings, items, snap }));
-  }, [ms, pssrs, settings, items, snap, phases]);
+    said.current?.(closeOpenOf({ phases, pssrs, settings, items, snap, packages: pkgs }));
+  }, [ms, pssrs, settings, items, snap, phases, pkgs]);
 
   // A secondary button, the one main (filled) button, and a link-style action.
   const btn = `${heroQuiet} whitespace-nowrap`;

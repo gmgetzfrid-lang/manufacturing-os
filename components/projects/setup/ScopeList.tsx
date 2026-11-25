@@ -31,6 +31,12 @@ import { InlineAddRow, type AddField } from "@/components/ui/InlineAddRow";
 import Timeline, { type TimelineItem, type TimelineTone } from "@/components/ui/Timeline";
 import UserAvatar from "@/components/ui/UserAvatar";
 import { loadScope, readSheets, saveScope, scheduleFacts, LIST_ACCEPT, OPEN_SCHEDULE_IMPORT, TYPED_SOURCE, type RemovedWO, type ScheduleFacts, type ScopeChange, type ScopeState } from "@/lib/scopeStore";
+import { draftMissing, loadKit, loadPackages, packageStage, PACKAGES_CHANGED, EMPTY_KIT, type PackageKit, type ProjectPackages, type WoPackage } from "@/lib/woPackages";
+import PackagesBar, { packageGroups } from "@/components/projects/packages/PackagesBar";
+import PackageBuilder from "@/components/projects/packages/PackageBuilder";
+import PackageKitDialog from "@/components/projects/packages/PackageKitDialog";
+import { useOrgBranding } from "@/components/providers/OrgBrandingProvider";
+import { supabase } from "@/lib/supabase";
 
 const SHOW = 6;
 const when = (iso: string, tz?: string) => new Date(iso).toLocaleString("en-US", { timeZone: tz, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
@@ -65,12 +71,38 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
   const pkgInput = useRef<HTMLInputElement>(null);
   const pkgFor = useRef<string | null>(null);
   const { home, setHome } = useProjectFileHome(orgId, projectId);
+  // Work order packages: the workspace's kit and this project's packages.
+  const [kit, setKit] = useState<PackageKit | null>(null);
+  const [pkgs, setPkgs] = useState<ProjectPackages | null>(null);
+  const [building, setBuilding] = useState<string | null>(null);
+  const [kitOpen, setKitOpen] = useState(false);
+  const [workspace, setWorkspace] = useState("");
+  const { logoUrl } = useOrgBranding();
 
+  const loadPkgs = useCallback(() => {
+    loadPackages(orgId, projectId).then(setPkgs, () => setPkgs({ packages: {} }));
+  }, [orgId, projectId]);
   const load = useCallback(() => {
     loadScope(projectId).then(setScope, () => setScope(null));
     scheduleFacts(projectId).then(setFacts, () => setFacts(null));
-  }, [projectId]);
+    loadKit(orgId).then(setKit, () => setKit(EMPTY_KIT));
+    loadPkgs();
+  }, [projectId, orgId, loadPkgs]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    void Promise.resolve(supabase.from("orgs").select("name").eq("id", orgId).maybeSingle()).then(({ data }) => setWorkspace(String((data as { name?: string } | null)?.name ?? "")), () => undefined);
+  }, [orgId]);
+  // A package changed anywhere on this page (the builder, the bar): read again.
+  useEffect(() => {
+    const on = (e: Event) => { if ((e as CustomEvent<{ projectId: string }>).detail?.projectId === projectId) loadPkgs(); };
+    window.addEventListener(PACKAGES_CHANGED, on);
+    return () => window.removeEventListener(PACKAGES_CHANGED, on);
+  }, [projectId, loadPkgs]);
+  // Opened from a notification ("Signed form back"): straight to that package.
+  useEffect(() => {
+    const k = new URLSearchParams(window.location.search).get("package");
+    if (k) setBuilding(k);
+  }, []);
 
   const groups = useMemo(() => (scope ? byCategory(scope.items) : []), [scope]);
   const vs = useMemo(() => (scope ? scheduleMatch(scope.items, facts) : null), [scope, facts]);
@@ -146,6 +178,16 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
     try {
       await save({ ...scope, items: scope.items.map((x) => (ids.has(x.wo) ? { ...x, approved: true, approvedBy: actorEmail, approvedAt: new Date().toISOString() } : x)) });
     } catch (e) { setError(sayError(e)); }
+  };
+
+  // A package built or approved: its work orders say so on the scope (the
+  // planning path counts them).
+  const markScope = async (wos: string[], what: "drafted" | "approved") => {
+    const base = await loadScope(projectId);
+    if (!base || !wos.length) return;
+    const ids = new Set(wos);
+    const at = new Date().toISOString();
+    await save({ ...base, items: base.items.map((x) => (ids.has(x.wo) ? (what === "drafted" ? { ...x, drafted: true } : { ...x, drafted: true, approved: true, approvedBy: actorEmail, approvedAt: at }) : x)) });
   };
 
   // ── Work typed in (no list, or a job that came in later) ──
@@ -296,9 +338,22 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
   const importSched = () => window.dispatchEvent(new Event(OPEN_SCHEDULE_IMPORT));
   const canMake = !facts?.steps && n > 0 && !!uid;
   const typedOnly = n > 0 && sc.items.every((x) => isTypedItem(x.wo));
+  // Packages: one per piece of equipment, built from the workspace's kit.
+  const groupsByKey = packageGroups(sc.items);
+  const pkgMissing = pkgs ? [...groupsByKey.keys()].filter((k) => !pkgs.packages[k] && !groupsByKey.get(k)!.some((x) => x.pkg)) : [];
+  const kitEmpty = !!kit && !kit.forms.length && !kit.cover;
+  const firstDraft = pkgs ? Object.values(pkgs.packages).find((p) => p.status === "draft") : undefined;
+  const buildAll = async () => {
+    if (!kit) return;
+    try { const made = await draftMissing(orgId, projectId, groupsByKey, kit); await markScope(made, "drafted"); loadPkgs(); }
+    catch (e) { setError(sayError(e)); }
+  };
   const actions: Partial<Record<PathKey, { label: string; run?: () => void; href?: string; alt?: { label: string; run: () => void } }>> = {
     scope: n ? undefined : { label: "Add the work", run: () => { document.getElementById("add-work")?.scrollIntoView({ behavior: "smooth", block: "center" }); (document.querySelector("#add-work input") as HTMLInputElement | null)?.focus(); } },
-    pkg: firstWithout ? { label: `Attach the package for ${firstWithout.tag || (isTypedItem(firstWithout.wo) ? firstWithout.what.slice(0, 28) : `WO ${firstWithout.wo}`)}`, run: () => { if (home?.place) document.getElementById(`wo-${firstWithout.wo}`)?.scrollIntoView({ behavior: "smooth", block: "center" }); pickPackage(firstWithout.wo); } }
+    pkg: pkgMissing.length && kitEmpty ? { label: "Set up the package kit", run: () => setKitOpen(true) }
+      : pkgMissing.length ? { label: pkgMissing.length === groupsByKey.size ? "Build the packages from the kit" : `Build the other ${pkgMissing.length} package${pkgMissing.length === 1 ? "" : "s"}`, run: () => void buildAll() }
+      : firstDraft ? { label: `Check and approve ${firstDraft.wos[0] ? `WO ${firstDraft.wos[0]}` : firstDraft.equipment}`, run: () => setBuilding(firstDraft.key) }
+      : firstWithout ? { label: `Attach the package for ${firstWithout.tag || (isTypedItem(firstWithout.wo) ? firstWithout.what.slice(0, 28) : `WO ${firstWithout.wo}`)}`, run: () => { if (home?.place) document.getElementById(`wo-${firstWithout.wo}`)?.scrollIntoView({ behavior: "smooth", block: "center" }); pickPackage(firstWithout.wo); } }
       : approved < n ? { label: "Approve the packages", run: () => document.getElementById("scope-list")?.scrollIntoView({ behavior: "smooth" }) } : undefined,
     sched: !canMake ? { label: facts?.steps ? "Import the schedule again" : "Import the schedule", run: importSched }
       : typedOnly ? { label: "Make the schedule from the jobs", run: () => setMakeOpen(true), alt: { label: "Or import a schedule file", run: importSched } }
@@ -373,6 +428,11 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
         </section>
       )}
 
+      {n > 0 && scope && kit && pkgs && !sc.skipped?.includes("pkg") && (
+        <PackagesBar orgId={orgId} projectId={projectId} projectName={projectName} workspace={workspace} logoUrl={logoUrl} tz={tz} uid={uid} actorEmail={actorEmail} canManage={canManage}
+          items={sc.items} kit={kit} all={pkgs} onOpenKit={() => setKitOpen(true)} onMarkScope={markScope} />
+      )}
+
       {n > 0 && scope && <section id="scope-list" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden" aria-labelledby="scope-title">
         <div className="px-5 pt-4 pb-3 flex flex-wrap items-start gap-x-4 gap-y-2">
           {/* On a phone the button goes under the title, so neither squeezes. */}
@@ -445,6 +505,7 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
                 <ul>
                   {rows.map((x) => <WoRow key={x.wo} x={x} items={scope.items} canManage={canManage} busy={attaching === x.wo} offSchedule={!!vs && !isTypedItem(x.wo) && !onSched.has(x.wo)} noPkg={!!sc.skipped?.includes("pkg")}
                     sched={facts?.byWo[x.wo]} late={!!since && !!x.addedAt && x.addedAt > since}
+                    pkg={pkgs?.packages[packageGroup(scope.items, x.wo)[0].wo]} onBuild={() => setBuilding(packageGroup(scope.items, x.wo)[0].wo)}
                     onAttach={() => pickPackage(x.wo)} onApprove={() => void approve(x.wo)} onRemove={() => void remove(x)} onSave={(v) => saveEdit(x, v)} />)}
                 </ul>
                 {g.items.length > SHOW && (
@@ -516,6 +577,17 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
         )}
       </section>}
 
+      {building && kit && pkgs && scope && (() => {
+        const g = groupsByKey.get(building) ?? (scope.items.some((x) => x.wo === building) ? packageGroup(scope.items, building) : null);
+        return g ? (
+          <PackageBuilder orgId={orgId} projectId={projectId} projectName={projectName} workspace={workspace} logoUrl={logoUrl} tz={tz} actorEmail={actorEmail} canManage={canManage}
+            group={g} kit={kit} all={pkgs} onClose={() => setBuilding(null)} onOpenKit={() => setKitOpen(true)}
+            onMarkScope={(what) => markScope(g.map((x) => x.wo), what)} />
+        ) : null;
+      })()}
+      {kitOpen && kit && (
+        <PackageKitDialog orgId={orgId} kit={kit} actorEmail={actorEmail} onClose={() => setKitOpen(false)} onSaved={setKit} />
+      )}
       {makeOpen && uid && (
         <JobsScheduleDialog orgId={orgId} projectId={projectId} uid={uid} actorName={actorEmail} tz={tz} items={sc.items}
           onClose={() => setMakeOpen(false)} onMade={() => { setMakeOpen(false); load(); }} />
@@ -530,8 +602,11 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
 }
 
 /** One work order: what and where, its number, and its package. */
-function WoRow({ x, items, canManage, busy, offSchedule, noPkg, sched, late, onAttach, onApprove, onRemove, onSave }: {
+function WoRow({ x, items, canManage, busy, offSchedule, noPkg, sched, late, pkg, onBuild, onAttach, onApprove, onRemove, onSave }: {
   x: ScopeWO; items: ScopeWO[]; canManage: boolean; busy: boolean; offSchedule: boolean;
+  /** Its work order package, when it has been built (shared by its equipment's WOs). */
+  pkg?: WoPackage;
+  onBuild: () => void;
   /** Packages marked not needed for this job: no package asks on the row. */
   noPkg: boolean;
   /** Its steps on the schedule, once there is one. */
@@ -583,7 +658,17 @@ function WoRow({ x, items, canManage, busy, offSchedule, noPkg, sched, late, onA
       </div>
       <div className="sm:text-right shrink-0 grid gap-1 sm:justify-items-end text-caption text-[var(--color-text-muted)]">
         {!isTypedItem(x.wo) && <div className="tabular-nums">WO {x.wo}</div>}
-        {noPkg && !x.pkg ? null : x.pkg ? (
+        {noPkg && !x.pkg && !pkg ? null : pkg ? (() => {
+          const s = packageStage(pkg);
+          const word = pkg.status === "filed" ? "Filed" : pkg.status === "issued" ? "Printed" : pkg.status === "approved" ? "Approved" : "Draft";
+          const dot = pkg.status === "filed" ? "bg-[var(--state-released)]" : pkg.status === "issued" ? "bg-[var(--state-held)]" : pkg.status === "approved" ? "bg-[var(--state-locked)]" : "bg-[var(--color-text-faint)]";
+          return (
+            <>
+              <button type="button" onClick={onBuild} className="inline-flex items-center gap-1 min-h-9 pointer-coarse:min-h-11 font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2"><Package aria-hidden className="w-3.5 h-3.5" />Package · {pkg.items.length + 2} items</button>
+              <span className="inline-flex items-center gap-1.5"><span aria-hidden className={`w-2 h-2 rounded-full ${dot}`} />{word}{s.forms && pkg.status !== "draft" ? `, ${s.signed} of ${s.forms} forms back` : ""}</span>
+            </>
+          );
+        })() : x.pkg ? (
           <>
             <Link href={x.pkg.href} className="inline-flex items-center gap-1 min-h-9 pointer-coarse:min-h-11 font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2"><FileText aria-hidden className="w-3.5 h-3.5" />{x.pkg.label}</Link>
             {x.approved
@@ -593,9 +678,14 @@ function WoRow({ x, items, canManage, busy, offSchedule, noPkg, sched, late, onA
                 : <span className="inline-flex items-center gap-1.5"><span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-held)]" />To approve</span>}
           </>
         ) : canManage ? (
-          <button type="button" onClick={onAttach} disabled={busy} className="inline-flex items-center gap-1 min-h-9 pointer-coarse:min-h-11 px-2 rounded-md border border-[var(--color-border-strong)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-60">
-            <Paperclip aria-hidden className="w-3.5 h-3.5" />{busy ? "Attaching..." : group.length > 1 ? `Attach package (${group.length} ${group.every((g) => isTypedItem(g.wo)) ? "jobs" : "WOs"})` : "Attach package"}
-          </button>
+          <>
+            <button type="button" onClick={onBuild} className="inline-flex items-center gap-1 min-h-9 pointer-coarse:min-h-11 px-2 rounded-md border border-[var(--color-border-strong)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+              <Package aria-hidden className="w-3.5 h-3.5" />{group.length > 1 ? `Build package (${group.length} ${group.every((g) => isTypedItem(g.wo)) ? "jobs" : "WOs"})` : "Build package"}
+            </button>
+            <button type="button" onClick={onAttach} disabled={busy} className="inline-flex items-center gap-1 min-h-9 pointer-coarse:min-h-11 text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-60">
+              <Paperclip aria-hidden className="w-3.5 h-3.5" />{busy ? "Attaching..." : "Or attach a finished file"}
+            </button>
+          </>
         ) : (
           <span className="inline-flex items-center gap-1.5"><span aria-hidden className="w-2 h-2 rounded-full bg-[var(--color-text-faint)]" />No package yet</span>
         )}
