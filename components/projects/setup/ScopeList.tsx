@@ -28,10 +28,19 @@ import RfqDialog from "@/components/projects/setup/RfqDialog";
 import { uploadProjectFile } from "@/lib/projectUpload";
 import { applyScope, byCategory, diffScope, isTypedItem, packageGroup, pickSheet, readScope, shared, typedItem, woKey, type ScopeDiff, type ScopeRead, type ScopeWO, type WoOnSchedule } from "@/lib/woIntake";
 import { InlineAddRow, type AddField } from "@/components/ui/InlineAddRow";
+import Timeline, { type TimelineItem, type TimelineTone } from "@/components/ui/Timeline";
+import UserAvatar from "@/components/ui/UserAvatar";
 import { loadScope, readSheets, saveScope, scheduleFacts, LIST_ACCEPT, OPEN_SCHEDULE_IMPORT, TYPED_SOURCE, type RemovedWO, type ScheduleFacts, type ScopeChange, type ScopeState } from "@/lib/scopeStore";
 
 const SHOW = 6;
-const when = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+const when = (iso: string, tz?: string) => new Date(iso).toLocaleString("en-US", { timeZone: tz, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+/** A change to the scope on the timeline: the word and its dot. */
+const KIND: Record<ScopeChange["kind"], { word: string; tone: TimelineTone }> = {
+  added: { word: "Added", tone: "good" },
+  removed: { word: "Removed", tone: "bad" },
+  edited: { word: "Edited", tone: "info" },
+  "put back": { word: "Put back", tone: "info" },
+};
 
 export default function ScopeList({ orgId, projectId, projectName, uid, canManage, noSchedule, actorEmail, finish, tz }: {
   orgId: string; projectId: string; projectName: string; uid: string | null; canManage: boolean; noSchedule: boolean; actorEmail?: string;
@@ -50,6 +59,8 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
   const [rfqOpen, setRfqOpen] = useState(false);
   const [makeOpen, setMakeOpen] = useState(false);
   const [needPlace, setNeedPlace] = useState(false);
+  // "Add a job" under the list opens its boxes (the list is the main job here).
+  const [adding, setAdding] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const pkgInput = useRef<HTMLInputElement>(null);
   const pkgFor = useRef<string | null>(null);
@@ -355,7 +366,7 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
           {/* On a phone the button goes under the title, so neither squeezes. */}
           <div className="min-w-0 flex-1 basis-full sm:basis-auto">
             <h2 id="scope-title" className="font-display text-section font-semibold text-[var(--color-text)]">Scope <span className="font-normal text-[var(--color-text-muted)] tabular-nums">· {n} {jobWord}</span></h2>
-            <p className="text-caption text-[var(--color-text-muted)] break-words">{scope.source.sheet ? `From ${scope.source.file}, tab ${scope.source.sheet}${last ? `, imported ${when(last.at)}${last.by ? ` by ${last.by}` : ""}` : ""}` : "Typed in on this page"}</p>
+            <p className="text-caption text-[var(--color-text-muted)] break-words">{scope.source.sheet ? `From ${scope.source.file}, tab ${scope.source.sheet}${last ? `, imported ${when(last.at, tz)}${last.by ? ` by ${last.by}` : ""}` : ""}` : "Typed in on this page"}</p>
           </div>
           {canManage && <Button variant="secondary" onClick={() => input.current?.click()} loading={busy && !incoming}><Upload className="w-4 h-4" /> {scope.source.sheet ? "Import the list again" : "Import a work order list"}</Button>}
         </div>
@@ -432,18 +443,23 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
             );
           })}
         </div>
-        {/* Taken off the scope, with why: each can be put back. */}
+        {/* Taken off the scope, with why: each can be put back. Quiet: the
+            number struck through, the why in quotes, who as an avatar. */}
         {removed.length > 0 && (
           <details className="border-t border-[var(--color-border)] group">
-            <summary className="px-5 min-h-11 flex items-center gap-1.5 cursor-pointer text-body font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-              <ChevronDown aria-hidden className="ui-chevron w-4 h-4 -rotate-90 group-open:rotate-0" />Removed <span className="font-normal text-[var(--color-text-muted)] tabular-nums">· {removed.length}</span>
+            <summary className="px-5 min-h-11 flex items-center gap-1.5 cursor-pointer text-body font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-text)]">
+              <ChevronDown aria-hidden className="ui-chevron w-4 h-4 -rotate-90 group-open:rotate-0" />Removed <span className="font-normal tabular-nums">· {removed.length}</span>
             </summary>
-            <ul>
+            <ul className="px-5 pb-4 grid gap-3">
               {removed.map((r) => (
-                <li key={r.wo} className="px-5 py-2.5 border-t border-[var(--color-border)] flex flex-wrap sm:flex-nowrap items-start gap-x-4 gap-y-1.5">
-                  <div className="min-w-0 flex-1">
-                    <div className="text-body text-[var(--color-text)] break-words">{!isTypedItem(r.wo) && <span className="ui-id mr-1.5">WO {r.wo}</span>}{r.what}</div>
-                    <div className="text-caption text-[var(--color-text-muted)] break-words">Removed {when(r.removedAt)}{r.removedBy ? ` by ${r.removedBy}` : ""}: {r.why}{r.cancelledIds?.length ? ". Its schedule steps were cancelled." : ""}</div>
+                <li key={r.wo} className="flex flex-wrap sm:flex-nowrap items-start gap-x-4 gap-y-1.5">
+                  <div className="min-w-0 flex-1 text-[var(--color-text-muted)]">
+                    <div className="text-body break-words">{isTypedItem(r.wo) ? <span className="line-through">{r.what}</span> : <><span className="mr-1.5 font-medium tabular-nums line-through">WO {r.wo}</span>{r.what}</>}</div>
+                    <div className="text-caption break-words flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                      <span>&ldquo;{r.why}&rdquo;{r.cancelledIds?.length ? ". Its schedule steps were cancelled." : ""}</span>
+                      <span className="tabular-nums">{when(r.removedAt, tz)}</span>
+                      {r.removedBy && <UserAvatar email={r.removedBy} size={20} title={`Removed by ${r.removedBy}`} />}
+                    </div>
                   </div>
                   {canManage && <button type="button" onClick={() => void putBack(r)} className="shrink-0 inline-flex items-center gap-1 min-h-9 pointer-coarse:min-h-11 px-2 rounded-md border border-[var(--color-border-strong)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><RotateCcw aria-hidden className="w-3.5 h-3.5" />Put back{r.cancelledIds?.length ? " (and its steps)" : ""}</button>}
                 </li>
@@ -451,27 +467,37 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
             </ul>
           </details>
         )}
-        {/* Every change made here, with who, when and why. */}
+        {/* Every change made here, with who, when and why: a timeline. */}
         {changes.length > 0 && (
           <details className="border-t border-[var(--color-border)] group">
             <summary className="px-5 min-h-11 flex items-center gap-1.5 cursor-pointer text-body font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
               <ChevronDown aria-hidden className="ui-chevron w-4 h-4 -rotate-90 group-open:rotate-0" />Changes <span className="font-normal text-[var(--color-text-muted)] tabular-nums">· {changes.length}</span>
             </summary>
-            <ul className="px-5 pb-3">
-              {[...changes].reverse().slice(0, 40).map((c, i) => (
-                <li key={i} className="py-1.5 border-t border-[var(--color-border)] first:border-t-0 text-body text-[var(--color-text)] break-words">
-                  <span className="text-[var(--color-text-muted)] tabular-nums">{when(c.at)}</span> · <b className="font-medium">{c.kind === "put back" ? "Put back" : c.kind[0].toUpperCase() + c.kind.slice(1)}</b> {isTypedItem(c.wo) ? `"${c.what}"` : `WO ${c.wo}`}{c.why ? `: ${c.why}` : ""}{c.by ? <span className="text-[var(--color-text-muted)]"> · {c.by}</span> : null}
-                </li>
-              ))}
-            </ul>
+            <Timeline className="px-5 pt-1 pb-4" tz={tz} max={40}
+              items={changes.map((c, i): TimelineItem => ({
+                id: String(i), at: c.at,
+                kind: KIND[c.kind]?.word ?? c.kind, tone: KIND[c.kind]?.tone ?? "muted",
+                title: isTypedItem(c.wo) ? c.what : `WO ${c.wo}`,
+                detail: c.why, who: c.by ? { email: c.by } : null,
+              }))} />
           </details>
         )}
-        {/* A job that came in later, typed in here. */}
+        {/* A job that came in later, typed in here: opens from one button. */}
         {canManage && (
-          <div className="px-5 py-4 border-t border-[var(--color-border)]">
-            <InlineAddRow fields={ADD_FIELDS} what="job" addLabel="Add a job" wrap
-              onAdd={(v) => addTyped([{ what: v.what, equipment: v.equipment, wo: v.wo }])}
-              onPasteRows={(rows) => addTyped(rows.map((r) => ({ what: r[0] ?? "", equipment: r[1], wo: r[2] })))} />
+          <div id="add-job" className="px-5 py-4 border-t border-[var(--color-border)]">
+            {adding ? (
+              <div className="grid gap-1">
+                <InlineAddRow fields={ADD_FIELDS} what="job" addLabel="Add a job" wrap
+                  onAdd={(v) => addTyped([{ what: v.what, equipment: v.equipment, wo: v.wo }])}
+                  onPasteRows={(rows) => addTyped(rows.map((r) => ({ what: r[0] ?? "", equipment: r[1], wo: r[2] })))} />
+                <Button variant="ghost" size="sm" className="justify-self-start" onClick={() => setAdding(false)}>Done</Button>
+              </div>
+            ) : (
+              <Button variant="secondary"
+                onClick={() => { setAdding(true); requestAnimationFrame(() => (document.querySelector("#add-job input") as HTMLInputElement | null)?.focus()); }}>
+                <Plus className="w-4 h-4" /> Add a job
+              </Button>
+            )}
           </div>
         )}
       </section>}

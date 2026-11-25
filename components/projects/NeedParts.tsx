@@ -16,9 +16,14 @@ export function SourceLine({ source, tz, className = "" }: { source: Source; tz:
 
 /** Where it came from, behind a "?" next to the section's title (with any
  *  short explanation of the section first), so no line sits under it. */
-export function SourceHelp({ source, tz, children }: { source: Source; tz: string; children?: React.ReactNode }) {
+export function SourceHelp({ source, tz, children, placement, className }: {
+  source: Source; tz: string; children?: React.ReactNode;
+  /** Where the tip opens (up, near the bottom of a clipped panel). */
+  placement?: "top" | "bottom" | "left" | "right";
+  className?: string;
+}) {
   return (
-    <HelpTooltip>
+    <HelpTooltip placement={placement} className={className}>
       <span className="block font-normal" data-source={source.kind}>
         {children}{children ? " " : null}{sourceWords(source, tz)}.
       </span>

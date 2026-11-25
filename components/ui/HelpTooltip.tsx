@@ -20,10 +20,12 @@ interface HelpTooltipProps {
   size?: "sm" | "md";
   /** Optional className on the trigger button. */
   className?: string;
+  /** A word beside the icon ("Why?"), so it reads as a question to tap. */
+  label?: string;
 }
 
 export default function HelpTooltip({
-  children, placement = "bottom", size = "sm", className = "",
+  children, placement = "bottom", size = "sm", className = "", label,
 }: HelpTooltipProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLSpanElement | null>(null);
@@ -56,10 +58,10 @@ export default function HelpTooltip({
       <button
         type="button"
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen((v) => !v); }}
-        className="ui-hit rounded-full text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] transition-colors"
-        aria-label="More info"
+        className={`ui-hit rounded-full text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] transition-colors ${label ? "inline-flex items-center gap-1 text-caption font-medium" : ""}`}
+        aria-label={label ?? "More info"}
       >
-        <HelpCircle className={iconSize} />
+        <HelpCircle className={iconSize} />{label}
       </button>
       {open && (
         <div

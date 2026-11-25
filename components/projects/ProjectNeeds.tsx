@@ -37,7 +37,7 @@ import { readPssrs, listOk, openCloseoutView, type PssrList } from "@/components
 import { AfeEditor } from "@/components/projects/cost/CostEdits";
 import { useFindingsReview } from "@/components/projects/Findings";
 import { FINDINGS_SQL } from "@/lib/findings";
-import { SourceLine, Switch, NeededChoice } from "@/components/projects/NeedParts";
+import { SourceLine, SourceHelp, Switch, NeededChoice } from "@/components/projects/NeedParts";
 import { Card, heroQuiet } from "@/components/ui/PageHero";
 import { fieldBox } from "@/components/admin/kit";
 import { Button } from "@/components/ui/Button";
@@ -92,12 +92,12 @@ const joinWords = (xs: string[]) => (xs.length <= 1 ? xs.join("") : `${xs.slice(
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const money = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
 
-/** Where a line stands: a dot and a word. Only "To do" is colored (it needs
- *  someone); set is a green dot with plain words; the app's default and
- *  lines kept for your information are muted. */
+/** Where a line stands: a dot and a word. "To do" is the word in semibold
+ *  (it needs someone) by its amber dot; set is a green dot with plain
+ *  words; the app's default and lines kept for your information are muted. */
 const MARK: Record<State, { word: string; dot: string; text: string } | null> = {
   set: { word: "Set", dot: "var(--state-released)", text: "text-[var(--color-text)]" },
-  open: { word: "To do", dot: "var(--state-held)", text: "text-[var(--state-held-text)] font-medium" },
+  open: { word: "To do", dot: "var(--state-held)", text: "text-[var(--color-text)] font-semibold" },
   default: { word: "App default", dot: "var(--color-text-faint)", text: "text-[var(--color-text-muted)]" },
   info: null,
 };
@@ -116,15 +116,22 @@ function Mark({ state }: { state: State }) {
 const COLS = "md:grid md:grid-cols-[minmax(10rem,15rem)_minmax(0,1fr)_7.5rem_10rem] md:gap-x-6 md:items-start";
 
 function NeedRow({ r, tz, quiet }: { r: Row; tz: string; quiet?: boolean }) {
+  // What's left to do stands out: its name and words at the reading size.
+  const todo = r.state === "open";
+  // "Asked by the post-event review: …" is a reason, not needed to act:
+  // behind the "?" at the end of the line (rule B5).
+  const asked = r.source?.kind === "asked" ? r.source : null;
   return (
-    <li className={`px-4 sm:px-5 ${quiet ? "py-2.5" : "py-3"}`} data-need-row={r.id} data-need-state={r.state}>
+    <li className={`px-4 sm:px-5 ${todo ? "py-3" : "py-2"}`} data-need-row={r.id} data-need-state={r.state}>
       <div className={`${COLS} max-md:flex max-md:flex-wrap max-md:items-baseline max-md:gap-x-3 max-md:gap-y-1`}>
-        <div className={`min-w-0 max-md:flex-1 text-body leading-snug ${quiet ? "text-[var(--color-text-muted)]" : "font-medium text-[var(--color-text)]"}`}>{r.name}</div>
+        <div className={`min-w-0 max-md:flex-1 leading-snug ${todo ? "text-reading font-semibold text-[var(--color-text)]" : quiet ? "text-body text-[var(--color-text-muted)]" : "text-body font-medium text-[var(--color-text)]"}`}>{r.name}</div>
         <div className="min-w-0 max-md:order-3 max-md:basis-full">
-          <div className="text-body leading-snug text-[var(--color-text)]">{r.value}</div>
+          <div className={`leading-snug text-[var(--color-text)] ${todo ? "text-reading" : "text-body"}`}>
+            {r.value}{asked && <SourceHelp source={asked} tz={tz} placement="top" className="ml-1 align-middle" />}
+          </div>
           {/* Where the setting came from ("App default: …", "Set for this
               project …"): said on the folded list, where it's looked for. */}
-          {r.source && <SourceLine source={r.source} tz={tz} className="mt-0.5" />}
+          {r.source && !asked && <SourceLine source={r.source} tz={tz} className="mt-0.5" />}
         </div>
         <div className="max-md:order-2 md:pt-px"><Mark state={r.state} /></div>
         <div className="max-md:order-2 max-md:-my-1.5 md:justify-self-end flex items-center justify-end gap-2 min-w-0 md:-mt-1.5">{r.action}</div>
@@ -154,7 +161,7 @@ function Stage({ id, projectId, title, rows, tz, editing }: { id: string; projec
   // A setting being changed stays in sight while it's open.
   const settledOpen = showSettled || settled.some((r) => r.id === editing);
   return (
-    <section className="min-w-0 border-t border-[var(--color-border)] first:border-t-0" data-need-stage={id}>
+    <section className="min-w-0" data-need-stage={id}>
       <h3>
         <button type="button" onClick={() => fold(!folded)} aria-expanded={!folded}
           className="w-full flex items-center gap-3 px-4 sm:px-5 h-11 text-left bg-[var(--color-surface-2)] hover:bg-[color-mix(in_srgb,var(--color-text)_5%,var(--color-surface-2))] transition-colors">
@@ -164,7 +171,7 @@ function Stage({ id, projectId, title, rows, tz, editing }: { id: string; projec
         </button>
       </h3>
       {!folded && (
-        <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
+        <ul className="py-2">
           {todo.map((r) => <NeedRow key={r.id} r={r} tz={tz} />)}
           {info.map((r) => <NeedRow key={r.id} r={r} tz={tz} />)}
           {settled.length > 0 && (
@@ -418,9 +425,9 @@ export default function ProjectNeeds({ orgId, project, jobKind, phases, steps, m
   };
   const pssrRows = (phases.length ? phases.map((p) => ({ id: p.id as string | null, name: p.name })) : [{ id: null, name: "The job" }]).map((x) => ({ ...x, ...pssrOf(x.id) }));
   const pssrBody = facts && cs && facts.pssrs ? (
-    <div className="mt-1.5 divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
+    <div className="mt-2 grid gap-3">
       {pssrRows.map((x) => (
-        <div key={x.id ?? "job"} className="py-2 flex items-center gap-x-3 gap-y-1.5 flex-wrap">
+        <div key={x.id ?? "job"} className="flex items-center gap-x-3 gap-y-1.5 flex-wrap">
           <span className="min-w-0 flex-1 basis-40">
             <span className="block text-body font-medium text-[var(--color-text)]">{x.name}</span>
             <span className="block text-body text-[var(--color-text)]">{!x.needed ? "Not needed" : x.list ? `${x.list.satisfied} of ${x.list.applicable} items done` : "Not uploaded yet"}</span>
@@ -438,9 +445,9 @@ export default function ProjectNeeds({ orgId, project, jobKind, phases, steps, m
   const required = (items ?? []).filter((i) => i.required);
   const inCount = required.filter((i) => i.status === "accepted" || i.status === "waived").length;
   const turnoverBody = editing === "turnover" && items ? (
-    <div className="mt-1.5 border-y border-[var(--color-border)]">
+    <div className="mt-2">
       {items.length > 0 && (
-        <ul className="divide-y divide-[var(--color-border)]">
+        <ul>
           {items.map((it) => (
             <li key={it.id} className={`py-1.5 flex items-center gap-3 text-body ${it.required ? "" : "opacity-70"}`}>
               <Switch on={it.required} label={`${it.name} needed for this project`} disabled={!canManage || !!busy}
@@ -529,6 +536,8 @@ export default function ProjectNeeds({ orgId, project, jobKind, phases, steps, m
   ];
 
   const todo = toDo(setup).length;
+  // How many needs are left to do, over all three stages: the card's lead.
+  const openCount = [...before, ...shift, ...close].filter((r) => r.state === "open").length;
   // The row whose editor is open (the AFE's is the Budget row).
   const editingRow = editing === "afe" ? "budget" : editing;
   return (
@@ -541,14 +550,20 @@ export default function ProjectNeeds({ orgId, project, jobKind, phases, steps, m
           </button>
         )}
       </span>}>
+      <div className="px-4 sm:px-5 pt-5 pb-4 flex flex-wrap items-baseline gap-x-3 gap-y-1" data-needs-left={facts ? openCount : undefined}>
+        {facts
+          ? <span className="font-display text-title sm:text-hero leading-none font-bold tabular-nums text-[var(--color-text)]">{openCount}</span>
+          : <Skeleton className="w-10 h-10" />}
+        <span className="text-reading font-medium text-[var(--color-text)]">left to do</span>
+      </div>
       {(!canManage || err) && (
-        <div className="px-4 sm:px-5 py-3 border-b border-[var(--color-border)] space-y-1">
+        <div className="px-4 sm:px-5 pb-3 space-y-1">
           {!canManage && <p className="text-body text-[var(--color-text-muted)]">The project owner, a co-owner or an admin changes these.</p>}
           {err && <ErrorNote compact title={err} next="" />}
         </div>
       )}
       {/* The columns, once, over all three stages (wide screens). */}
-      <div aria-hidden className={`${COLS} max-md:hidden px-4 sm:px-5 h-9 items-center text-body text-[var(--color-text-muted)] border-b border-[var(--color-border)]`}>
+      <div aria-hidden className={`${COLS} max-md:hidden px-4 sm:px-5 h-9 items-center text-body text-[var(--color-text-muted)]`}>
         <span>Need</span><span>Set to, and where that came from</span><span>Status</span><span />
       </div>
       <Stage id="before" projectId={projectId} title="Before the work" rows={before} tz={tz} editing={editingRow} />

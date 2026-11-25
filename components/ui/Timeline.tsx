@@ -30,7 +30,8 @@ const DOT: Record<TimelineTone, string> = {
   good: "bg-[var(--state-released)]",
   warn: "bg-[var(--state-held)]",
   bad: "bg-[var(--state-overdue)]",
-  info: "bg-[var(--color-accent)]",
+  // Blue, not the accent: the accent only means "you can act here" (C1).
+  info: "bg-[var(--state-locked)]",
   muted: "bg-[var(--color-text-faint)]",
 };
 
