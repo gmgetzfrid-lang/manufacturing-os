@@ -577,7 +577,8 @@ export default function TaskDetailPanel({
                       at: n.createdAt instanceof Date ? n.createdAt.getTime() : (n.createdAt ?? 0),
                       kind: n.kind === "status" ? (n.statusAt ? labelOf(n.statusAt) : "Set status") : n.kind === "reschedule" ? "Rescheduled" : "Noted",
                       tone: n.kind === "status" && n.statusAt ? NOTE_TONE[n.statusAt] : "muted",
-                      title: n.body ?? "",
+                      // Times saved inside the words (ISO) read as plant time.
+                      title: (n.body ?? "").replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?Z/g, (iso) => fmtInTz(iso, tz, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })),
                       who: n.createdByName ? { uid: n.createdBy, name: n.createdByName } : null,
                       // A comment is its author's to change.
                       detail: editNote && editNote.id === n.id ? (

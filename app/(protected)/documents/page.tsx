@@ -364,7 +364,8 @@ export default function DocumentsHomePage() {
             <th className="w-14"><span className="sr-only">Actions</span></th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-[var(--color-border)]">
+        {/* A few libraries are split by space; a long list keeps its row lines (B3). */}
+        <tbody className={list.length > 8 ? "divide-y divide-[var(--color-border)]" : ""}>
           {list.map((lib) => {
             const isPending = pendingLibId === lib._id;
             const menuOpen = menuOpenForLibId === lib._id;

@@ -151,10 +151,11 @@ export default function DistributionAcks({
 
       {/* CONTROLLER FACE — progress + management. */}
       {(acks.length > 0 || isController) && (
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+        // Inside its section: no box of its own (B3).
+        <div>
           <button
             onClick={() => setOpen((v) => !v)}
-            className="w-full px-3.5 py-2.5 flex items-center gap-2 hover:bg-[var(--color-surface-2)] transition-colors"
+            className="w-full px-2 min-h-10 pointer-coarse:min-h-11 rounded-md flex items-center gap-2 hover:bg-[var(--color-surface-2)] transition-colors"
           >
             <ClipboardCheck className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
             <span className="text-body font-medium text-[var(--color-text)]">Distribution confirmations</span>
@@ -162,9 +163,7 @@ export default function DistributionAcks({
               {acks.length === 0 ? (
                 <span className="text-body font-medium text-[var(--color-text-faint)]">none requested for Rev {currentRev ?? "-"}</span>
               ) : (
-                <span className={`text-body font-bold px-1.5 py-0.5 rounded-full ${
-                  confirmed === acks.length ? "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)]" : "bg-[var(--color-surface-2)] text-[var(--color-text)]"
-                }`}>
+                <span className={`ui-pill ${confirmed === acks.length ? "is-good" : "is-warn"}`}>
                   {confirmed} of {acks.length} confirmed
                 </span>
               )}
@@ -173,7 +172,7 @@ export default function DistributionAcks({
           </button>
 
           {open && (
-            <div className="px-3.5 pb-3 border-t border-[var(--color-border)] pt-2.5 space-y-2 animate-in fade-in slide-in-from-top-1 duration-150">
+            <div className="px-2 pb-3 pt-1 space-y-2 animate-in fade-in slide-in-from-top-1 duration-150">
               {acks.length > 0 && (
                 <>
                   {/* Progress bar */}
@@ -205,18 +204,18 @@ export default function DistributionAcks({
                 <div className="flex items-center gap-2 pt-1">
                   <button
                     onClick={() => void openPicker()}
-                    className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-body font-medium border border-[var(--color-border)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                    className="inline-flex items-center gap-1 px-2 min-h-10 pointer-coarse:min-h-11 rounded-lg text-body font-medium border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
                   >
                     <UserPlus className="w-3 h-3" /> Request confirmations…
                   </button>
                   {acks.some((a) => !a.acknowledgedAt) && (
                     reminded ? (
-                      <span className="text-body font-medium text-[var(--state-released)]">Reminder sent ✓</span>
+                      <span className="text-body font-medium text-[var(--color-text)]">Reminder sent ✓</span>
                     ) : (
                       <button
                         onClick={() => void handleRemind()}
                         disabled={busy}
-                        className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-body font-medium border border-[color-mix(in_srgb,var(--state-held)_40%,transparent)] text-[var(--state-held)] hover:bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] disabled:opacity-50"
+                        className="inline-flex items-center gap-1 px-2 min-h-10 pointer-coarse:min-h-11 rounded-lg text-body font-medium border border-[var(--color-border-strong)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
                       >
                         <BellRing className="w-3 h-3" /> Remind the unconfirmed
                       </button>

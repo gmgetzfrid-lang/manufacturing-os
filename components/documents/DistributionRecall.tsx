@@ -61,20 +61,21 @@ export default function DistributionRecall({
   const shortName = (h: RecallHolder) => h.userEmail?.split("@")[0] ?? "someone";
 
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+    // Inside its section: no box of its own (B3).
+    <div>
       <button
         onClick={() => setOpen((v) => !v)}
-        className="w-full px-3.5 py-2.5 flex items-center gap-2 hover:bg-[var(--color-surface-2)] transition-colors"
+        className="w-full px-2 min-h-10 pointer-coarse:min-h-11 rounded-md flex items-center gap-2 hover:bg-[var(--color-surface-2)] transition-colors"
       >
         <FileDown className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
         <span className="text-body font-medium text-[var(--color-text)]">Copies in circulation</span>
         <span className="ml-auto flex items-center gap-1.5">
           {outdated.length > 0 ? (
-            <span className="text-body font-medium px-1.5 py-0.5 rounded-full bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] text-[var(--state-held)]">
+            <span className="ui-pill is-warn">
               {outdated.length} of {holders.length} outdated
             </span>
           ) : (
-            <span className="text-body font-medium px-1.5 py-0.5 rounded-full bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)]">
+            <span className="ui-pill is-good">
               all {holders.length} current
             </span>
           )}
@@ -83,7 +84,7 @@ export default function DistributionRecall({
       </button>
 
       {open && (
-        <div className="px-3.5 pb-3 border-t border-[var(--color-border)] pt-2.5 space-y-1 animate-in fade-in slide-in-from-top-1 duration-150">
+        <div className="px-2 pb-3 pt-1 space-y-1 animate-in fade-in slide-in-from-top-1 duration-150">
           {holders.slice(0, 10).map((h) => (
             <div key={h.userId} className="flex items-center gap-2 text-body py-0.5">
               {h.hasCurrent
@@ -101,14 +102,14 @@ export default function DistributionRecall({
 
           {outdated.length > 0 && (
             nudgedCount !== null ? (
-              <div className="mt-1.5 text-body font-medium text-[var(--state-released)] flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5" /> Recall sent to {nudgedCount} {nudgedCount === 1 ? "person" : "people"}
+              <div className="mt-1.5 text-body font-medium text-[var(--color-text)] flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-[var(--state-released)]" /> Recall sent to {nudgedCount} {nudgedCount === 1 ? "person" : "people"}
               </div>
             ) : (
               <button
                 onClick={() => void handleNudge()}
                 disabled={nudging}
-                className="mt-1.5 w-full inline-flex items-center justify-center gap-1.5 px-2.5 py-2 rounded-lg text-body font-medium text-[var(--color-text)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] border border-[color-mix(in_srgb,var(--state-held)_40%,transparent)] transition-colors disabled:opacity-50"
+                className="mt-1.5 w-full inline-flex items-center justify-center gap-1.5 px-2.5 min-h-10 pointer-coarse:min-h-11 rounded-lg text-body font-medium text-[var(--color-text)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-2)] border border-[var(--color-border-strong)] transition-colors disabled:opacity-50"
               >
                 {nudging ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <BellRing className="w-3.5 h-3.5" />}
                 Recall outdated copies - notify {outdated.length} {outdated.length === 1 ? "person" : "people"}

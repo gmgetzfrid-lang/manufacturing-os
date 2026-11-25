@@ -208,6 +208,9 @@ export default function FolderGrid({
       ? folder.description
       : (folder.pathNames && folder.pathNames.length > 1 ? folder.pathNames.slice(0, -1).join(' / ') : 'Folder');
   };
+  // A short list of folders is split by space, not a line under every row
+  // (B3); a long one keeps its row lines.
+  const ruled = folders.length > 8;
   const tiles = (
     <>
       {folders.map(folder => {
@@ -349,7 +352,7 @@ export default function FolderGrid({
             key={folder.id}
             role="row"
             {...rowProps}
-            className={`group relative grid ${LIST_COLS} items-center gap-x-3 px-4 min-h-12 py-1.5 border-t border-[var(--color-border)] max-sm:[&:nth-child(2)]:border-t-0 cursor-pointer transition-colors ${
+            className={`group relative grid ${LIST_COLS} items-center gap-x-3 px-4 min-h-12 py-1.5 ${ruled ? "border-t border-[var(--color-border)] max-sm:[&:nth-child(2)]:border-t-0" : ""} cursor-pointer transition-colors ${
               dropInto ? "bg-[var(--color-surface-2)] ring-2 ring-inset ring-[var(--color-border-strong)]"
               : dropBefore ? "shadow-[inset_0_3px_0_0_var(--color-text-muted)]"
               : dropAfter ? "shadow-[inset_0_-3px_0_0_var(--color-text-muted)]"
@@ -484,7 +487,7 @@ export default function FolderGrid({
   if (list) {
     return (
       <div role="table" aria-label="Folders" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-        <div role="row" className={`max-sm:hidden grid ${LIST_COLS} items-center gap-x-3 px-4 h-10 text-body font-medium text-[var(--color-text-muted)]`}>
+        <div role="row" className={`max-sm:hidden grid ${LIST_COLS} items-center gap-x-3 px-4 h-10 text-body font-medium text-[var(--color-text-muted)] ${ruled ? "" : "border-b border-[var(--color-border)]"}`}>
           <span role="columnheader">Folder</span>
           <span role="columnheader" className="text-right">Files</span>
           <span role="columnheader" className="text-right">Subfolders</span>

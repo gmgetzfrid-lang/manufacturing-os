@@ -16,6 +16,7 @@ import {
 import { findInBackup } from "@/lib/archive";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import FileThumb from "@/components/ui/FileThumb";
+import Timeline from "@/components/ui/Timeline";
 import { formatBytes } from "@/lib/formatBytes";
 import { friendlyError } from "@/lib/friendlyError";
 
@@ -197,14 +198,21 @@ export default function TicketArchiveViewer({
               {history.length > 0 && (
                 <div>
                   <div className="text-body font-medium text-[var(--color-text-muted)] mb-2 flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" /> History ({history.length})</div>
-                  <div className="space-y-1">
-                    {history.map((h, i) => (
-                      <div key={i} className="text-body text-[var(--color-text-muted)] flex gap-2">
-                        <span className="text-[var(--color-text-faint)] shrink-0">{fmtDate(h.at || h.date)}</span>
-                        <span className="text-[var(--color-text)]">{h.action || h.note || h.detail}{h.from && h.to ? ` (${h.from} → ${h.to})` : ""}{h.by || h.user ? `, ${h.by || h.user}` : ""}</span>
-                      </div>
-                    ))}
-                  </div>
+                  {/* The archived history as a timeline: by day, who as an avatar (B8). */}
+                  <Timeline items={history.filter((h) => !!(h.at || h.date) && !Number.isNaN(Date.parse(h.at || h.date || ""))).map((h, i) => ({
+                    id: `h-${i}`,
+                    at: (h.at || h.date)!,
+                    kind: h.action || h.note || h.detail || "Changed",
+                    title: h.from && h.to ? `(${h.from} → ${h.to})` : null,
+                    who: h.by || h.user ? { name: h.by || h.user } : null,
+                  }))} />
+                  {/* Entries with no readable time, as they were saved. */}
+                  {history.filter((h) => !(h.at || h.date) || Number.isNaN(Date.parse(h.at || h.date || ""))).map((h, i) => (
+                    <div key={`u-${i}`} className="mt-1 text-body text-[var(--color-text)]">
+                      {h.at || h.date ? <span className="text-[var(--color-text-faint)]">{h.at || h.date} </span> : null}
+                      {h.action || h.note || h.detail}{h.from && h.to ? ` (${h.from} → ${h.to})` : ""}{h.by || h.user ? `, ${h.by || h.user}` : ""}
+                    </div>
+                  ))}
                 </div>
               )}
 

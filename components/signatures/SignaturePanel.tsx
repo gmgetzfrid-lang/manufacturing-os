@@ -121,7 +121,8 @@ export default function SignaturePanel({
                 <th className="font-medium px-4 text-right">Signed</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[var(--color-border)]">
+            {/* A few signers are split by space; a long list keeps its row lines (B3). */}
+            <tbody className={rows.length > 8 ? "divide-y divide-[var(--color-border)]" : ""}>
               {rows.map((r) => {
                 const when = r.sig ? shortDateTime(r.sig.signedAt) : "";
                 const tag = r.sig
