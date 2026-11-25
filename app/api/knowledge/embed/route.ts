@@ -24,7 +24,9 @@ import {
   embeddingConnectionFrom, EMBED_BATCH, NO_EMBEDDING_KEY_MESSAGE,
 } from "@/lib/ai/embeddings";
 import { openAiKey } from "@/lib/ai/keyVault";
-import { embedLibrarySlice, setEmbedBuildMarker, isBusyDbError } from "@/lib/knowledgeEmbedCore";
+import {
+  embedLibrarySlice, setEmbedBuildMarker, isBusyDbError, claimEmbedBuild, releaseEmbedBuild,
+} from "@/lib/knowledgeEmbedCore";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -45,6 +47,8 @@ const RESPOND_BY_MS = 52_000;
  *  table is busy and an exact count can crawl; past this we answer with the
  *  last known numbers instead of letting the platform kill the request. */
 const COUNT_BUDGET_MS = 7_000;
+/** The library's build lease covers one call: the platform stops it at 60 s. */
+const EMBED_LEASE_SECONDS = 60;
 
 function bad(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
@@ -182,107 +186,126 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Consent marker for the background drain: starting a build records WHO
-  // is paying, and the hourly cron continues THIS build with THIS key until
-  // the library is done — the tab is optional from here on.
-  await setEmbedBuildMarker(libraryId, user.id);
-
-  // Starting numbers. The caller already knows them from its last call, so
-  // only count when it doesn't — every count competes with the build itself.
-  let stats: Coverage | null = known;
-  if (!stats) {
-    const c = await coverage(orgId, libraryId);
-    if (c === "missing") return bad(MIGRATION_MESSAGE, 424);
-    stats = c === "busy" ? null : c;
-  }
-
-  // Setup (sign-in, key, budget, marker) already used part of the clock on a
-  // busy database; the slice gets what is left, not a fresh 30 seconds. If
-  // setup alone ate most of it, answer "busy" now — the caller waits a
-  // moment and calls again — rather than start work that can't finish.
-  const spent = Date.now() - arrived;
-  if (spent > 25_000) {
+  // One build per library at a time, across tabs, people and the
+  // background drain (two builders fetched the same passages, paid for them
+  // twice and wrote the same rows). Held for this call only and given back
+  // at the end, so this tab's next call can take it again.
+  const lease = await claimEmbedBuild(libraryId, EMBED_LEASE_SECONDS);
+  if (lease === "busy") {
+    // Another build is running: answer "busy" so the tab waits and asks
+    // again (and says why), spending nothing.
     return NextResponse.json({
-      embedded: 0, total: stats?.total ?? 0, coveredNow: stats?.embedded ?? 0,
-      remaining: stats ? stats.total - stats.embedded : 0,
-      done: false, error: null, spentThisRun: 0, busy: true, estimated: true, countUnavailable: !stats,
-    });
-  }
-  const slice = await embedLibrarySlice({
-    orgId, libraryId,
-    connection: embedding,
-    batchSize,
-    budgetMs: Math.max(5_000, BUDGET_MS - spent),
-    hardStopMs: Math.max(10_000, EMBED_HARD_STOP_MS - spent),
-    finishBy: arrived + RESPOND_BY_MS - 6_000,
-  });
-  const usage = slice.usage;
-  const embedded = slice.embedded;
-  const rateLimited = slice.rateLimited;
-  let lastError = slice.error;
-  if (slice.fetchedNone && stats && stats.total - stats.embedded > 0 && !known) {
-    // Coverage says passages lack vectors, yet the fetch returned none —
-    // the classic symptom of a stale PostgREST schema cache after the
-    // embedding column was rebuilt. Say so; silence here reads as "done".
-    // (Only on a fresh count: a remembered one can simply be out of date.)
-    lastError =
-      `${stats.total - stats.embedded} passages lack vectors but none could be fetched - ` +
-      "the API schema cache is likely stale after a column rebuild. In the Supabase SQL " +
-      "editor run:  NOTIFY pgrst, 'reload schema';  wait ~10 seconds, then build again.";
-  }
-
-  if (usage.inputTokens > 0) {
-    await recordAskUsage({
-      orgId, userId: user.id, provider: embedding.provider, model: embedding.model,
-      usage, ok: !lastError, op: "knowledgeEmbed",
+      embedded: 0, total: known?.total ?? 0, coveredNow: known?.embedded ?? 0,
+      remaining: known ? known.total - known.embedded : 0,
+      done: false, error: null, spentThisRun: 0, busy: true, elsewhere: true, estimated: true, countUnavailable: !known,
     });
   }
 
-  // Finished = the slice looked for a passage without a vector and found
-  // none. That's exact, and needs no count.
-  const exhausted = slice.exhausted && !lastError;
-  // The closing count only when the library is finished (and it fits):
-  // each count reads every passage row (about 2.4 s on a big library), and
-  // running it after every slice competed with the build. Mid-build the
-  // numbers are last known + this call, corrected by the final count.
-  const countRoom = arrived + RESPOND_BY_MS - Date.now() - 2_000;
-  const counted = exhausted && countRoom >= 2_000 ? await coverage(orgId, libraryId, Math.min(COUNT_BUDGET_MS, countRoom)) : "busy" as const;
-  const after: Coverage | null = typeof counted === "object" ? counted
-    // Too busy to count: last known + what this call wrote. Shown as is;
-    // the next successful count corrects it.
-    : stats ? { total: stats.total, embedded: Math.min(stats.total, stats.embedded + embedded) } : null;
-  const exact = typeof counted === "object";
-  // Wrote vectors but an exact count didn't move: the writes are vanishing —
-  // that's a bug worth naming, never a success.
-  if (exact && stats && !known && embedded > 0 && after!.embedded < stats.embedded + embedded && !lastError) {
-    lastError =
-      `Wrote ${embedded} vector(s) but the library's count only shows ${after!.embedded} - ` +
-      "writes are not landing. Tell your admin: verify library_id/org_id on knowledge_chunks.";
+  try {
+    // Consent marker for the background drain: starting a build records WHO
+    // is paying, and the hourly cron continues THIS build with THIS key until
+    // the library is done — the tab is optional from here on.
+    await setEmbedBuildMarker(libraryId, user.id);
+
+    // Starting numbers. The caller already knows them from its last call, so
+    // only count when it doesn't — every count competes with the build itself.
+    let stats: Coverage | null = known;
+    if (!stats) {
+      const c = await coverage(orgId, libraryId);
+      if (c === "missing") return bad(MIGRATION_MESSAGE, 424);
+      stats = c === "busy" ? null : c;
+    }
+
+    // Setup (sign-in, key, budget, marker) already used part of the clock on a
+    // busy database; the slice gets what is left, not a fresh 30 seconds. If
+    // setup alone ate most of it, answer "busy" now — the caller waits a
+    // moment and calls again — rather than start work that can't finish.
+    const spent = Date.now() - arrived;
+    if (spent > 25_000) {
+      return NextResponse.json({
+        embedded: 0, total: stats?.total ?? 0, coveredNow: stats?.embedded ?? 0,
+        remaining: stats ? stats.total - stats.embedded : 0,
+        done: false, error: null, spentThisRun: 0, busy: true, estimated: true, countUnavailable: !stats,
+      });
+    }
+    const slice = await embedLibrarySlice({
+      orgId, libraryId,
+      connection: embedding,
+      batchSize,
+      budgetMs: Math.max(5_000, BUDGET_MS - spent),
+      hardStopMs: Math.max(10_000, EMBED_HARD_STOP_MS - spent),
+      finishBy: arrived + RESPOND_BY_MS - 6_000,
+    });
+    const usage = slice.usage;
+    const embedded = slice.embedded;
+    const rateLimited = slice.rateLimited;
+    let lastError = slice.error;
+    if (slice.fetchedNone && stats && stats.total - stats.embedded > 0 && !known) {
+      // Coverage says passages lack vectors, yet the fetch returned none —
+      // the classic symptom of a stale PostgREST schema cache after the
+      // embedding column was rebuilt. Say so; silence here reads as "done".
+      // (Only on a fresh count: a remembered one can simply be out of date.)
+      lastError =
+        `${stats.total - stats.embedded} passages lack vectors but none could be fetched - ` +
+        "the API schema cache is likely stale after a column rebuild. In the Supabase SQL " +
+        "editor run:  NOTIFY pgrst, 'reload schema';  wait ~10 seconds, then build again.";
+    }
+
+    if (usage.inputTokens > 0) {
+      await recordAskUsage({
+        orgId, userId: user.id, provider: embedding.provider, model: embedding.model,
+        usage, ok: !lastError, op: "knowledgeEmbed",
+      });
+    }
+
+    // Finished = the slice looked for a passage without a vector and found
+    // none. That's exact, and needs no count.
+    const exhausted = slice.exhausted && !lastError;
+    // The closing count only when the library is finished (and it fits):
+    // each count reads every passage row (about 2.4 s on a big library), and
+    // running it after every slice competed with the build. Mid-build the
+    // numbers are last known + this call, corrected by the final count.
+    const countRoom = arrived + RESPOND_BY_MS - Date.now() - 2_000;
+    const counted = exhausted && countRoom >= 2_000 ? await coverage(orgId, libraryId, Math.min(COUNT_BUDGET_MS, countRoom)) : "busy" as const;
+    const after: Coverage | null = typeof counted === "object" ? counted
+      // Too busy to count: last known + what this call wrote. Shown as is;
+      // the next successful count corrects it.
+      : stats ? { total: stats.total, embedded: Math.min(stats.total, stats.embedded + embedded) } : null;
+    const exact = typeof counted === "object";
+    // Wrote vectors but an exact count didn't move: the writes are vanishing —
+    // that's a bug worth naming, never a success.
+    if (exact && stats && !known && embedded > 0 && after!.embedded < stats.embedded + embedded && !lastError) {
+      lastError =
+        `Wrote ${embedded} vector(s) but the library's count only shows ${after!.embedded} - ` +
+        "writes are not landing. Tell your admin: verify library_id/org_id on knowledge_chunks.";
+    }
+    const remaining = exhausted ? 0 : after ? Math.max(0, after.total - after.embedded) : 0;
+    const done = (exhausted || (exact && remaining === 0)) && !lastError && !rateLimited;
+    // Build finished: withdraw the background-continuation consent marker so
+    // the cron stops looking at this library until someone starts a new build.
+    if (done) await setEmbedBuildMarker(libraryId, null);
+    return NextResponse.json({
+      embedded,
+      total: after?.total ?? 0,
+      coveredNow: exhausted && after ? after.total : after?.embedded ?? 0,
+      remaining,
+      done,
+      error: lastError,
+      rateLimited,
+      // The database was too busy to take more this round — the caller waits
+      // a moment and continues. Nothing written is lost.
+      busy: slice.busy,
+      /** Numbers are last-known + this call's writes (the count was too slow). */
+      estimated: !exact,
+      countUnavailable: !after,
+      // Free tiers meter per minute; a hair over one minute guarantees a
+      // fresh window even with clock skew.
+      retryAfterMs: rateLimited ? 65_000 : undefined,
+      spentThisRun: estimateCostUsd(embedding.model, usage),
+      provider: embedding.provider,
+      model: embedding.model,
+    });
+  } finally {
+    if (lease === "claimed") await releaseEmbedBuild(libraryId);
   }
-  const remaining = exhausted ? 0 : after ? Math.max(0, after.total - after.embedded) : 0;
-  const done = (exhausted || (exact && remaining === 0)) && !lastError && !rateLimited;
-  // Build finished: withdraw the background-continuation consent marker so
-  // the cron stops looking at this library until someone starts a new build.
-  if (done) await setEmbedBuildMarker(libraryId, null);
-  return NextResponse.json({
-    embedded,
-    total: after?.total ?? 0,
-    coveredNow: exhausted && after ? after.total : after?.embedded ?? 0,
-    remaining,
-    done,
-    error: lastError,
-    rateLimited,
-    // The database was too busy to take more this round — the caller waits
-    // a moment and continues. Nothing written is lost.
-    busy: slice.busy,
-    /** Numbers are last-known + this call's writes (the count was too slow). */
-    estimated: !exact,
-    countUnavailable: !after,
-    // Free tiers meter per minute; a hair over one minute guarantees a
-    // fresh window even with clock skew.
-    retryAfterMs: rateLimited ? 65_000 : undefined,
-    spentThisRun: estimateCostUsd(embedding.model, usage),
-    provider: embedding.provider,
-    model: embedding.model,
-  });
 }

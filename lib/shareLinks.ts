@@ -197,20 +197,27 @@ export async function gateShare(sb: SupabaseClient, row: ShareRow, code: string 
 
 export interface IssuedFile { path: string; versionId: string | null; fileType: string | null }
 
-/** The current PUBLISHED version's file, never a draft in review. */
+/** The current PUBLISHED version's file, never a draft in review. The
+ *  version must belong to this document, and to the document's org when
+ *  `org_id` is given (the service-role client bypasses RLS). */
 export async function resolveIssuedFile(
   sb: SupabaseClient,
-  doc: { id: string; current_version_id?: string | null },
+  doc: { id: string; org_id?: string | null; current_version_id?: string | null },
 ): Promise<IssuedFile | null> {
   const vid = doc.current_version_id ?? null;
+  const orgId = typeof doc.org_id === "string" && doc.org_id ? doc.org_id : null;
   if (vid) {
-    const { data: v } = await sb.from("document_versions").select("id, file_url, file_type").eq("id", vid).maybeSingle();
+    let byId = sb.from("document_versions").select("id, file_url, file_type").eq("id", vid).eq("record_id", doc.id);
+    if (orgId) byId = byId.eq("org_id", orgId);
+    const { data: v } = await byId.maybeSingle();
     const path = (v as { file_url?: string | null } | null)?.file_url ?? null;
     if (path) return { path, versionId: vid, fileType: (v as { file_type?: string | null }).file_type ?? null };
   }
-  const { data: latest } = await sb.from("document_versions")
+  let latestQ = sb.from("document_versions")
     .select("id, file_url, file_type")
-    .eq("record_id", doc.id)
+    .eq("record_id", doc.id);
+  if (orgId) latestQ = latestQ.eq("org_id", orgId);
+  const { data: latest } = await latestQ
     .or("review_state.is.null,review_state.eq.approved")
     .order("created_at", { ascending: false })
     .limit(1);

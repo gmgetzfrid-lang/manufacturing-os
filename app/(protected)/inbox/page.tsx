@@ -9,7 +9,7 @@
 // recertifications, milestones) and what you have checked out. Opening
 // the Inbox counts as looking: the bell's "something changed" dot clears.
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Send, XCircle, RefreshCw, Download } from "lucide-react";
 import { stageLabel, stageTone, StatusTag as StageTag } from "@/components/requests/RequestBits";
@@ -91,8 +91,12 @@ export default function InboxPage() {
     }
   }, [markAllRead, showToast]);
 
+  // Loads still on their way: a background refresh waits its turn rather
+  // than stacking another on a server that's slow to answer.
+  const inFlight = useRef(0);
   const refresh = useCallback(async (opts?: { background?: boolean; fresh?: boolean }) => {
     if (!uid || !activeOrgId || !key) return;
+    inFlight.current += 1;
     if (opts?.background) setRefreshing(true); else setLoading(true);
     setError(null);
     // What's checked out to you (below) is read alongside, not after.
@@ -106,6 +110,7 @@ export default function InboxPage() {
       // Kept as it came; said in plain words where it shows.
       setError(e ?? "error");
     } finally {
+      inFlight.current -= 1;
       setLoading(false); setRefreshing(false);
     }
   }, [uid, activeOrgId, userEmail, key]);
@@ -113,17 +118,29 @@ export default function InboxPage() {
   useEffect(() => { void refresh(); }, [refresh]);
 
   // Keep the cockpit fresh without a manual click: refresh when the tab
-  // regains focus/visibility, and on a 60s heartbeat while visible. Background
-  // refreshes don't trigger the full-page spinner, so the view never flickers.
+  // regains focus/visibility, and on a heartbeat of about a minute while
+  // visible. Background refreshes don't trigger the full-page spinner, so
+  // the view never flickers. Coming back to the tab fires both focus and
+  // visibilitychange: one refresh for the pair. A tick while a load is
+  // still on its way is skipped.
   useEffect(() => {
-    const tick = () => { if (document.visibilityState === "visible") void refresh({ background: true }); };
+    let last = 0;
+    const tick = () => {
+      if (document.visibilityState !== "visible" || inFlight.current > 0) return;
+      if (Date.now() - last < 2000) return;
+      last = Date.now();
+      void refresh({ background: true });
+    };
     window.addEventListener("focus", tick);
     document.addEventListener("visibilitychange", tick);
-    const id = window.setInterval(tick, 60_000);
+    // A little different on every device, so they don't all ask at once.
+    let id = 0;
+    const beat = () => { id = window.setTimeout(() => { tick(); beat(); }, 55_000 + Math.random() * 10_000); };
+    beat();
     return () => {
       window.removeEventListener("focus", tick);
       document.removeEventListener("visibilitychange", tick);
-      window.clearInterval(id);
+      window.clearTimeout(id);
     };
   }, [refresh]);
 

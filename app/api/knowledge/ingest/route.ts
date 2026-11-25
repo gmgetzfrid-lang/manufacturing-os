@@ -14,7 +14,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { openAiKey } from "@/lib/ai/keyVault";
-import { ingestKnowledgeDocBatch, type VisionContext } from "@/lib/knowledgeIngest";
+import {
+  ingestKnowledgeDocBatch, claimKnowledgeDocument, releaseKnowledgeDocument, isConcurrentWriteError,
+  type VisionContext,
+} from "@/lib/knowledgeIngest";
 import { jobModel } from "@/lib/ai/jobModelsServer";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 import { ALLOWED_PROVIDERS, estimateCostUsd, type AiUsage } from "@/lib/ai/pricing";
@@ -33,6 +36,10 @@ export const maxDuration = 60;
  *  being killed. */
 const INVOCATION_BUDGET_MS = 45_000;
 
+/** The document lease covers one request: the platform stops it at 60 s. */
+const LEASE_SECONDS = 60;
+const BEING_INDEXED_MESSAGE = "This file is being indexed by someone else right now. It carries on there.";
+
 function bad(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
 }
@@ -49,15 +56,19 @@ export async function POST(req: NextRequest) {
   const documentId = String(body.documentId ?? "").trim();
   if (!documentId) return bad("documentId is required");
 
-  const { data: doc } = await supabaseAdmin
+  const { data: doc, error: docErr } = await supabaseAdmin
     .from("knowledge_documents").select("*").eq("id", documentId).maybeSingle();
+  // A read that failed is "try again", never "not found" (the browser
+  // would give up on the file).
+  if (docErr) return bad("The server is busy. Try again in a minute.", 503);
   if (!doc) return bad("Document not found", 404);
 
   // Ingest is a controller action (same bar as adding library documents).
-  const { data: member } = await supabaseAdmin
+  const { data: member, error: memberErr } = await supabaseAdmin
     .from("org_members").select("role, roles")
     .eq("org_id", doc.org_id as string).eq("uid", user.id).eq("status", "active")
     .maybeSingle();
+  if (memberErr) return bad("The server is busy. Try again in a minute.", 503);
   const roles = new Set<string>([
     (member?.role as string) ?? "", ...(((member?.roles as string[]) ?? [])),
   ]);
@@ -135,6 +146,19 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // One worker per document, across people, browsers and the cron. Held for
+  // this request only (the platform stops it at 60 s) and given back at the
+  // end, so this browser's next batch, or anyone's, can take it. Held by
+  // someone else: say so, and leave the document to them.
+  const lease = await claimKnowledgeDocument(documentId, LEASE_SECONDS);
+  if (lease === "busy") {
+    return NextResponse.json({
+      done: false, busy: true,
+      pageCount: doc.page_count, pagesIndexed: (doc.pages_indexed as number | null) ?? 0,
+      message: BEING_INDEXED_MESSAGE,
+    });
+  }
+
   try {
     const res = await ingestKnowledgeDocBatch({
       id: doc.id as string,
@@ -193,9 +217,20 @@ export async function POST(req: NextRequest) {
     });
   } catch (e) {
     const message = (e as Error).message;
+    // Another worker wrote the same pages at the same moment (one without
+    // the lease): its batch stands, and the file is not broken.
+    if (isConcurrentWriteError(message)) {
+      return NextResponse.json({
+        done: false, busy: true,
+        pageCount: doc.page_count, pagesIndexed: (doc.pages_indexed as number | null) ?? 0,
+        message: BEING_INDEXED_MESSAGE,
+      });
+    }
     await supabaseAdmin.from("knowledge_documents")
       .update({ status: "error", error: message.slice(0, 500) })
       .eq("id", doc.id as string);
     return bad(`Indexing failed: ${message}`, 502);
+  } finally {
+    if (lease === "claimed") await releaseKnowledgeDocument(documentId);
   }
 }

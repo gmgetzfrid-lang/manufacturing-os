@@ -44,6 +44,10 @@ interface Status {
   coverageFailed?: boolean;
 }
 
+/** How long this tab reuses the meaning-index count (it reads every
+ *  passage in the workspace). */
+const COVERAGE_TTL_MS = 10 * 60_000;
+
 const EMPTY_STATUS: Status = {
   chatKey: null, embeddingKey: null, libraries: 0, docs: 0,
   chunksTotal: 0, chunksEmbedded: 0, pendingProposals: 0,
@@ -141,11 +145,28 @@ export default function IntelligencePage() {
 
     // No row means nothing to embed yet; a failure is said as "couldn't
     // check", never a skeleton that waits forever.
-    void supabase.rpc("semantic_coverage", { p_org_id: activeOrgId }).then(
+    // The count reads every passage in the workspace, so this tab asks at
+    // most every 10 minutes and shows the last answer in between.
+    const coverageKey = `intel-coverage-${activeOrgId}`;
+    let coverageCached = false;
+    try {
+      const hit = window.sessionStorage.getItem(coverageKey);
+      if (hit) {
+        const c = JSON.parse(hit) as { total: number; embedded: number; at: number };
+        if (Date.now() - c.at < COVERAGE_TTL_MS) {
+          coverageCached = true;
+          // After the snapshot above has painted (it only fills an empty status).
+          queueMicrotask(() => patch({ chunksTotal: Number(c.total) || 0, chunksEmbedded: Number(c.embedded) || 0, coverageKnown: true, coverageFailed: false }));
+        }
+      }
+    } catch { /* ask again */ }
+    if (!coverageCached) void supabase.rpc("semantic_coverage", { p_org_id: activeOrgId }).then(
       (r) => {
         if (r.error) { patch({ coverageKnown: true, coverageFailed: true }); return; }
         const row = (r.data?.[0] as { total?: number; embedded?: number } | undefined) ?? null;
-        patch({ chunksTotal: Number(row?.total ?? 0), chunksEmbedded: Number(row?.embedded ?? 0), coverageKnown: true, coverageFailed: false });
+        const total = Number(row?.total ?? 0), embedded = Number(row?.embedded ?? 0);
+        patch({ chunksTotal: total, chunksEmbedded: embedded, coverageKnown: true, coverageFailed: false });
+        try { window.sessionStorage.setItem(coverageKey, JSON.stringify({ total, embedded, at: Date.now() })); } catch { /* quota */ }
       },
       () => patch({ coverageKnown: true, coverageFailed: true }),
     );

@@ -21,6 +21,8 @@ export type AuthorizedActor = {
 
 export type AuthError = { error: string; status: number };
 
+const BUSY = "The server is busy. Try again in a minute.";
+
 export async function authorizeOrgRole(
   req: Request,
   orgId: string,
@@ -43,15 +45,20 @@ export async function authorizeOrgRole(
     auth: { persistSession: false },
   });
   const { data, error } = await userClient.auth.getUser();
+  // A sign-in the auth server couldn't check (busy, timed out) is "try
+  // again", not "unauthorized".
+  if (error && error.status !== 401 && error.status !== 403) return { error: BUSY, status: 503 };
   if (error || !data?.user) return { error: "Unauthorized", status: 401 };
 
   const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
-  const { data: member } = await admin
+  const { data: member, error: memberErr } = await admin
     .from("org_members")
     .select("role, status")
     .eq("org_id", orgId)
     .eq("uid", data.user.id)
     .maybeSingle();
+  // A read that failed is never "not a member".
+  if (memberErr) return { error: BUSY, status: 503 };
   const role = (member as { role?: string } | null)?.role;
   const status = (member as { status?: string } | null)?.status;
   if (status !== "active") return { error: "Not a member of this org", status: 403 };

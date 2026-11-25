@@ -36,6 +36,7 @@ import Link from 'next/link';
 import { AppMark } from '@/components/brand/AppMark';
 import { usePathname, useRouter } from 'next/navigation';
 import { supabase, setPreferMicrosoft } from '@/lib/supabase';
+import { signOutHere } from '@/lib/membershipClient';
 import { useRole } from '@/components/providers/RoleContext';
 import { useOrgBranding } from '@/components/providers/OrgBrandingProvider';
 import {
@@ -296,7 +297,9 @@ export default function Sidebar({
 
   const handleLogout = async () => {
     setPreferMicrosoft(false);
-    await supabase.auth.signOut();
+    // This device is signed out at once, even when the server is busy
+    // (plant PCs are shared); everywhere else follows when it answers.
+    await signOutHere();
     router.push('/');
   };
 

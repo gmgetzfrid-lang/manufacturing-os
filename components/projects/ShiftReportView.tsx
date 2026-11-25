@@ -213,7 +213,8 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     const problem = shiftTimesProblem(timesDraft);
     if (problem) { setTimesMsg(problem); return; }
     try { await saveProjectShiftTimes(projectId, timesDraft); setTimesMsg("Saved for everyone on this project."); setTimesDraft(null); }
-    catch (e) { setTimesMsg(sayError(e)); setTimesDraft(null); }
+    // Not saved: the times typed stay, to try again.
+    catch (e) { setTimesMsg(sayError(e)); }
   };
   const [showTimes, setShowTimes] = useState(false);
   const timesSave = useActionFeedback();
@@ -370,6 +371,10 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   const canShip = canEdit && !!userId && !!orgId;
   const hand = useHandoverDraft({ active: meeting === "turnover", projectId, orgId, userId, hoKey, priorKey });
   const { decisions, shippedAt } = hand;
+  // The meeting's saved decisions read: until then (or when they couldn't
+  // be read) nothing on the turnover can be changed or locked, so a tap
+  // can't replace them with none.
+  const canDecide = canShip && hand.loaded;
   // Locked when the turnover is: this shift's report can't be changed by
   // mistake (unlock it on purpose to change it).
   const locked = meeting === "turnover" && !!shippedAt;
@@ -507,10 +512,10 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
   const priorNow = hand.prior;
   const asked = useMemo(() => askedOutcomes(priorNow, (id) => progress?.get(id)?.percent ?? live.find((m) => m.id === id)?.percentComplete ?? undefined), [priorNow, progress, live]);
   const handoverCtx = useMemo(() => ({
-    kind: report.next.kind, decisions, locked: !!shippedAt || !canShip, set: setDecision,
+    kind: report.next.kind, decisions, locked: !!shippedAt || !canDecide, set: setDecision,
     suggest: (r: ShiftRow) => suggestCrews(r, report), crews: allCrews, asked,
-    pull: pullShown, pullSet: pullForReport, key: hoKey, openPicker: canShip && !shippedAt ? () => setPickerOpen(true) : undefined,
-  }), [report, decisions, shippedAt, canShip, setDecision, allCrews, asked, pullShown, pullForReport, hoKey]);
+    pull: pullShown, pullSet: pullForReport, key: hoKey, openPicker: canDecide && !shippedAt ? () => setPickerOpen(true) : undefined,
+  }), [report, decisions, shippedAt, canDecide, setDecision, allCrews, asked, pullShown, pullForReport, hoKey]);
 
   // Each step's comment for THIS shift ("sent out for calibration") — shown
   // as a quiet line under the step, here and in the copied update. Only a
@@ -1113,14 +1118,17 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
 
   // The report's lock: one phrase and one button on the line under the
   // toolbar, beside the shifts it covers (never a banner of its own).
-  const lockEl = meeting === "turnover" ? (
-    <ShipBar shippedAt={shippedAt} shippedBy={hand.shippedByName} canShip={canShip} busy={shipBusy} err={hand.err} label={`${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })} ${shift.kind} shift`}
+  const lockEl = meeting !== "turnover" ? null
+    : hand.failed ? <ErrorNote compact className="print:hidden" title="Couldn't load the turnover." next="" onRetry={hand.retry} />
+    : !hand.loaded ? <p role="status" className="text-body text-[var(--color-text-muted)] print:hidden">Loading the turnover…</p>
+    : (
+    <ShipBar shippedAt={shippedAt} shippedBy={hand.shippedByName} canShip={canDecide} busy={shipBusy} err={hand.err} label={`${fmtInTz(shift.start, tz, { weekday: "short", month: "short", day: "numeric" })} ${shift.kind} shift`}
       endedAt={now >= shift.end ? new Date(shift.end).toISOString() : null}
       tries={Object.keys(decisionsToShip(decisions, carried)).length}
       when={(iso) => `${ctx.DTs(Date.parse(iso))}`}
       onShip={() => { setShipBusy(true); void hand.ship((d) => decisionsToShip(d, carried, (hand.pullDraft ?? pullSet)?.crew ?? null), hand.pullDraft ?? pullSet, exportDoc, userName).finally(() => setShipBusy(false)); }}
       onUnship={() => { setShipBusy(true); void hand.unship().finally(() => setShipBusy(false)); }} />
-  ) : null;
+  );
   const head = (print: boolean) => (
     <Masthead meeting={meeting} report={report} kickoff={kickoff} closeout={closeout} ctx={ctx} asOf={asOf} now={now}
       rehearsal={rehearsal} historyNote={historyNote} projectName={projectName} print={print} crew={crew} addedOnly={addedOnly} criticalOnly={criticalOnly} classOnly={classOnly}
@@ -1308,7 +1316,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
           ]}
           picked={report.goals.pulled}
           counted={[...carried.filter((r) => r.leaf.id && decisions[r.leaf.id]?.tryIt && !report.goals.pulled.includes(r)), ...report.goals.pulled]}
-          pull={pullShown} sizeSet={!!pullForReport} crews={allCrews} fmt={{ D: ctx.D, T: ctx.T }} locked={!!shippedAt || !canShip}
+          pull={pullShown} sizeSet={!!pullForReport} crews={allCrews} fmt={{ D: ctx.D, T: ctx.T }} locked={!!shippedAt || !canDecide}
           onToggle={togglePull} onPull={hand.setPull}
           onSaveDefault={(p) => saveProjectShiftTimes(projectId, { ...times, helpers: p })}
           onClose={() => setPickerOpen(false)} />
@@ -2595,13 +2603,24 @@ function turnoverSections(report: ShiftReport, c: Ctx, o: { onJump?: () => void;
  *  earlier one), marked done here; a new one in a line. */
 function FollowUpsBox({ open, edit, T, onAdd, onDone }: {
   open: Array<ShiftNote & { from?: string; shiftKey: string }>; edit: boolean; T: (ms: number) => string;
-  onAdd: (text: string) => void; onDone: (n: ShiftNote & { shiftKey: string }) => void;
+  onAdd: (text: string) => Promise<boolean>; onDone: (n: ShiftNote & { shiftKey: string }) => void;
 }) {
   const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
   // The add line opens from one button under a list (B9); with none open,
   // it's there already (the section was opened to add one).
   const [adding, setAdding] = useState(open.length === 0);
-  const add = () => { const t = text.trim(); if (!t) return; onAdd(t); setText(""); };
+  // Cleared only once it's saved (like the shift notes): a save that fails
+  // keeps what was typed, to try again.
+  const add = () => {
+    const t = text.trim();
+    if (!t || busy) return;
+    setBusy(true); setMsg(null);
+    const failed = () => setMsg("Didn't save. Your item is still here: press Add to try again.");
+    void onAdd(t).then((ok) => { if (ok) setText((cur) => (cur.trim() === t ? "" : cur)); else failed(); }, failed)
+      .finally(() => setBusy(false));
+  };
   return (
     <div className="space-y-2">
       {open.length === 0 ? <Empty>No follow-up items open.</Empty> : (
@@ -2620,11 +2639,12 @@ function FollowUpsBox({ open, edit, T, onAdd, onDone }: {
           <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="Add a follow-up item"
             autoFocus={open.length > 0}
             aria-label="Add a follow-up item" className="flex-1 min-w-0 h-9 pointer-coarse:h-11 px-2.5 rounded-lg border border-transparent bg-[var(--color-surface-2)] text-body text-[var(--color-text)] focus:bg-[var(--color-surface)]" />
-          <button type="button" onClick={add} disabled={!text.trim()} className="h-9 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-body font-medium disabled:opacity-50">Add</button>
+          <button type="button" onClick={add} disabled={!text.trim() || busy} className="h-9 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-body font-medium disabled:opacity-50">{busy ? "Adding" : "Add"}</button>
         </div>
       ) : (
         <button type="button" onClick={() => setAdding(true)} className={SMALL}><Plus aria-hidden className="w-3.5 h-3.5" /> Add a follow-up</button>
       ))}
+      {msg && <p role="alert" className="text-body text-[var(--state-overdue-text)]">{msg}</p>}
     </div>
   );
 }

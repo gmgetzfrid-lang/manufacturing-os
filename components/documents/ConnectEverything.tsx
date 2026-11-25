@@ -12,7 +12,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { CheckCircle2, Loader2, Clock, AlertCircle, Sparkles, X } from "lucide-react";
 import { estatePost } from "@/lib/estate/client";
-import { ingestKnowledgeDocument } from "@/lib/knowledge";
+import { ingestKnowledgeDocument, withKnowledgeDrainLock } from "@/lib/knowledge";
 import { readDrawing, pendingDrawings, undoRun as undoRunCall, newRunId } from "@/lib/drawingCensusClient";
 import type { ConnectStatus } from "@/lib/estate/connectServer";
 import type { ConnectPlan } from "@/lib/estate/connectPlan";
@@ -103,7 +103,10 @@ export function useConnectEverything(orgId: string | null, onDone?: () => void) 
               done++; report();
             }
           };
-          await Promise.all([worker(), worker(), worker()]);
+          // One indexing loop per browser: the background indexer and a
+          // library page take the same lock, so these wait for it rather
+          // than run beside them on the same queue.
+          await withKnowledgeDrainLock(() => Promise.all([worker(), worker(), worker()]));
         }
       }
     } catch (e) { setError(friendlyError(e)); }

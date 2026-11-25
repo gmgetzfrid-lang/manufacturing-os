@@ -417,7 +417,9 @@ function ActivityFeed({ adminView }: { adminView: boolean }) {
     const [{ data: rows }, dates, total] = await Promise.all([
       q.order("timestamp", { ascending: false }).limit(expanded ? 300 : 80),
       fetchRecentDates("audit_logs", orgId, 14, "timestamp"),
-      adminView ? headCount(() => supabase.from("audit_logs").select("id", { count: "exact", head: true }).eq("org_id", orgId) as unknown as Promise<{ count: number | null }>) : Promise.resolve(0),
+      // "estimated": an exact count read the whole audit log on every Home
+      // load and every refresh; the planner's figure is enough for a total.
+      adminView ? headCount(() => supabase.from("audit_logs").select("id", { count: "estimated", head: true }).eq("org_id", orgId) as unknown as Promise<{ count: number | null }>) : Promise.resolve(0),
     ]);
     const list = (rows ?? []) as AuditRow[];
     // Resolve what each entry is ABOUT, so rows read "EP 5-2-1 rev up" and open it.
@@ -514,7 +516,9 @@ export function EquipmentBody() {
   const [q, setQ] = useState("");
   const dq = useDebounced(q.trim(), 200);
   const { data, loading } = useWidgetData(async (orgId) => {
-    const count = await headCount(() => supabase.from("assets").select("id", { count: "exact", head: true })
+    // Asked again on every search: "estimated" (exact while small) keeps
+    // each one from counting the whole register.
+    const count = await headCount(() => supabase.from("assets").select("id", { count: "estimated", head: true })
       .eq("org_id", orgId).eq("archived", false) as unknown as Promise<{ count: number | null }>);
     let s = supabase.from("assets").select("id, tag, description, location").eq("org_id", orgId).eq("archived", false);
     if (dq) {

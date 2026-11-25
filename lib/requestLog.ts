@@ -10,6 +10,10 @@
 //  2. The timing view (?timing=1): each request's table or route, how long
 //     it took and how many rows came back. Nothing else is kept: no address
 //     query (it holds ids and emails), no headers, no tokens, no bodies.
+//  3. A read (GET, HEAD) with no answer in 15 s gives up, so a stuck
+//     database shows "That took too long" instead of loading forever.
+//     Writes are never cut off: one may have landed, and a retry would do
+//     it twice.
 
 export interface TimedRequest {
   id: number;
@@ -120,8 +124,28 @@ function headerOf(init: RequestInit | undefined, name: string): string {
   return "";
 }
 
+/** How long a read waits for an answer before it gives up. */
+export const READ_TIMEOUT_MS = 15_000;
+
+/** The caller's own signal, plus a timer that gives up when no answer has
+ *  come back in time. `settled` stops the timer once the answer starts
+ *  (a long download is never cut off part way). */
+function withTimeout(outer: AbortSignal | null | undefined): { signal: AbortSignal; settled: () => void } {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(new DOMException("The request timed out.", "TimeoutError")), READ_TIMEOUT_MS);
+  const settled = () => clearTimeout(t);
+  if (!outer) return { signal: ctl.signal, settled };
+  const A = AbortSignal as unknown as { any?: (signals: AbortSignal[]) => AbortSignal };
+  if (typeof A.any === "function") return { signal: A.any([outer, ctl.signal]), settled };
+  // Older browsers: pass the caller's abort on by hand.
+  if (outer.aborted) ctl.abort(outer.reason);
+  else outer.addEventListener("abort", () => ctl.abort(outer.reason), { once: true });
+  return { signal: ctl.signal, settled };
+}
+
 /** The fetch the Supabase client uses: shares identical reads in flight,
- *  and times every request when the timing view is on. */
+ *  gives up on a read with no answer in time, and times every request
+ *  when the timing view is on. */
 export const loggedFetch: typeof fetch = async (input, init) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
   const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
@@ -155,10 +179,16 @@ export const loggedFetch: typeof fetch = async (input, init) => {
     throw e;
   };
 
-  const shareable = (method === "GET" || method === "HEAD") && !init?.signal && !(input instanceof Request);
+  const read = method === "GET" || method === "HEAD";
+  const send = (): Promise<Response> => {
+    if (!read) return fetch(input, init);
+    const t = withTimeout(init?.signal ?? (input instanceof Request ? input.signal : undefined));
+    return fetch(input, { ...init, signal: t.signal }).finally(t.settled);
+  };
+  const shareable = read && !init?.signal && !(input instanceof Request);
   if (!shareable) {
     if (entry) record(entry);
-    return fetch(input, init).then(done, failed);
+    return send().then(done, failed);
   }
   // Who is asking is part of the question: never share across sign-ins.
   const key = [method, url, headerOf(init, "authorization"), headerOf(init, "accept"), headerOf(init, "prefer"),
@@ -168,7 +198,7 @@ export const loggedFetch: typeof fetch = async (input, init) => {
     if (entry) { entry.shared = true; record(entry); }
   } else {
     if (entry) record(entry);
-    p = fetch(input, init);
+    p = send();
     inflight.set(key, p);
     const mine = p;
     void mine.then(() => undefined, () => undefined).finally(() => { if (inflight.get(key) === mine) inflight.delete(key); });

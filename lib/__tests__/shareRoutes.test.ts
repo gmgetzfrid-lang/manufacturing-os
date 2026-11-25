@@ -76,10 +76,10 @@ beforeEach(async () => {
     { id: FOREIGN, org_id: OTHER_ORG, document_number: "X-1", title: "Theirs", name: null, rev: "0", current_version_id: "v4" },
   ];
   fake.tables.document_versions = [
-    { id: "v1", record_id: D1, file_url: `orgs/${ORG}/libraries/l/2001.pdf`, file_type: "application/pdf" },
-    { id: "v2", record_id: D2, file_url: `orgs/${ORG}/libraries/l/2002.pdf`, file_type: "application/pdf" },
-    { id: "v3", record_id: SECRET, file_url: `orgs/${ORG}/libraries/l/hr.pdf`, file_type: "application/pdf" },
-    { id: "v4", record_id: FOREIGN, file_url: `orgs/${OTHER_ORG}/x.pdf`, file_type: "application/pdf" },
+    { id: "v1", org_id: ORG, record_id: D1, file_url: `orgs/${ORG}/libraries/l/2001.pdf`, file_type: "application/pdf" },
+    { id: "v2", org_id: ORG, record_id: D2, file_url: `orgs/${ORG}/libraries/l/2002.pdf`, file_type: "application/pdf" },
+    { id: "v3", org_id: ORG, record_id: SECRET, file_url: `orgs/${ORG}/libraries/l/hr.pdf`, file_type: "application/pdf" },
+    { id: "v4", org_id: OTHER_ORG, record_id: FOREIGN, file_url: `orgs/${OTHER_ORG}/x.pdf`, file_type: "application/pdf" },
   ];
 });
 

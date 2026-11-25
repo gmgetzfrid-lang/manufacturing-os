@@ -98,6 +98,49 @@ export function visionHasTime(o: { now: number; deadlineMs?: number | null; firs
   return o.now + (o.firstOfBatch ? Math.min(reserve, FIRST_PAGE_RESERVE_MS) : reserve) <= o.deadlineMs;
 }
 
+// ── One worker per document ─────────────────────────────────────────────
+// Two workers on one document (two people's browsers, two tabs, the cron)
+// paid for the same AI pages twice, collided on the chunk index ("duplicate
+// key", which marked the file errored) and moved pages_indexed backwards.
+// claim_knowledge_document (supabase/PENDING_load_2026-11-25.sql) takes a
+// short lease atomically. A database that hasn't run that SQL answers with
+// an error (PGRST202 / 42883, "could not find the function"): the work then
+// runs unleased, exactly as before.
+
+export type LeaseResult = "claimed" | "busy" | "unsupported";
+
+/** Hold the document for `seconds`, unless another worker holds it now. */
+export async function claimKnowledgeDocument(id: string, seconds: number): Promise<LeaseResult> {
+  try {
+    const { data, error } = await supabaseAdmin.rpc("claim_knowledge_document", { p_id: id, p_seconds: seconds });
+    // Missing function (SQL not run yet) or a hiccup: work as before.
+    if (error) return "unsupported";
+    return data === true ? "claimed" : "busy";
+  } catch {
+    return "unsupported";
+  }
+}
+
+/** Keep holding it (between batches of one worker). Best-effort. */
+export async function extendKnowledgeDocument(id: string, seconds: number): Promise<void> {
+  await supabaseAdmin.from("knowledge_documents")
+    .update({ lease_until: new Date(Date.now() + seconds * 1000).toISOString() }).eq("id", id)
+    .then(() => undefined, () => undefined);
+}
+
+/** Give it back, so the next batch (from any worker) can take it. Best-effort. */
+export async function releaseKnowledgeDocument(id: string): Promise<void> {
+  await supabaseAdmin.from("knowledge_documents")
+    .update({ lease_until: null }).eq("id", id)
+    .then(() => undefined, () => undefined);
+}
+
+/** Two workers wrote the same pages at once: the other one's batch stands.
+ *  Not the file's fault, so it is never marked errored for it. */
+export function isConcurrentWriteError(message: string | null | undefined): boolean {
+  return /duplicate key/i.test(message ?? "");
+}
+
 type KnowledgeDocRow = {
   id: string;
   org_id: string;
@@ -619,14 +662,30 @@ export async function ingestKnowledgeDocBatch(
     error: null,
     last_section: section,
   };
-  let { error: updErr } = await supabaseAdmin.from("knowledge_documents")
-    .update(docUpdate).eq("id", doc.id);
+  // Conditional on where this batch started: when another worker moved the
+  // document on meanwhile, its mark stands (an unconditional write moved
+  // pages_indexed backwards, or put a finished document back to indexing).
+  let { data: moved, error: updErr } = await supabaseAdmin.from("knowledge_documents")
+    .update(docUpdate).eq("id", doc.id).eq("pages_indexed", from).select("id");
   if (updErr && (updErr.code === "PGRST204" || /last_section/.test(updErr.message))) {
     delete docUpdate.last_section;
-    ({ error: updErr } = await supabaseAdmin.from("knowledge_documents")
-      .update(docUpdate).eq("id", doc.id));
+    ({ data: moved, error: updErr } = await supabaseAdmin.from("knowledge_documents")
+      .update(docUpdate).eq("id", doc.id).eq("pages_indexed", from).select("id"));
   }
   if (updErr) throw new Error(updErr.message);
+  if (((moved as unknown[] | null) ?? []).length === 0) {
+    // Another worker got here first (or the document was reset or removed):
+    // report where the row really is; that worker finishes the rest.
+    const { data: cur } = await supabaseAdmin.from("knowledge_documents")
+      .select("status, pages_indexed, page_count").eq("id", doc.id).maybeSingle();
+    const row = cur as { status?: string | null; pages_indexed?: number | null; page_count?: number | null } | null;
+    return {
+      done: row?.status === "ready",
+      pageCount: Number(row?.page_count ?? pageCount),
+      pagesIndexed: Number(row?.pages_indexed ?? from),
+      emptyPages, visionPages, reusedPages, visionBudgetSpent, stoppedForTime,
+    };
+  }
 
   if (done) {
     // The drawing→equipment bridge: freshly extracted tags flow toward the
@@ -738,12 +797,16 @@ export async function drainKnowledgeIngestQueue(opts: {
   deadlineMs: number;
   /** Only these read libraries (an upload's own, read straight away). */
   libraryIds?: string[];
+  /** Only this workspace's documents (a button pressed in one workspace
+   *  never reads another's queue). */
+  orgId?: string;
 }): Promise<{ docsTouched: number; pagesIndexed: number; completed: number; errors: string[] }> {
   const out = { docsTouched: 0, pagesIndexed: 0, completed: 0, errors: [] as string[] };
   let q = supabaseAdmin
     .from("knowledge_documents")
     .select("id, org_id, library_id, name, file_key, status, pages_indexed, page_count, last_section, created_by")
     .in("status", ["pending", "stale", "indexing"]);
+  if (opts.orgId) q = q.eq("org_id", opts.orgId);
   if (opts.libraryIds?.length) q = q.in("library_id", opts.libraryIds);
   const { data: queued, error } = await q
     .order("created_at", { ascending: true })
@@ -767,6 +830,12 @@ export async function drainKnowledgeIngestQueue(opts: {
     });
     if (!sponsor.ctx && sponsor.hold) continue;
 
+    // One worker per document: a browser (or another run) reading it now
+    // keeps it. Held until this run's deadline, renewed after each batch.
+    const leaseFor = () => Math.max(60, Math.ceil((opts.deadlineMs - Date.now()) / 1000) + 60);
+    const lease = await claimKnowledgeDocument(doc.id, leaseFor());
+    if (lease === "busy") continue;
+
     out.docsTouched++;
     let pagesRead = 0;
     try {
@@ -788,14 +857,20 @@ export async function drainKnowledgeIngestQueue(opts: {
         // to the next run rather than spinning on the same page range.
         if (processed <= 0 || budget <= 0 || Date.now() > opts.deadlineMs) break;
         row = { ...row, pages_indexed: res.pagesIndexed, page_count: res.pageCount, status: "indexing" };
+        if (lease === "claimed") await extendKnowledgeDocument(doc.id, leaseFor());
       }
     } catch (e) {
       const message = (e as Error).message;
       out.errors.push(`${doc.name}: ${message}`);
-      await supabaseAdmin.from("knowledge_documents")
-        .update({ status: "error", error: message.slice(0, 500) })
-        .eq("id", doc.id)
-        .then(() => undefined, () => undefined);
+      // Another worker writing the same pages is not a broken file.
+      if (!isConcurrentWriteError(message)) {
+        await supabaseAdmin.from("knowledge_documents")
+          .update({ status: "error", error: message.slice(0, 500) })
+          .eq("id", doc.id)
+          .then(() => undefined, () => undefined);
+      }
+    } finally {
+      if (lease === "claimed") await releaseKnowledgeDocument(doc.id);
     }
     if (sponsor.autoRead && pagesRead > 0) {
       // Count against the monthly cap. Read fresh: another doc in this

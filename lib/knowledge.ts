@@ -446,6 +446,15 @@ export async function listKnowledgeDocuments(libraryId: string): Promise<Knowled
   return rows.map(mapDocument);
 }
 
+/** One document's row, read again (indexing progress on a shelf, without
+ *  reading the whole library). Null when it is gone. */
+export async function getKnowledgeDocument(documentId: string): Promise<KnowledgeDocument | null> {
+  const { data, error } = await supabase
+    .from("knowledge_documents").select("*").eq("id", documentId).maybeSingle();
+  if (error) throw new Error(error.message);
+  return data ? mapDocument(data as Record<string, unknown>) : null;
+}
+
 /** Upload the PDF to R2, register the document row, and drive the ingest
  *  loop until every page is indexed. onProgress reports both phases. */
 export async function addKnowledgeDocument(input: {
@@ -491,12 +500,49 @@ export interface IngestProgress {
 
 // One driver per document per tab. Two loops POSTing the same document race
 // each other over the same page range — the app-shell background driver and
-// a library page's own loop must never overlap.
+// a library page's own loop must never overlap. (Across browsers and people
+// the server holds a per-document lease: see /api/knowledge/ingest.)
 const activeIngests = new Set<string>();
 
 /** True while some loop in THIS tab is already driving the document. */
 export function isIngestActive(documentId: string): boolean {
   return activeIngests.has(documentId);
+}
+
+/** The browser-wide lock every indexing loop shares: the app-shell driver
+ *  (KnowledgeIndexIndicator), a library page's queue, Connect everything.
+ *  One loop per browser indexes; the others wait their turn. */
+export const KNOWLEDGE_DRAIN_LOCK = "mfgos.knowledge-drain";
+
+/** Run `fn` holding KNOWLEDGE_DRAIN_LOCK. When another loop holds it,
+ *  `onWaiting` is called once and `fn` runs as soon as the lock is free.
+ *  Browsers without Web Locks just run `fn`. */
+export async function withKnowledgeDrainLock<T>(fn: () => Promise<T>, onWaiting?: () => void): Promise<T> {
+  const locks = typeof navigator !== "undefined" ? (navigator as Navigator & { locks?: LockManager }).locks : undefined;
+  if (!locks) return fn();
+  const now = { held: false, value: undefined as T | undefined };
+  await locks.request(KNOWLEDGE_DRAIN_LOCK, { ifAvailable: true }, async (lock) => {
+    if (!lock) return;
+    now.held = true;
+    now.value = await fn();
+  });
+  if (now.held) return now.value as T;
+  onWaiting?.();
+  const later = { value: undefined as T | undefined };
+  await locks.request(KNOWLEDGE_DRAIN_LOCK, async () => { later.value = await fn(); });
+  return later.value as T;
+}
+
+// Pages that show documents hear about progress made by ANY loop in this
+// tab (the app-shell driver included) and re-read that one row, instead of
+// re-reading the whole library after every batch.
+const ingestListeners = new Set<(documentId: string) => void>();
+
+/** Called with the document's id whenever a loop in this tab reports
+ *  progress on it. Returns the unsubscribe. */
+export function onIngestProgress(listener: (documentId: string) => void): () => void {
+  ingestListeners.add(listener);
+  return () => { ingestListeners.delete(listener); };
 }
 
 export async function ingestKnowledgeDocument(
@@ -508,7 +554,12 @@ export async function ingestKnowledgeDocument(
   if (activeIngests.has(documentId)) return;
   activeIngests.add(documentId);
   try {
-    await ingestLoop(documentId, onIndex);
+    await ingestLoop(documentId, (indexed, total, progress) => {
+      onIndex?.(indexed, total, progress);
+      for (const l of ingestListeners) {
+        try { l(documentId); } catch { /* a listener never stops indexing */ }
+      }
+    });
   } finally {
     activeIngests.delete(documentId);
   }
@@ -537,10 +588,13 @@ async function ingestLoop(
   let lastIndexed = -1;
   let noProgressRounds = 0;
   let transientFailures = 0;
+  let busyRounds = 0;
   for (let i = 0; i < 2000; i++) {
     let out: {
       done: boolean; pageCount: number; pagesIndexed: number;
       visionPages?: number; reusedPages?: number; visionSkipReason?: string | null;
+      /** Another worker holds the document right now (server lease). */
+      busy?: boolean; message?: string;
     };
     try {
       out = await apiPost("/api/knowledge/ingest", { documentId });
@@ -560,6 +614,23 @@ async function ingestLoop(
       await new Promise((r) => setTimeout(r, wait));
       continue;
     }
+    if (out.busy) {
+      // Someone else is reading this file (another person, another tab, the
+      // server's own drain), or this loop's last request is still finishing
+      // on the server. A lease lasts a minute: look again a few times, then
+      // leave the file to whoever has it.
+      if (++busyRounds > 3) {
+        throw Object.assign(new Error(out.message || "This file is being indexed by someone else right now."), { busy: true });
+      }
+      const at = out.pagesIndexed ?? Math.max(0, lastIndexed);
+      onIndex?.(at, out.pageCount ?? null, {
+        indexed: at, total: out.pageCount ?? null, visionPages, reusedPages,
+        waiting: "Someone else is indexing this file right now - checking again in 25s. Nothing is read twice.",
+      });
+      await new Promise((r) => setTimeout(r, 25_000));
+      continue;
+    }
+    busyRounds = 0;
     visionPages += out.visionPages ?? 0;
     reusedPages += out.reusedPages ?? 0;
     onIndex?.(out.pagesIndexed, out.pageCount, {
@@ -947,6 +1018,9 @@ export interface SemanticProgress {
   retryAfterMs?: number;
   /** The database was too busy this round. Pacing, not failure. */
   busy?: boolean;
+  /** With busy: another build of this library holds it (another tab or
+   *  person, or the background build). This call waited, nothing lost. */
+  elsewhere?: boolean;
   /** Counts are last-known plus this call's writes (counting was too slow). */
   estimated?: boolean;
   /** No numbers at all right now — keep showing the previous ones. */

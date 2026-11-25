@@ -15,33 +15,54 @@ import type { Role } from "@/types/schema";
 // ─── The setup checklist's counts (admins) ─────────────────────────
 export interface SetupCounts { libs: number; members: number; assets: number; tickets: number; plots: number }
 export const setupCountsKey = (orgId: string, uid: string | null) => `setup:${orgId}|${uid ?? ""}`;
+/** The checklist only asks "none, one or more?": each count reads at most
+ *  two rows (capped at 2) instead of counting a whole table. A count that
+ *  fails REJECTS: a busy database must not read as an empty workspace (an
+ *  established one was shown "Set up your workspace"). The checklist then
+ *  keeps its last answer, or stays hidden. A table that doesn't exist yet
+ *  (an older database) is still 0. */
 export async function loadSetupCounts(orgId: string): Promise<SetupCounts> {
   const countOf = async (table: string) => {
-    const { count } = await supabase.from(table).select("id", { count: "exact", head: true }).eq("org_id", orgId);
-    return count ?? 0;
+    const { data, error } = await supabase.from(table).select("id").eq("org_id", orgId).limit(2);
+    if (error) {
+      if (isMissingTable(error)) return 0;
+      throw new Error(`Couldn't count ${table}: ${error.message}`);
+    }
+    return (data ?? []).length;
   };
   const [libs, members, assets, tickets, plots] = await Promise.all([
     countOf("libraries"), countOf("org_members"), countOf("assets"), countOf("tickets"), countOf("plot_plans"),
-  ]).catch(() => [0, 0, 0, 0, 0]);
+  ]);
   return { libs, members, assets, tickets, plots };
+}
+
+/** The table isn't in this database (yet): a real zero, not a failure. */
+function isMissingTable(e: { code?: string; message?: string }): boolean {
+  return e.code === "42P01" || e.code === "PGRST205" || /does not exist|could not find the table/i.test(e.message ?? "");
 }
 
 // ─── The "Needs you" deck's three tool counts ──────────────────────
 export interface DeckPillars { openRequests: number; lockedDocs: number; activeProjects: number }
 export const deckPillarsKey = (orgId: string, uid: string | null) => `pillars:${orgId}|${uid ?? ""}`;
 export async function loadDeckPillars(orgId: string): Promise<DeckPillars> {
-  // Independent + best-effort: a missing table/column degrades that one
-  // stat to 0, never blanks the deck.
-  const head = async (build: () => Promise<{ count: number | null }>) => {
-    try { return (await build()).count ?? 0; } catch { return 0; }
+  // A missing table (an older database: the count comes back empty, with no
+  // error) degrades that one stat to 0. A count that FAILED is unknown, not
+  // zero: the load rejects, and the deck keeps its last numbers or shows "-"
+  // (it used to say "0 open requests" whenever the database was busy).
+  // "estimated": exact for small numbers, the planner's figure for big
+  // ones, without counting every row.
+  const head = async (build: () => PromiseLike<{ count: number | null; error: unknown }>) => {
+    const r = await build();
+    if (r.error) throw new Error("A count on Home couldn't be read.");
+    return r.count ?? 0;
   };
   const [openRequests, lockedDocs, activeProjects] = await Promise.all([
-    head(() => supabase.from("tickets").select("id", { count: "exact", head: true })
-      .eq("org_id", orgId).not("status", "in", '("CLOSED","CANCELED")') as unknown as Promise<{ count: number | null }>),
-    head(() => supabase.from("documents").select("id", { count: "exact", head: true })
-      .eq("org_id", orgId).not("checked_out_by", "is", null) as unknown as Promise<{ count: number | null }>),
-    head(() => supabase.from("projects").select("id", { count: "exact", head: true })
-      .eq("org_id", orgId).eq("status", "active") as unknown as Promise<{ count: number | null }>),
+    head(() => supabase.from("tickets").select("id", { count: "estimated", head: true })
+      .eq("org_id", orgId).not("status", "in", '("CLOSED","CANCELED")')),
+    head(() => supabase.from("documents").select("id", { count: "estimated", head: true })
+      .eq("org_id", orgId).not("checked_out_by", "is", null)),
+    head(() => supabase.from("projects").select("id", { count: "estimated", head: true })
+      .eq("org_id", orgId).eq("status", "active")),
   ]);
   return { openRequests, lockedDocs, activeProjects };
 }

@@ -272,8 +272,11 @@ export async function myProjectIds(orgId: string, userId: string): Promise<Set<s
   return ids;
 }
 
+/** The project, or null when there's none (or it isn't shared with you).
+ *  A read that failed throws: it is never "not found". */
 export async function getProject(projectId: string): Promise<Project | null> {
-  const { data } = await supabase.from("projects").select("*").eq("id", projectId).maybeSingle();
+  const { data, error } = await supabase.from("projects").select("*").eq("id", projectId).maybeSingle();
+  if (error) throw new Error(error.message);
   return data ? rowToProject(data as Record<string, unknown>) : null;
 }
 

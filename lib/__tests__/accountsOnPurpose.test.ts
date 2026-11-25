@@ -41,9 +41,11 @@ vi.mock("@/lib/supabaseAdmin", () => ({
     from: (t: string) => query(t),
     auth: {
       getUser: async (tok: string) => {
+        // The auth server itself can't answer (a database freeze).
+        if (tok === "busy") return { data: { user: null }, error: { message: "upstream request timeout", status: 504 } };
         const id = tokens[tok];
         const u = authUsers.find((x) => x.id === id);
-        return u ? { data: { user: { ...u, app_metadata: u.app_metadata ?? {} } }, error: null } : { data: { user: null }, error: { message: "bad token" } };
+        return u ? { data: { user: { ...u, app_metadata: u.app_metadata ?? {} } }, error: null } : { data: { user: null }, error: { message: "bad token", status: 403 } };
       },
       admin: {
         deleteUser: async (id: string) => { deleted.push(id); const i = authUsers.findIndex((u) => u.id === id); if (i >= 0) authUsers.splice(i, 1); return { error: null }; },
@@ -133,6 +135,12 @@ describe("where the app opens", () => {
     const { GET } = await import("@/app/api/auth/membership/route");
     const res = await GET(new NextRequest("http://x/api/auth/membership", { headers: { authorization: "Bearer nope" } }));
     expect(res.status).toBe(401);
+  });
+
+  it("a sign-in the auth server couldn't check is a 503 (try again), never 401", async () => {
+    const { GET } = await import("@/app/api/auth/membership/route");
+    const res = await GET(new NextRequest("http://x/api/auth/membership", { headers: { authorization: "Bearer busy" } }));
+    expect(res.status).toBe(503);
   });
 });
 

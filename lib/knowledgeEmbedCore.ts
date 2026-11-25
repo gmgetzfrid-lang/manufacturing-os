@@ -267,6 +267,29 @@ export async function unembeddedCount(orgId: string, libraryId: string): Promise
   } catch { return null; }
 }
 
+/** One meaning-index build per library at a time: a tab (anyone's) and the
+ *  background drain used to fetch the same unembedded passages, pay for
+ *  them twice and write the same rows. claim_embed_build (pending SQL,
+ *  supabase/PENDING_load_2026-11-25.sql) takes the library atomically for
+ *  `seconds`. "unsupported" = the function isn't there yet (PGRST202 /
+ *  42883) or didn't answer: build as before, unleased. */
+export async function claimEmbedBuild(libraryId: string, seconds: number): Promise<"claimed" | "busy" | "unsupported"> {
+  try {
+    const { data, error } = await supabaseAdmin.rpc("claim_embed_build", { p_library: libraryId, p_seconds: seconds });
+    if (error) return "unsupported";
+    return data === true ? "claimed" : "busy";
+  } catch {
+    return "unsupported";
+  }
+}
+
+/** Give the library back, so the next call (any builder) can take it. */
+export async function releaseEmbedBuild(libraryId: string): Promise<void> {
+  await supabaseAdmin.from("knowledge_libraries")
+    .update({ embed_lease_until: null }).eq("id", libraryId)
+    .then(() => undefined, () => undefined);
+}
+
 /** Set / clear the background-continuation marker on a library. Starting a
  *  build in the UI records WHO consented to spend their key; the cron only
  *  ever continues builds carrying that consent. */
@@ -276,7 +299,10 @@ export async function setEmbedBuildMarker(
   const { data: lib } = await supabaseAdmin
     .from("knowledge_libraries").select("ai_features").eq("id", libraryId).maybeSingle();
   const feats = { ...((lib?.ai_features as Record<string, unknown> | null) ?? {}) };
-  if (userId) feats.embedBuild = { userId, at: new Date().toISOString() };
+  // Re-stamping keeps the rest of the marker: wiping a running drain's
+  // drainUntil let a second drain start on the same library.
+  const prev = feats.embedBuild && typeof feats.embedBuild === "object" ? feats.embedBuild as Record<string, unknown> : {};
+  if (userId) feats.embedBuild = { ...prev, userId, at: new Date().toISOString() };
   else delete feats.embedBuild;
   await supabaseAdmin.from("knowledge_libraries")
     .update({ ai_features: feats }).eq("id", libraryId)

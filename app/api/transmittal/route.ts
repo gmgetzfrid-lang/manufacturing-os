@@ -34,23 +34,40 @@ async function loadByToken(token: string) {
 
 type Item = { documentId?: string; number?: string; title?: string | null; rev?: string | null; versionId?: string | null };
 
+/** A stored file_url the portal may sign: a plain key, not a web address,
+ *  and not under another workspace's folder. */
+function signableKey(fileUrl: unknown, orgId: string): string | null {
+  const key = String(fileUrl ?? "");
+  if (!key || /^[a-z][a-z0-9+.-]*:/i.test(key)) return null;
+  const owner = key.match(/^orgs\/([0-9a-fA-F-]{36})\//)?.[1];
+  if (owner && owner.toLowerCase() !== orgId.toLowerCase()) return null;
+  return key;
+}
+
 /** Resolve an item's file: the exact version if pinned, else the version
  *  whose revision label matches the AS-SENT rev (never silently the newest —
- *  the portal must hand out what the transmittal says it carries). */
-async function fileKeyForItem(item: Item): Promise<{ key: string; name: string } | null> {
+ *  the portal must hand out what the transmittal says it carries). Only
+ *  versions of the transmittal's own org, of the listed document, and
+ *  published (not in review or rejected) are ever signed. */
+async function fileKeyForItem(item: Item, orgId: string): Promise<{ key: string; name: string } | null> {
+  if (!item.documentId) return null;
   if (item.versionId) {
     const { data: v } = await supabaseAdmin
       .from("document_versions").select("file_url, revision_label")
-      .eq("id", item.versionId).maybeSingle();
-    if (v?.file_url) return { key: String(v.file_url), name: `${item.number ?? "document"}_Rev${v.revision_label ?? item.rev ?? ""}` };
+      .eq("id", item.versionId).eq("org_id", orgId).eq("record_id", item.documentId)
+      .or("review_state.is.null,review_state.eq.approved")
+      .maybeSingle();
+    const key = signableKey(v?.file_url, orgId);
+    if (key) return { key, name: `${item.number ?? "document"}_Rev${v?.revision_label ?? item.rev ?? ""}` };
   }
-  if (item.documentId && item.rev) {
+  if (item.rev) {
     const { data: v } = await supabaseAdmin
       .from("document_versions").select("file_url, created_at")
-      .eq("record_id", item.documentId).eq("revision_label", item.rev)
+      .eq("org_id", orgId).eq("record_id", item.documentId).eq("revision_label", item.rev)
+      .or("review_state.is.null,review_state.eq.approved")
       .order("created_at", { ascending: false }).limit(1);
-    const hit = v?.[0];
-    if (hit?.file_url) return { key: String(hit.file_url), name: `${item.number ?? "document"}_Rev${item.rev}` };
+    const key = signableKey(v?.[0]?.file_url, orgId);
+    if (key) return { key, name: `${item.number ?? "document"}_Rev${item.rev}` };
   }
   return null;
 }
@@ -67,7 +84,7 @@ export async function GET(req: NextRequest) {
   if (fileDoc) {
     const item = items.find((i) => i.documentId === fileDoc);
     if (!item) return bad("That document is not on this transmittal.", 403);
-    const file = await fileKeyForItem(item);
+    const file = await fileKeyForItem(item, String(t.org_id ?? ""));
     if (!file) return bad("The as-sent file for this document isn't available - contact the issuer.", 404);
     const url = await getSignedUrl(r2, new GetObjectCommand({
       Bucket: R2_BUCKET, Key: file.key,

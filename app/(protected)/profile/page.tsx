@@ -10,6 +10,7 @@ import Link from "next/link";
 import { Bell, LogOut, Camera, Loader2, CircleAlert } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase, setPreferMicrosoft } from "@/lib/supabase";
+import { signOutHere } from "@/lib/membershipClient";
 import { useRouter } from "next/navigation";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, Card, heroQuiet } from "@/components/ui/PageHero";
@@ -117,7 +118,9 @@ export default function ProfilePage() {
 
   const handleSignOut = async () => {
     setPreferMicrosoft(false);
-    await supabase.auth.signOut();
+    // This device is signed out at once, even when the server is busy
+    // (plant PCs are shared); everywhere else follows when it answers.
+    await signOutHere();
     router.push("/");
   };
 

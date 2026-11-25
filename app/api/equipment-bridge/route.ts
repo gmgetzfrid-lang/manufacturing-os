@@ -93,7 +93,7 @@ export async function GET(req: NextRequest) {
     .in("source_document_id", ids.length > 0 ? ids : ["00000000-0000-0000-0000-000000000000"]);
 
   const { data: lib } = await supabaseAdmin
-    .from("libraries").select("equipment_bridge, custom_columns").eq("id", libraryId).maybeSingle();
+    .from("libraries").select("equipment_bridge, custom_columns").eq("id", libraryId).eq("org_id", orgId).maybeSingle();
 
   return NextResponse.json({
     suggestions: rows.map((r) => ({ ...r, documentLabel: nameById.get(String(r.document_id)) ?? "-", doc: infoById.get(String(r.document_id)) ?? null })),

@@ -26,7 +26,7 @@
 // during a turnaround. Read-only intelligence — every signal deep-links to the
 // surface where you act on it.
 
-import React, { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -132,10 +132,24 @@ function CoordinationInner() {
 
   useEffect(() => { void (async () => { await load(); })(); }, [load]);
 
-  // Wall-display heartbeat: refresh every 45s in the background.
+  // Wall-display heartbeat: refresh about every 45s in the background, a
+  // little different on every screen so they don't all ask at once. A beat
+  // while the last refresh is still on its way is skipped, so a slow server
+  // never collects a pile of them.
+  const beating = useRef(false);
   useEffect(() => {
-    const id = window.setInterval(() => { if (document.visibilityState === "visible") void load(true); }, 45_000);
-    return () => window.clearInterval(id);
+    let id = 0;
+    const beat = () => {
+      id = window.setTimeout(() => {
+        if (document.visibilityState === "visible" && !beating.current) {
+          beating.current = true;
+          void load(true).finally(() => { beating.current = false; });
+        }
+        beat();
+      }, 40_000 + Math.random() * 10_000);
+    };
+    beat();
+    return () => window.clearTimeout(id);
   }, [load]);
 
   // Resolve a checkout session id → who holds it, for naming the people in a

@@ -6,7 +6,7 @@ import { supabase } from "@/lib/supabase";
 import type { Role } from "@/types/schema";
 import { normalizeRoles, primaryRole } from "@/lib/roleCapabilities";
 import { readMember, writeMember, storedUid, memberToOpen, type CachedMember } from "@/lib/memberCache";
-import { fetchMemberships, pickMembership, SignedOut } from "@/lib/membershipClient";
+import { fetchMemberships, pickMembership, SignedOut, ServerBusy } from "@/lib/membershipClient";
 import { rememberWorkspaceName } from "@/lib/deviceWorkspace";
 
 type OrgMember = {
@@ -158,31 +158,42 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
     // account truly has no membership". Read in the browser through the
     // access rules, a sign-in that wasn't ready yet answered "no rows",
     // which put members on the no-workspace screen or opened them as Viewer.
-    const attempt = async (): Promise<{ orgId: string | null; mem: Record<string, unknown> | null }> => {
+    type Resolved = { orgId: string | null; mem: Record<string, unknown> | null; savedDefault: string | null };
+    const attempt = async (signal: AbortSignal): Promise<Resolved> => {
       let lastOrg: string | null = null;
       try { if (typeof window !== "undefined") lastOrg = localStorage.getItem(LS_ORG_KEY); } catch {}
-      const answer = await fetchMemberships();
+      const answer = await fetchMemberships(signal);
       const pick = pickMembership(answer, lastOrg);
-      if (!pick) return { orgId: null, mem: null };
+      if (!pick) return { orgId: null, mem: null, savedDefault: answer.defaultOrgId };
       rememberWorkspaceName(pick.orgName);
-      return { orgId: pick.orgId, mem: { org_id: pick.orgId, role: pick.role, roles: pick.roles, status: pick.status, email: pick.email } };
+      return { orgId: pick.orgId, mem: { org_id: pick.orgId, role: pick.role, roles: pick.roles, status: pick.status, email: pick.email }, savedDefault: answer.defaultOrgId };
     };
 
-    let resolved: { orgId: string | null; mem: Record<string, unknown> | null } | null = null;
+    let resolved: Resolved | null = null;
     let lastErr: unknown = null;
     for (let i = 0; i < 3 && !resolved; i++) {
+      // One controller per attempt: the one that loses the race is called
+      // off, so a stuck server never collects a pile of open lookups.
+      const ctl = new AbortController();
+      let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         // A lookup that hangs counts as failed, so the boot always ends.
         resolved = await Promise.race([
-          attempt(),
-          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("membership lookup timed out")), 10000)),
+          attempt(ctl.signal),
+          new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new ServerBusy()), 10000); }),
         ]);
       } catch (e) {
         lastErr = e;
         // The sign-in itself is gone: signing out takes them to sign in again.
+        // Busy or slow is never that: the sign-in is kept.
         if (e instanceof SignedOut) { void supabase.auth.signOut(); return; }
-        await new Promise((r) => setTimeout(r, 600 * (i + 1)));
+      } finally {
+        clearTimeout(timer);
+        ctl.abort();
       }
+      // Wait longer each time, a little different on every device, so the
+      // whole plant doesn't ask again at the same moment.
+      if (!resolved && i < 2) await new Promise((r) => setTimeout(r, 1000 * 2 ** i * (0.75 + Math.random() / 2)));
     }
     if (!resolved) {
       // A background check that couldn't reach the server: keep the role.
@@ -196,7 +207,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    const { orgId, mem } = resolved;
+    const { orgId, mem, savedDefault } = resolved;
     _setActiveOrgId(orgId);
     if (orgId) {
       try {
@@ -223,7 +234,8 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
       setRoles(active ? collection : []);
       setActiveRole(active ? headline : "Viewer");
       setMembershipState(active ? "member" : "none");
-      if (active) void persistOrgId(orgId, userId);
+      // The profile's home workspace: written only when it changes.
+      if (active && orgId !== savedDefault) void persistOrgId(orgId, userId);
     } else {
       try { writeMember(window.localStorage, null); } catch { /* private mode */ }
       setMember(null);
@@ -373,8 +385,10 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
     const handleVisibility = async () => {
       if (document.visibilityState !== "visible") return;
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session && bootedRef.current) {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        // A renewal the server couldn't answer (busy) comes back as no
+        // session with an error: that's not signed out, so stay.
+        if (!session && !error && bootedRef.current) {
           window.location.replace("/");
         }
       } catch {

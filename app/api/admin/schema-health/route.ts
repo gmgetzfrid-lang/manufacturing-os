@@ -39,13 +39,15 @@ export async function GET(req: NextRequest) {
   const roles = new Set<string>([member?.role as string, ...(((member?.roles as string[]) ?? []))]);
   if (!member || !roles.has("Admin")) return bad("Admin only", 403);
 
-  // Probe in parallel chunks — HEAD selects, zero rows transferred.
+  // Probe in parallel chunks — HEAD selects, zero rows transferred. No row
+  // count: whether the table answers is the whole question, and an exact
+  // count read every row of every table (112 of them) on each check.
   const tableResults: Array<{ table: string; migration: string; ok: boolean }> = [];
   const CHUNK = 40; // head-selects are tiny; wide bursts beat serialized chunks
   for (let i = 0; i < EXPECTED_TABLES.length; i += CHUNK) {
     await Promise.all(EXPECTED_TABLES.slice(i, i + CHUNK).map(async (t) => {
       const { error: e } = await supabaseAdmin
-        .from(t.table).select("*", { count: "exact", head: true }).limit(0);
+        .from(t.table).select("*", { head: true }).limit(0);
       tableResults.push({ ...t, ok: !missingTable(e) });
     }));
   }

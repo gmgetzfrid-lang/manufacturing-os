@@ -13,7 +13,8 @@
 import { AuthCard, authField, authBtn } from "@/components/marketing/AuthCard";
 import { rememberWorkspaceName } from "@/lib/deviceWorkspace";
 import { checkSignin, type SigninVerdict } from "@/lib/signinCheck";
-import { fetchMemberships, pickMembership, SignedOut, type MembershipAnswer } from "@/lib/membershipClient";
+import { fetchMemberships, pickMembership, SignedOut, ServerBusy, signOutHere, type MembershipAnswer } from "@/lib/membershipClient";
+import { friendlyError } from "@/lib/friendlyError";
 import { writeMember } from "@/lib/memberCache";
 import { sharedLoad, forgetLoads, dashKey } from "@/lib/warmLoads";
 import { normalizeRoles, primaryRole } from "@/lib/roleCapabilities";
@@ -49,6 +50,31 @@ async function databaseAnswers(ms = 6000): Promise<boolean> {
   }
 }
 const SERVER_DOWN = "The app's server isn't answering, so Microsoft sign-in can't finish. Try again in a minute.";
+const BUSY = "The server is busy right now, so your workspace didn't open. Try again in a minute.";
+const TOO_SLOW = "The server took too long to answer. Try again in a minute.";
+
+/** How long a sign-in check or workspace lookup may take before the page
+ *  stops waiting and says so. */
+const CHECK_MS = 15_000;
+/** `p`, or what `late` gives when `p` hasn't answered in time. */
+function inTime<T>(p: Promise<T>, late: () => T | Promise<T>, ms = CHECK_MS): Promise<T> {
+  let t: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<T>((resolve) => { t = setTimeout(() => resolve(Promise.resolve().then(late)), ms); });
+  return Promise.race([p, timeout]).finally(() => clearTimeout(t));
+}
+/** The sign-in check didn't answer in time. */
+const LATE: SigninVerdict = { action: "error" };
+/** The workspace lookup, given up on when it doesn't answer in time. */
+const lookUp = () => inTime(fetchMemberships(), () => Promise.reject(new ServerBusy()));
+/** The workspace lookup again after one that failed: at most twice, after
+ *  a busy answer each a little later (and different on every device). */
+async function lookUpAgain(busy: boolean): Promise<MembershipAnswer> {
+  for (let i = 0; ; i++) {
+    if (busy) await new Promise((r) => setTimeout(r, 2000 * 2 ** i * (0.75 + Math.random() / 2)));
+    try { return await lookUp(); }
+    catch (e) { if (!(e instanceof ServerBusy) || i >= 1) throw e; busy = true; }
+  }
+}
 
 /** The door this device signed in through last (shown as "Last used"). */
 const LAST_DOOR = "mfgos.signin.last";
@@ -127,6 +153,9 @@ export default function LoginPage() {
   useEffect(() => { router.prefetch("/dashboard"); }, [router]);
   // A password sign-in in progress decides its own next step (handleLogin).
   const loginInFlight = useRef(false);
+  // A remembered sign-in being checked: the page waits on it (with the
+  // slow notice), never swapping to the sign-in form underneath it.
+  const checkInFlight = useRef(false);
   const slowSecs = useElapsed(view === "checking" || loading);
 
   // Decide where a signed-in account belongs. The workspace's sign-in rules
@@ -168,34 +197,40 @@ export default function LoginPage() {
 
   const routeAuthedUser = useCallback(async (user: User) => {
     if (loginInFlight.current) return;
-    // If they signed in via Microsoft, remember it on this device so we can try
-    // a silent sign-in next time. Email/password users are never flagged, so
-    // they never get auto-redirected to Microsoft.
-    const meta = user.app_metadata ?? {};
-    const providers = (meta.providers as string[] | undefined) ?? [];
-    if (meta.provider === "azure" || providers.includes("azure")) {
-      setPreferMicrosoft(true);
-      rememberDoor("microsoft");
-    }
+    checkInFlight.current = true;
+    try {
+      // If they signed in via Microsoft, remember it on this device so we can try
+      // a silent sign-in next time. Email/password users are never flagged, so
+      // they never get auto-redirected to Microsoft.
+      const meta = user.app_metadata ?? {};
+      const providers = (meta.providers as string[] | undefined) ?? [];
+      if (meta.provider === "azure" || providers.includes("azure")) {
+        setPreferMicrosoft(true);
+        rememberDoor("microsoft");
+      }
 
-    const { data: { session } } = await supabase.auth.getSession();
-    // The workspace lookup runs alongside the sign-in check, not after it;
-    // its answer is used only when the check lets the account in.
-    void warmLayout(user).catch(() => undefined);
-    const workspaces = fetchMemberships().then((a) => { void warm(user, a).catch(() => undefined); return a; }).catch((e: unknown) => e);
-    const verdict = await checkSignin(session?.access_token ?? null);
-    const why = refusal(verdict);
-    if (why) {
-      forgetLoads();
-      if (verdict.action === NOT_ADDED) setPreferMicrosoft(false);
-      await supabase.auth.signOut();
-      setError(why);
-      setView("login");
-      return;
+      const session = await inTime(supabase.auth.getSession().then((r) => r.data.session), () => null);
+      // The workspace lookup runs alongside the sign-in check, not after it;
+      // its answer is used only when the check lets the account in.
+      void warmLayout(user).catch(() => undefined);
+      const workspaces = lookUp().then((a) => { void warm(user, a).catch(() => undefined); return a; }).catch((e: unknown) => e);
+      // No answer in time: a remembered sign-in checks again later.
+      const verdict = await inTime(checkSignin(session?.access_token ?? null), () => LATE);
+      const why = refusal(verdict);
+      if (why) {
+        forgetLoads();
+        if (verdict.action === NOT_ADDED) setPreferMicrosoft(false);
+        await signOutHere();
+        setError(why);
+        setView("login");
+        return;
+      }
+      if (verdict.action === "set_password") { router.replace("/set-password"); return; }
+      // Already signed in (or back from Microsoft): straight in.
+      await openWorkspace(user, await workspaces);
+    } finally {
+      checkInFlight.current = false;
     }
-    if (verdict.action === "set_password") { router.replace("/set-password"); return; }
-    // Already signed in (or back from Microsoft): straight in.
-    await openWorkspace(user, await workspaces);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
@@ -209,7 +244,8 @@ export default function LoginPage() {
     try {
       router.prefetch("/dashboard");
       if (known instanceof SignedOut) throw known;
-      const answer = known && typeof known === "object" && "memberships" in (known as object) ? known as MembershipAnswer : await fetchMemberships();
+      // A busy server is asked again a little later, the slow notice up.
+      const answer = known && typeof known === "object" && "memberships" in (known as object) ? known as MembershipAnswer : await lookUpAgain(known instanceof ServerBusy);
       const pick = pickMembership(answer, lastOrg());
       if (pick) {
         rememberWorkspaceName(pick.orgName);
@@ -239,7 +275,8 @@ export default function LoginPage() {
       setAuthedEmail(userEmail);
       setView("no-workspace");
     } catch (e) {
-      if (!(e instanceof SignedOut)) setError("Couldn't reach the server to open your workspace. Check your connection and try again.");
+      // Busy is never "signed out": the sign-in is kept for the next try.
+      if (!(e instanceof SignedOut)) setError(e instanceof ServerBusy ? BUSY : "Couldn't reach the server to open your workspace. Check your connection and try again.");
       setView("login");
       setLoading(false);
     }
@@ -302,8 +339,10 @@ export default function LoginPage() {
       if (errorCode) {
         // A silent attempt that needs interaction is expected — fall back
         // quietly. Anything else (e.g. consent denied) is worth showing.
+        // Already decoded once by URLSearchParams (a second decode throws
+        // on a stray %); said in plain words, never Microsoft's raw text.
         if (!SILENT_FALLBACK_ERRORS.has(errorCode) && errorDesc) {
-          setError(decodeURIComponent(errorDesc));
+          setError(friendlyError(errorDesc));
         }
         cleanUrl();
         setView("login");
@@ -350,9 +389,10 @@ export default function LoginPage() {
     });
 
     // Safety net: never strand the user on the spinner if an OAuth exchange
-    // silently fails to produce a session.
+    // silently fails to produce a session. A sign-in still being checked
+    // keeps the page (and its slow notice): each check has its own limit.
     const fallback = window.setTimeout(() => {
-      if (active) {
+      if (active && !checkInFlight.current) {
         setView((v) => (v === "checking" ? "login" : v));
       }
     }, 10000);
@@ -386,12 +426,12 @@ export default function LoginPage() {
       // workspace lookup runs alongside, used only if they let the account in.
       // Home's layout needs only the account: asked for now, too.
       void warmLayout(signedIn.user ?? null).catch(() => undefined);
-      const workspaces = fetchMemberships().then((a) => { void warm(signedIn.user ?? null, a).catch(() => undefined); return a; }).catch((e: unknown) => e);
-      const verdict = await checkSignin(signedIn.session?.access_token ?? null);
-      const why = refusal(verdict) ?? (verdict.action === "error" ? "Couldn't finish signing you in. Check your connection and try again." : null);
+      const workspaces = lookUp().then((a) => { void warm(signedIn.user ?? null, a).catch(() => undefined); return a; }).catch((e: unknown) => e);
+      const verdict = await inTime(checkSignin(signedIn.session?.access_token ?? null), () => LATE);
+      const why = refusal(verdict) ?? (verdict === LATE ? TOO_SLOW : verdict.action === "error" ? "Couldn't finish signing you in. Check your connection and try again." : null);
       if (why) {
         forgetLoads();
-        await supabase.auth.signOut();
+        await signOutHere();
         setError(why);
         setLoading(false);
       } else if (verdict.action === "set_password") {
@@ -424,7 +464,7 @@ export default function LoginPage() {
     // Explicit sign-out: disable silent auto sign-in so we don't immediately
     // log them back in.
     setPreferMicrosoft(false);
-    await supabase.auth.signOut();
+    await signOutHere();
     setAuthedEmail(null);
     setError(null);
     setView("login");

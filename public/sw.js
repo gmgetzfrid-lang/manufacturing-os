@@ -13,8 +13,10 @@
  *     is fresh online and recently-viewed screens still work offline.
  *
  * Deliberately NOT cached: cross-origin requests (Supabase, R2 signed URLs,
- * Stripe, fonts) and any non-GET request. Signed URLs expire and auth must
- * always hit the network, so we never serve those from cache.
+ * Stripe, fonts), any non-GET request, same-origin sign-in answers
+ * (/api/auth/*) and anything sent with an Authorization header. Signed URLs
+ * expire and auth must always hit the network, so we never serve those from
+ * cache.
  *
  * Hard rule 1: a handler passed to respondWith() must never RESOLVE to
  * `undefined` — the browser fails the request with "Failed to convert value to
@@ -35,8 +37,10 @@
 // network-first — stale-while-revalidate was serving old app navigations.
 // v5: stop inventing 504s — see the honesty rule below. v6: prefetches
 // are never intercepted. v7: nor is the manifest. v8: nor are sent links,
-// and copies cached from them before are dropped).
-const VERSION = "mfgos-v9";
+// and copies cached from them before are dropped. v10: nor are sign-in
+// answers or anything sent with a sign-in, and copies cached before are
+// dropped).
+const VERSION = "mfgos-v10";
 const SHELL_CACHE = `${VERSION}-shell`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
 
@@ -163,6 +167,12 @@ self.addEventListener("fetch", (event) => {
   // Sent links (/api/share/*): never kept. A copy must not open from this
   // browser's cache after the link expires or is turned off.
   if (url.pathname.startsWith("/api/share/")) return;
+
+  // Sign-in answers (/api/auth/*) and anything sent with a sign-in (an
+  // Authorization header): never kept. A copy could answer for the last
+  // person on a shared plant PC, or say "signed in" after they signed out.
+  if (url.pathname.startsWith("/api/auth/")) return;
+  if (headers && headers.get("Authorization")) return;
 
   // Prefetches of any kind (the router's, the browser's speculative loads):
   // nobody is waiting on them, the browser cancels them freely, and a

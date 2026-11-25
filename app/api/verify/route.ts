@@ -8,6 +8,9 @@
 //   * The response contains ONLY revision-status facts (doc number, title,
 //     printed rev vs current rev, dates) — no file access, no URLs, no
 //     content, no people.
+//   * Title, revisions and dates need BOTH ids (the pair is only ever
+//     printed together). A document id alone (ids also show up in app
+//     links) gets the verdict and the number on the print, nothing more.
 //
 // Answers exactly one question: "is the paper in my hand still current?"
 
@@ -93,16 +96,19 @@ export async function GET(req: NextRequest) {
   const notYetEffective =
     isCurrent && !!effectiveDate && effectiveDate.slice(0, 10) > new Date().toISOString().slice(0, 10);
 
+  // A code without a version id gets the verdict only (the page words a
+  // retired document from docStatus, which is kept for that).
+  const full = !!printed;
   return NextResponse.json({
     docNumber: d.document_number || d.name || null,
-    title: d.title || null,
+    title: full ? d.title || null : null,
     printedRev: printed?.revision_label ?? null,
     printedAt: printed?.created_at ?? null,
-    currentRev: d.rev ?? null,
-    currentIssuedAt,
-    effectiveDate,
+    currentRev: full ? d.rev ?? null : null,
+    currentIssuedAt: full ? currentIssuedAt : null,
+    effectiveDate: full ? effectiveDate : null,
     notYetEffective,
-    docStatus: d.status ?? null,
+    docStatus: full || docRetired ? d.status ?? null : null,
     isCurrent,
     checkedAt: new Date().toISOString(),
   });

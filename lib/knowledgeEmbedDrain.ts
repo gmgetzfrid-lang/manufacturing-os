@@ -19,7 +19,7 @@ import { embeddingConnectionFrom } from "@/lib/ai/embeddings";
 import { openAiKey } from "@/lib/ai/keyVault";
 import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
 import {
-  embedLibrarySlice, setEmbedBuildMarker, unembeddedCount,
+  embedLibrarySlice, setEmbedBuildMarker, unembeddedCount, claimEmbedBuild, releaseEmbedBuild,
 } from "@/lib/knowledgeEmbedCore";
 
 /** Per-slice loop budget / in-flight hard stop, relative to slice start. */
@@ -71,13 +71,6 @@ export async function drainEmbedBacklog(opts: {
     for (const lib of (libs ?? []) as Array<{ id: string; org_id: string; ai_features: Record<string, unknown> }>) {
       if (Date.now() - startedAt > budgetMs) break;
       const marker = (lib.ai_features?.embedBuild ?? null) as { userId?: string; at?: string; drainUntil?: string } | null;
-      // Single flight: another drain is already working this library (a
-      // second page load, the nightly run). Two would write the same rows
-      // and double the load on the database for nothing.
-      if (marker?.drainUntil && new Date(marker.drainUntil).getTime() > Date.now()) {
-        drained.push({ libraryId: lib.id, embedded: 0, remaining: -1, note: "another background build is running" });
-        continue;
-      }
       const userId = marker?.userId;
       if (!userId) continue;
       // A tab is building this library right now (it re-stamps every batch).
@@ -88,83 +81,98 @@ export async function drainEmbedBacklog(opts: {
         drained.push({ libraryId: lib.id, embedded: 0, remaining: -1, note: "being built in an open tab" });
         continue;
       }
-
-      await stampDrain(lib.id, new Date(startedAt + budgetMs + 30_000).toISOString());
-      const remainingBefore = await unembeddedCount(lib.org_id, lib.id);
-      if (remainingBefore === 0) {
-        await setEmbedBuildMarker(lib.id, null);
+      // Single flight: another build is already working this library (a
+      // second page load, the nightly run, a tab). Two would write the same
+      // rows and double the load on the database for nothing. The lease
+      // (claim_embed_build) is atomic; a database without it falls back to
+      // the drainUntil stamp read from the marker.
+      const lease = await claimEmbedBuild(lib.id, Math.ceil((budgetMs - (Date.now() - startedAt) + 30_000) / 1000));
+      if (lease === "busy" || (lease === "unsupported" && marker?.drainUntil && new Date(marker.drainUntil).getTime() > Date.now())) {
+        drained.push({ libraryId: lib.id, embedded: 0, remaining: -1, note: "another background build is running" });
         continue;
       }
-
-      // The consenting user's own embedding connection — no key, no drain.
-      const { data: conn } = await supabaseAdmin
-        .from("ai_connections")
-        .select("provider, api_key, embedding_provider, embedding_model, embedding_api_key")
-        .eq("org_id", lib.org_id).eq("user_id", userId).maybeSingle();
-      const connection = embeddingConnectionFrom(conn && {
-        ...conn,
-        api_key: openAiKey(conn.api_key),
-        embedding_api_key: openAiKey(conn.embedding_api_key),
-      });
-      if (!connection) {
-        await setEmbedBuildMarker(lib.id, null);
-        drained.push({ libraryId: lib.id, embedded: 0, remaining: remainingBefore ?? -1, note: "no embedding key - stamp cleared" });
-        continue;
-      }
-
-      // Respect the consenting user's monthly cap.
-      const [month, capUsd] = await Promise.all([
-        getMonthUsage(lib.org_id, userId), getCapUsd(lib.org_id, userId),
-      ]);
-      if (capUsd > 0 && month.spentUsd >= capUsd) {
-        drained.push({ libraryId: lib.id, embedded: 0, remaining: remainingBefore ?? -1, note: "monthly cap reached" });
-        continue;
-      }
-
-      // Slice until this library is done, rate-limits us out of the window,
-      // or the budget says stop. 429s wait out the provider's minute.
-      let embedded = 0;
-      let paced = false;
-      const usage = { inputTokens: 0, outputTokens: 0 };
-      for (;;) {
-        const left = budgetMs - (Date.now() - startedAt);
-        if (left < 20_000) break;
-        const slice = await embedLibrarySlice({
-          orgId: lib.org_id, libraryId: lib.id, connection,
-          batchSize: paced ? PACED_BATCH : FULL_BATCH,
-          budgetMs: Math.min(SLICE_BUDGET_MS, left - 15_000),
-          hardStopMs: Math.min(SLICE_HARD_STOP_MS, left - 10_000),
-          finishBy: startedAt + budgetMs,
-        });
-        embedded += slice.embedded;
-        usage.inputTokens += slice.usage.inputTokens;
-        if (slice.error) { drained.push({ libraryId: lib.id, embedded, remaining: -1, note: slice.error }); break; }
-        if (slice.busy) {
-          // Database busy: kept what was written; the next run carries on.
-          if (budgetMs - (Date.now() - startedAt) < 40_000) break;
-          await new Promise((r) => setTimeout(r, 10_000));
+      if (lease === "unsupported") await stampDrain(lib.id, new Date(startedAt + budgetMs + 30_000).toISOString());
+      try {
+        const remainingBefore = await unembeddedCount(lib.org_id, lib.id);
+        if (remainingBefore === 0) {
+          await setEmbedBuildMarker(lib.id, null);
           continue;
         }
-        if (slice.rateLimited) {
-          paced = true;
-          if (budgetMs - (Date.now() - startedAt) < 85_000) break; // no room to wait out the window
-          await new Promise((r) => setTimeout(r, 65_000));
+
+        // The consenting user's own embedding connection — no key, no drain.
+        const { data: conn } = await supabaseAdmin
+          .from("ai_connections")
+          .select("provider, api_key, embedding_provider, embedding_model, embedding_api_key")
+          .eq("org_id", lib.org_id).eq("user_id", userId).maybeSingle();
+        const connection = embeddingConnectionFrom(conn && {
+          ...conn,
+          api_key: openAiKey(conn.api_key),
+          embedding_api_key: openAiKey(conn.embedding_api_key),
+        });
+        if (!connection) {
+          await setEmbedBuildMarker(lib.id, null);
+          drained.push({ libraryId: lib.id, embedded: 0, remaining: remainingBefore ?? -1, note: "no embedding key - stamp cleared" });
           continue;
         }
-        if (slice.exhausted || slice.fetchedNone || slice.embedded === 0) break;
-      }
 
-      if (usage.inputTokens > 0) {
-        await recordAskUsage({
-          orgId: lib.org_id, userId, provider: connection.provider, model: connection.model,
-          usage, ok: true, op: "knowledgeEmbed",
-        });
-      }
-      await stampDrain(lib.id, null);
-      const remainingAfter = await unembeddedCount(lib.org_id, lib.id);
-      if (remainingAfter === 0) await setEmbedBuildMarker(lib.id, null);
-      if (!drained.some((d) => d.libraryId === lib.id)) {
-        drained.push({ libraryId: lib.id, embedded, remaining: remainingAfter ?? -1 });
+        // Respect the consenting user's monthly cap.
+        const [month, capUsd] = await Promise.all([
+          getMonthUsage(lib.org_id, userId), getCapUsd(lib.org_id, userId),
+        ]);
+        if (capUsd > 0 && month.spentUsd >= capUsd) {
+          drained.push({ libraryId: lib.id, embedded: 0, remaining: remainingBefore ?? -1, note: "monthly cap reached" });
+          continue;
+        }
+
+        // Slice until this library is done, rate-limits us out of the window,
+        // or the budget says stop. 429s wait out the provider's minute.
+        let embedded = 0;
+        let paced = false;
+        const usage = { inputTokens: 0, outputTokens: 0 };
+        for (;;) {
+          const left = budgetMs - (Date.now() - startedAt);
+          if (left < 20_000) break;
+          const slice = await embedLibrarySlice({
+            orgId: lib.org_id, libraryId: lib.id, connection,
+            batchSize: paced ? PACED_BATCH : FULL_BATCH,
+            budgetMs: Math.min(SLICE_BUDGET_MS, left - 15_000),
+            hardStopMs: Math.min(SLICE_HARD_STOP_MS, left - 10_000),
+            finishBy: startedAt + budgetMs,
+          });
+          embedded += slice.embedded;
+          usage.inputTokens += slice.usage.inputTokens;
+          if (slice.error) { drained.push({ libraryId: lib.id, embedded, remaining: -1, note: slice.error }); break; }
+          if (slice.busy) {
+            // Database busy: kept what was written; the next run carries on.
+            if (budgetMs - (Date.now() - startedAt) < 40_000) break;
+            await new Promise((r) => setTimeout(r, 10_000));
+            continue;
+          }
+          if (slice.rateLimited) {
+            paced = true;
+            if (budgetMs - (Date.now() - startedAt) < 85_000) break; // no room to wait out the window
+            await new Promise((r) => setTimeout(r, 65_000));
+            continue;
+          }
+          if (slice.exhausted || slice.fetchedNone || slice.embedded === 0) break;
+        }
+
+        if (usage.inputTokens > 0) {
+          await recordAskUsage({
+            orgId: lib.org_id, userId, provider: connection.provider, model: connection.model,
+            usage, ok: true, op: "knowledgeEmbed",
+          });
+        }
+        const remainingAfter = await unembeddedCount(lib.org_id, lib.id);
+        if (remainingAfter === 0) await setEmbedBuildMarker(lib.id, null);
+        if (!drained.some((d) => d.libraryId === lib.id)) {
+          drained.push({ libraryId: lib.id, embedded, remaining: remainingAfter ?? -1 });
+        }
+      } finally {
+        // Give the library back (or clear the fallback stamp) on every way
+        // out, early ones included.
+        if (lease === "claimed") await releaseEmbedBuild(lib.id);
+        else await stampDrain(lib.id, null);
       }
     }
   } catch (e) {

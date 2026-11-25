@@ -143,7 +143,7 @@ export async function GET(req: NextRequest) {
   // Site decoder: the library's own AI-setup decoder, or (when it has none)
   // the org's Site Codebook — unit names AND tag-prefix meanings.
   const { data: libRow } = await supabaseAdmin
-    .from("knowledge_libraries").select("ai_features").eq("id", libraryId).maybeSingle();
+    .from("knowledge_libraries").select("ai_features").eq("id", libraryId).eq("org_id", orgId).maybeSingle();
   const libDecoder = String(((libRow?.ai_features ?? {}) as Record<string, unknown>).decoder ?? "").trim();
   const decoder = libDecoder || codebookToDecoderText(await loadCodebookAdmin(supabaseAdmin, orgId));
   const unitMap = parseUnitMap(decoder);
@@ -184,20 +184,25 @@ export async function GET(req: NextRequest) {
   const suggestions: string[] = [];
   const readyDocs = docs.filter((d) => d.status === "ready").length;
 
-  // Which ready docs produced ANY text at all? Zero-text docs are scans —
-  // a completely different problem than "no tags matched".
-  const docsWithText = new Set<string>();
+  // Characters extracted per sheet (the per-sheet readout below), read in
+  // ONE pass over the library's passages. It also answers which ready docs
+  // produced ANY text at all; that used to be a second full pass.
+  const charsByDoc = new Map<string, number>();
   {
-    const readyIds = docs.filter((d) => d.status === "ready").map((d) => d.id);
-    for (let i = 0; i < readyIds.length; i += 50) {
-      const { rows: data } = await fetchAllRows<{ document_id: string }>((from, to) => supabaseAdmin
-        .from("knowledge_chunks").select("document_id")
-        .in("document_id", readyIds.slice(i, i + 50))
-        .order("id").range(from, to), 50_000);
-      for (const r of data) docsWithText.add(r.document_id);
+    const ids = docs.map((d) => d.id);
+    for (let i = 0; i < ids.length; i += 50) {
+      const { rows: data } = await fetchAllRows<{ document_id: string; content: string }>((from, to) => supabaseAdmin
+        .from("knowledge_chunks").select("document_id, content")
+        .in("document_id", ids.slice(i, i + 50)).order("id").range(from, to), 50_000);
+      for (const c of data) {
+        charsByDoc.set(c.document_id, (charsByDoc.get(c.document_id) ?? 0) + (c.content?.length ?? 0));
+      }
     }
   }
-  const textlessCount = docs.filter((d) => d.status === "ready" && !docsWithText.has(d.id)).length;
+
+  // Which ready docs produced ANY text at all? Zero-text docs are scans —
+  // a completely different problem than "no tags matched".
+  const textlessCount = docs.filter((d) => d.status === "ready" && !charsByDoc.has(d.id)).length;
 
   if (textlessCount > 0) {
     suggestions.push(
@@ -280,21 +285,10 @@ export async function GET(req: NextRequest) {
   // Guessing why a library "isn't working" is miserable; this is the fact
   // table. Characters extracted, tags found, pages read by vision, per
   // sheet — the answer to "is this an SHX export?" is visible, not argued.
-  const charsByDoc = new Map<string, number>();
+  // (Characters per sheet: charsByDoc, read above.)
   const tagsByDoc = new Map<string, number>();
   for (const e of entities) {
     if (e.kind === "equipment") tagsByDoc.set(e.document_id, (tagsByDoc.get(e.document_id) ?? 0) + 1);
-  }
-  {
-    const ids = docs.map((d) => d.id);
-    for (let i = 0; i < ids.length; i += 50) {
-      const { rows: data } = await fetchAllRows<{ document_id: string; content: string }>((from, to) => supabaseAdmin
-        .from("knowledge_chunks").select("document_id, content")
-        .in("document_id", ids.slice(i, i + 50)).order("id").range(from, to), 50_000);
-      for (const c of data) {
-        charsByDoc.set(c.document_id, (charsByDoc.get(c.document_id) ?? 0) + (c.content?.length ?? 0));
-      }
-    }
   }
   const sheets = docs.map((d) => {
     const chars = charsByDoc.get(d.id) ?? 0;

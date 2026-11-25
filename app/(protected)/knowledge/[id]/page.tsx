@@ -25,9 +25,9 @@ import { useFileDrag } from "@/hooks/useFileDrag";
 import { useDraft } from "@/hooks/useDraft";
 import { tryUpload } from "@/lib/uploadRetry";
 import {
-  getKnowledgeLibrary, listKnowledgeDocuments, addKnowledgeDocument,
+  getKnowledgeLibrary, listKnowledgeDocuments, getKnowledgeDocument, addKnowledgeDocument,
   ingestKnowledgeDocument, deleteKnowledgeDocuments, deleteKnowledgeLibrary,
-  listLibraryLinks,
+  listLibraryLinks, onIngestProgress, withKnowledgeDrainLock,
   type KnowledgeLibrary, type KnowledgeDocument,
   type KnowledgeLibraryLink,
   rebuildDrawingIndex,
@@ -52,6 +52,14 @@ import HelpTooltip from "@/components/ui/HelpTooltip";
 
 // pdf.js only loads when someone actually opens a cited page.
 const CitedPageViewer = dynamic(() => import("@/components/knowledge/CitedPageViewer"), { ssr: false });
+
+/** While documents index, the whole library is read again at most this
+ *  often; progress in between re-reads only the document that moved. */
+const LIST_EVERY_MS = 30_000;
+/** Drawing intelligence reads every passage of the library: while documents
+ *  are still indexing it refreshes at most this often (and at once when the
+ *  queue empties), not after every finished document. */
+const DRAWING_REFRESH_MS = 120_000;
 
 interface ViewerTarget {
   fileKey: string;
@@ -116,6 +124,12 @@ export default function KnowledgeLibraryPage() {
   const autoIndexRef = useRef(false);
   const mountedRef = useRef(true);
   useEffect(() => () => { mountedRef.current = false; }, []);
+  // The shelf as last read, for the indexer's queue, and when the whole
+  // library was last read: full reads happen at most every LIST_EVERY_MS
+  // while indexing (a 1,000-document library used to be read in full after
+  // every batch of every document).
+  const docsRef = useRef<KnowledgeDocument[]>([]);
+  const listAtRef = useRef(0);
   const [viewer, setViewer] = useState<ViewerTarget | null>(null);
   const [links, setLinks] = useState<KnowledgeLibraryLink[]>([]);
   const [showAiSetup, setShowAiSetup] = useState(false);
@@ -155,6 +169,7 @@ export default function KnowledgeLibraryPage() {
       ]);
       setLibrary(lib);
       setDocs(documents);
+      listAtRef.current = Date.now();
       setLinks(libLinks);
       setLoadError(null);
     } catch (e) {
@@ -165,6 +180,18 @@ export default function KnowledgeLibraryPage() {
     }
   }, [libraryId]);
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { docsRef.current = docs; }, [docs]);
+
+  // Indexing progress from any loop in this tab (this page's, the
+  // background indexer's, an upload's) re-reads just that document's row.
+  useEffect(() => onIngestProgress((id) => {
+    void getKnowledgeDocument(id).then((d) => {
+      if (!d || !mountedRef.current || d.libraryId !== libraryId) return;
+      setDocs((list) => list.some((x) => x.id === d.id)
+        ? list.map((x) => (x.id === d.id ? d : x))
+        : [...list, d]);
+    }, () => undefined);
+  }), [libraryId]);
 
   // ── Auto-index queued documents while the page is open ─────────────────
   // Linked sources create docs in "pending"; a rev-up marks them "stale".
@@ -178,58 +205,86 @@ export default function KnowledgeLibraryPage() {
     if (!hasQueued || autoIndexRef.current || uploadState !== null || reindexing !== null) return;
     autoIndexRef.current = true;
     const attempted = new Set<string>();
+    // While another loop holds the browser's indexing lock (this tab's
+    // background indexer, or another tab), the shelf follows along every
+    // LIST_EVERY_MS instead of indexing the same queue a second time.
+    const wait = { timer: null as ReturnType<typeof setInterval> | null };
+    const stopWaiting = () => { if (wait.timer) clearInterval(wait.timer); wait.timer = null; };
     (async () => {
       try {
-        // THREE documents in flight, not one. Each document's ingest is its
-        // own chain of serverless invocations, so a hundred-file library
-        // used to be a hundred SEQUENTIAL chains — the single biggest wall
-        // in indexing time. Three concurrent chains cut it to roughly a
-        // third; the cap stays modest because vision pages bill the same
-        // per-user key and providers rate-limit per minute.
-        const CONCURRENCY = 3;
-        const active = new Map<string, string>();      // id -> name
-        let remaining = 0;
-        const report = (progress?: { visionPages?: number; visionSkipReason?: string | null; waiting?: string | null }) => {
-          if (!mountedRef.current) return;
-          const names = [...active.values()];
-          setAutoIndexing({
-            name: names.length > 1 ? `${names[0]} (+${names.length - 1} more)` : names[0] ?? "",
-            remaining,
-            ...(progress ? {
-              visionPages: progress.visionPages,
-              visionSkipReason: progress.visionSkipReason,
-              waiting: progress.waiting ?? null,
-            } : {}),
-          });
-        };
-        const worker = async (): Promise<void> => {
-          for (;;) {
+        // One indexing loop per browser (the lock the background indexer
+        // holds): this page's workers wait for it rather than run beside it.
+        await withKnowledgeDrainLock(async () => {
+          stopWaiting();
+          // THREE documents in flight, not one. Each document's ingest is its
+          // own chain of serverless invocations, so a hundred-file library
+          // used to be a hundred SEQUENTIAL chains — the single biggest wall
+          // in indexing time. Three concurrent chains cut it to roughly a
+          // third; the cap stays modest because vision pages bill the same
+          // per-user key and providers rate-limit per minute.
+          const CONCURRENCY = 3;
+          const active = new Map<string, string>();      // id -> name
+          let remaining = 0;
+          const report = (progress?: { visionPages?: number; visionSkipReason?: string | null; waiting?: string | null }) => {
             if (!mountedRef.current) return;
+            const names = [...active.values()];
+            setAutoIndexing({
+              name: names.length > 1 ? `${names[0]} (+${names.length - 1} more)` : names[0] ?? "",
+              remaining,
+              ...(progress ? {
+                visionPages: progress.visionPages,
+                visionSkipReason: progress.visionSkipReason,
+                waiting: progress.waiting ?? null,
+              } : {}),
+            });
+          };
+          // The whole library is read at most every LIST_EVERY_MS; between
+          // reads the queue comes from the shelf, which single-row reads
+          // keep current (onIngestProgress above).
+          const readList = async (maxAgeMs: number): Promise<KnowledgeDocument[]> => {
+            if (Date.now() - listAtRef.current < maxAgeMs) return docsRef.current;
+            listAtRef.current = Date.now();
             const list = await listKnowledgeDocuments(libraryId);
-            if (!mountedRef.current) return;
-            setDocs(list);
-            const queue = list.filter((d) =>
-              (d.status === "pending" || d.status === "stale" || d.status === "indexing") &&
-              !attempted.has(d.id) && !active.has(d.id));
-            remaining = queue.length + active.size;
-            const next = queue[0];
-            if (!next) return;
-            attempted.add(next.id);
-            active.set(next.id, next.name);
-            report();
-            try {
-              await ingestKnowledgeDocument(next.id, (_i, _t, progress) => {
-                if (progress) report(progress);
-                void listKnowledgeDocuments(libraryId).then((ds) => {
-                  if (mountedRef.current) setDocs(ds);
+            docsRef.current = list;
+            if (mountedRef.current) setDocs(list);
+            return list;
+          };
+          const pick = (list: KnowledgeDocument[]) => list.filter((d) =>
+            (d.status === "pending" || d.status === "stale" || d.status === "indexing") &&
+            !attempted.has(d.id) && !active.has(d.id));
+          const worker = async (): Promise<void> => {
+            for (;;) {
+              if (!mountedRef.current) return;
+              let queue = pick(await readList(LIST_EVERY_MS));
+              // The kept shelf can be a little old: look again before stopping.
+              if (queue.length === 0) queue = pick(await readList(5_000));
+              if (!mountedRef.current) return;
+              remaining = queue.length + active.size;
+              const next = queue[0];
+              if (!next) return;
+              attempted.add(next.id);
+              active.set(next.id, next.name);
+              report();
+              try {
+                await ingestKnowledgeDocument(next.id, (_i, _t, progress) => {
+                  if (progress) report(progress);
                 });
-              });
-            } catch { /* row is marked errored server-side; move on */ }
-            finally { active.delete(next.id); report(); }
-          }
-        };
-        await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
+              } catch { /* row is marked errored server-side; move on */ }
+              finally { active.delete(next.id); report(); }
+            }
+          };
+          await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
+        }, () => {
+          wait.timer = setInterval(() => {
+            if (!mountedRef.current) { stopWaiting(); return; }
+            listAtRef.current = Date.now();
+            void listKnowledgeDocuments(libraryId).then((ds) => {
+              if (mountedRef.current) setDocs(ds);
+            }, () => undefined);
+          }, LIST_EVERY_MS);
+        });
       } finally {
+        stopWaiting();
         autoIndexRef.current = false;
         if (mountedRef.current) {
           setAutoIndexing(null);
@@ -291,8 +346,8 @@ export default function KnowledgeLibraryPage() {
         try {
           await ingestKnowledgeDocument(doc.id, (indexed, total) => {
             read = indexed; of = total;
+            // The row on the shelf follows by itself (onIngestProgress).
             setUploadState({ name: file.name, phase: `Reading… ${indexed}${total ? ` / ${total}` : ""} pages` });
-            void listKnowledgeDocuments(libraryId).then(setDocs, () => undefined);
           });
           showToast({ type: "success", title: `Read ${read}${of ? ` of ${of}` : ""} page${(of ?? read) === 1 ? "" : "s"} of ${file.name}. It's searchable now.` });
         } catch (e) {
@@ -342,7 +397,8 @@ export default function KnowledgeLibraryPage() {
   const resumeIndex = async (doc: KnowledgeDocument) => {
     setReindexing(doc.id);
     try {
-      await ingestKnowledgeDocument(doc.id, () => { void listKnowledgeDocuments(libraryId).then(setDocs); });
+      // Its row on the shelf follows each batch (onIngestProgress).
+      await ingestKnowledgeDocument(doc.id);
       showToast({ type: "success", title: `${doc.name} indexed.` });
     } catch (e) {
       showToast({ type: "error", title: friendlyError(e) });
@@ -439,6 +495,21 @@ export default function KnowledgeLibraryPage() {
     if (next.has(id)) next.delete(id); else next.add(id);
     return next;
   });
+
+  // Drawing intelligence re-reads every passage in the library. It used to
+  // run again after every finished document of a long index; now it follows
+  // at once when nothing is indexing, and at most every DRAWING_REFRESH_MS
+  // while documents still are. Null until the shelf has loaded.
+  const readyCount = docGroups.ready + docGroups.partial;
+  const [drawingKey, setDrawingKey] = useState<number | null>(null);
+  const drawingKeyAt = useRef(0);
+  useEffect(() => {
+    if (loading || readyCount === drawingKey) return;
+    const settle = () => { drawingKeyAt.current = Date.now(); setDrawingKey(readyCount); };
+    if (drawingKey === null || docGroups.working === 0) { settle(); return; }
+    const t = setTimeout(settle, Math.max(0, drawingKeyAt.current + DRAWING_REFRESH_MS - Date.now()));
+    return () => clearTimeout(t);
+  }, [loading, readyCount, drawingKey, docGroups.working]);
 
   if (loading) {
     return (
@@ -875,7 +946,7 @@ export default function KnowledgeLibraryPage() {
 
       {activeOrgId && library.aiFeatures?.drawingIntel === true && (
         <DrawingIntelPanel orgId={activeOrgId} libraryId={libraryId}
-          isController={isController} refreshKey={readyDocs}
+          isController={isController} refreshKey={drawingKey ?? readyDocs}
           onRebuilt={() => void refresh()} />
       )}
       {activeOrgId && (

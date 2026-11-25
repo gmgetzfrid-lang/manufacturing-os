@@ -120,13 +120,19 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Create / update a template definition ──────────────────────────────
+  // The template file must be this workspace's own upload: generate reads it
+  // with the service role, so a foreign key here would read another org's file.
+  const templateFileKey = body.templateFileKey ? String(body.templateFileKey) : null;
+  if (templateFileKey && (!templateFileKey.startsWith(`orgs/${orgId}/`) || templateFileKey.includes(".."))) {
+    return bad("That file isn't an output-template upload.", 403);
+  }
   const id = String(body.id ?? "").trim();
   const fields: Record<string, unknown> = {
     org_id: orgId,
     name: String(body.name ?? "").trim() || "Untitled template",
     description: String(body.description ?? "").trim() || null,
     kind: body.kind === "xlsx" ? "xlsx" : "docx",
-    template_file_key: body.templateFileKey ? String(body.templateFileKey) : null,
+    template_file_key: templateFileKey,
     template_file_name: body.templateFileName ? String(body.templateFileName) : null,
     example_files: Array.isArray(body.exampleFiles) ? body.exampleFiles : [],
     example_text: body.exampleText ? String(body.exampleText).slice(0, 20000) : null,

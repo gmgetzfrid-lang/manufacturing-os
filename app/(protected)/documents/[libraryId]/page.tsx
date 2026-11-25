@@ -3193,6 +3193,7 @@ export default function LibraryExplorerPage() {
           libraryId,
           folderPath: [...folderPath, ...subPath],
           filename: file.name,
+          unique: true,
         });
         // Fingerprint alongside the transfer when the staging window skipped
         // it (big batches) — duplicates and the estate still match on it.

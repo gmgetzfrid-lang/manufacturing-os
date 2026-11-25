@@ -59,8 +59,12 @@ export default function WidgetFrame({ widget, editing, size, onRemove, onOpenSet
   }, []);
 
   // Stay current on its own: a timer, and a catch-up when the tab comes back.
+  // The timer skips while the tab is hidden (a background tab reloaded every
+  // widget every 5 minutes for nobody); coming back catches up at once.
   useEffect(() => {
-    const t = setInterval(() => setRefreshKey((k) => k + 1), AUTO_REFRESH_MS);
+    const t = setInterval(() => {
+      if (document.visibilityState !== "hidden") setRefreshKey((k) => k + 1);
+    }, AUTO_REFRESH_MS);
     const onVis = () => {
       if (document.visibilityState === "visible" && loadedAtRef.current && Date.now() - loadedAtRef.current > 60_000) {
         setRefreshKey((k) => k + 1);

@@ -20,16 +20,50 @@ export async function loadDocTop(orgId: string): Promise<{ libs: DocLib[]; total
   if (!rich.error) libs = (rich.data ?? []) as DocLib[];
   else libs = ((await supabase.from("libraries").select("id, name").eq("org_id", orgId).order("name")).data ?? []) as DocLib[];
   const head = libs.slice(0, 24);
-  const [counted, totalDocs, newDates] = await Promise.all([
-    Promise.all(head.map(async (l) => ({
-      ...l,
-      count: await headCount(() => supabase.from("documents").select("id", { count: "exact", head: true })
-        .eq("org_id", orgId).eq("library_id", l.id) as unknown as Promise<{ count: number | null }>),
-    }))),
-    headCount(() => supabase.from("documents").select("id", { count: "exact", head: true }).eq("org_id", orgId) as unknown as Promise<{ count: number | null }>),
+  const [grouped, newDates] = await Promise.all([
+    libraryDocCounts(orgId),
     fetchRecentDates("documents", orgId, 14),
   ]);
+  if (grouped) {
+    // One grouped count for every library (and the total) in one request.
+    const totalDocs = [...grouped.values()].reduce((a, c) => a + c.docs, 0);
+    return { libs: [...head.map((l) => ({ ...l, count: grouped.get(l.id)?.docs ?? 0 })), ...libs.slice(24)], totalDocs, newDates };
+  }
+  const [counted, totalDocs] = await Promise.all([
+    Promise.all(head.map(async (l) => ({
+      ...l,
+      count: await headCount(() => supabase.from("documents").select("id", { count: "estimated", head: true })
+        .eq("org_id", orgId).eq("library_id", l.id) as unknown as Promise<{ count: number | null }>),
+    }))),
+    headCount(() => supabase.from("documents").select("id", { count: "estimated", head: true }).eq("org_id", orgId) as unknown as Promise<{ count: number | null }>),
+  ]);
   return { libs: [...counted, ...libs.slice(24)], totalDocs, newDates };
+}
+
+/** Documents (and checked-out ones) per library, in ONE request: the
+ *  library_document_counts function (supabase/PENDING_load_2026-11-25.sql).
+ *  Null when it isn't there yet (PGRST202 / 42883) or didn't answer: the
+ *  caller then counts library by library, as before. The Document Control
+ *  widget and the libraries strip start together: they share one answer. */
+const docCountsAsked = new Map<string, { at: number; p: Promise<Map<string, { docs: number; out: number }> | null> }>();
+function libraryDocCounts(orgId: string): Promise<Map<string, { docs: number; out: number }> | null> {
+  const hit = docCountsAsked.get(orgId);
+  if (hit && Date.now() - hit.at < 5_000) return hit.p;
+  const p = (async () => {
+    try {
+      const { data, error } = await supabase.rpc("library_document_counts", { p_org_id: orgId });
+      if (error || !Array.isArray(data)) return null;
+      const out = new Map<string, { docs: number; out: number }>();
+      for (const r of data as Array<{ library_id: string; docs: number | string; checked_out: number | string }>) {
+        out.set(r.library_id, { docs: Number(r.docs) || 0, out: Number(r.checked_out) || 0 });
+      }
+      return out;
+    } catch {
+      return null;
+    }
+  })();
+  docCountsAsked.set(orgId, { at: Date.now(), p });
+  return p;
 }
 
 // ─── Drafting Requests: the open ones ──────────────────────────────
@@ -105,14 +139,23 @@ export async function loadHomeLibraries(orgId: string, uid: string | null): Prom
   try {
     const { data } = await supabase.from("libraries").select("id, name").eq("org_id", orgId).order("name").limit(12);
     const rows = (data ?? []) as Array<{ id: string; name: string | null }>;
+    // One grouped count when the database has it; otherwise two counts per
+    // library, as before.
+    const lastP = lastChanges(orgId, rows.map((l) => l.id), uid);
+    const grouped = await libraryDocCounts(orgId);
     const [counted, last] = await Promise.all([
-      Promise.all(rows.map(async (l) => ({
+      Promise.all(rows.map(async (l) => grouped ? {
         id: l.id,
         name: l.name ?? "Library",
-        docs: await nullableCount(() => supabase.from("documents").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("library_id", l.id)),
-        out: await nullableCount(() => supabase.from("documents").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("library_id", l.id).not("checked_out_by", "is", null)),
-      }))),
-      lastChanges(orgId, rows.map((l) => l.id), uid),
+        docs: grouped.get(l.id)?.docs ?? 0,
+        out: grouped.get(l.id)?.out ?? 0,
+      } : {
+        id: l.id,
+        name: l.name ?? "Library",
+        docs: await nullableCount(() => supabase.from("documents").select("id", { count: "estimated", head: true }).eq("org_id", orgId).eq("library_id", l.id)),
+        out: await nullableCount(() => supabase.from("documents").select("id", { count: "estimated", head: true }).eq("org_id", orgId).eq("library_id", l.id).not("checked_out_by", "is", null)),
+      })),
+      lastP,
     ]);
     const withLast: HomeLibRow[] = counted.map((l) => ({ ...l, last: last.get(l.id) ?? null }));
     // The library changed most recently first, so the busy ones are in sight.

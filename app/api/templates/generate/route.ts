@@ -126,6 +126,11 @@ export async function POST(req: NextRequest) {
   if (body.action !== "render") {
     const sourceFileKey = String(body.sourceFileKey ?? "").trim();
     if (!sourceFileKey) return bad("Upload the data file first.");
+    // Only a data file uploaded for this workspace's templates, never any
+    // other object in the bucket (the read bypasses document access rules).
+    if (!sourceFileKey.startsWith(`orgs/${orgId}/output-data/`) || sourceFileKey.includes("..")) {
+      return bad("That file isn't a data upload for this workspace.", 403);
+    }
 
     let sheetData;
     try {
@@ -320,6 +325,9 @@ export async function POST(req: NextRequest) {
   const docs = Array.isArray(body.documents) ? body.documents : [];
   if (docs.length === 0) return bad("Nothing to render.");
 
+  if (!tpl.template_file_key.startsWith(`orgs/${orgId}/`) || tpl.template_file_key.includes("..")) {
+    return bad("This template's file isn't stored in this workspace. Upload it again.", 403);
+  }
   let templateBytes: Buffer;
   try {
     templateBytes = await fetchBytes(tpl.template_file_key);

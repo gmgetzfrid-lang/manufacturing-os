@@ -338,6 +338,7 @@ export async function createDocumentWithFile(input: {
     libraryId: input.libraryId,
     folderPath: input.folderPath,
     filename: `Rev0_${input.file.name || "drawing.pdf"}`,
+    unique: true,
   });
   const uploadResult = await uploadToPath(input.file, storagePath, { contentType: input.file.type });
 

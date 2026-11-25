@@ -39,12 +39,13 @@ const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const no = (error: string, status: number) =>
   NextResponse.json({ error }, { status, headers: { "Cache-Control": "no-store" } });
 
-async function readObject(path: string): Promise<Uint8Array> {
-  if (/^https?:\/\//i.test(path)) {
-    const res = await fetch(path);
-    if (!res.ok) throw new Error(`upstream ${res.status}`);
-    return new Uint8Array(await res.arrayBuffer());
-  }
+/** Bytes from the app's own bucket only. A web address is never fetched
+ *  (a stored file_url must not make the server call arbitrary hosts), and a
+ *  key under another workspace's folder is refused. */
+async function readObject(path: string, orgId: string): Promise<Uint8Array> {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(path)) throw new Error("not a storage key");
+  const owner = path.match(/^orgs\/([0-9a-fA-F-]{36})\//)?.[1];
+  if (owner && owner.toLowerCase() !== orgId.toLowerCase()) throw new Error("key outside this workspace");
   const obj = await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: path }));
   const bytes = await obj.Body?.transformToByteArray();
   if (!bytes) throw new Error("empty object body");
@@ -116,7 +117,7 @@ export async function GET(req: NextRequest) {
   if (!doc) return no("notfound", 404);
 
   // The marked-up copy when the sender sent one, else the issued file.
-  const issued = await resolveIssuedFile(sb, doc);
+  const issued = await resolveIssuedFile(sb, { ...doc, org_id: share.org_id });
   const path = item.markupPath ?? issued?.path ?? null;
   if (!path) return no("nofile", 404);
   const kind = item.markupPath ? "pdf" : fileKind(path, issued?.fileType);
@@ -124,7 +125,7 @@ export async function GET(req: NextRequest) {
   const versionId = issued?.versionId ?? doc.current_version_id ?? null;
 
   let source: Uint8Array;
-  try { source = await readObject(path); }
+  try { source = await readObject(path, share.org_id); }
   catch (e) {
     console.warn("[share/file] file fetch failed", (e as Error).message);
     return no("unavailable", 502);

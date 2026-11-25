@@ -216,6 +216,9 @@ function ProjectDetail() {
   type StepRow = { id: string; parent_id: string | null; status: string; percent_complete: number | null; is_summary: boolean | null; cancelled_at: string | null; actual_start_at: string | null; attributes: unknown };
   const stepsKey0 = projectStepsKey(projectId, activeOrgId, uid);
   const [stepRows, setStepRows] = useState<StepRow[] | null>(() => lastLoaded<StepRow[]>(stepsKey0) ?? null);
+  // A read that failed is said, with a retry: never "no steps" (an empty Plan).
+  const [stepsErr, setStepsErr] = useState<string | null>(null);
+  const [stepsTry, setStepsTry] = useState(0);
   useEffect(() => {
     if (!projectId) return;
     let live = true;
@@ -224,11 +227,14 @@ function ProjectDetail() {
       .eq("project_id", projectId).order("id").range(from, to))
       .then(({ rows, error }) => {
         if (!live) return;
-        setStepRows(error ? [] : rows);
-        if (!error) keepLoaded(stepsKey0, rows);
+        // Steps already on screen stay.
+        if (error) { setStepsErr(error); return; }
+        setStepsErr(null);
+        setStepRows(rows);
+        keepLoaded(stepsKey0, rows);
       });
     return () => { live = false; };
-  }, [projectId, stepsKey0]);
+  }, [projectId, stepsKey0, stepsTry]);
   // Where the work stands, phase by phase: done means every phase has a
   // schedule and all of it is done.
   const state = React.useMemo(() => (stepRows ? workState(stepRows, project?.phases ?? []) : null), [stepRows, project?.phases]);
@@ -961,7 +967,9 @@ function ProjectDetail() {
         )}
         {(tab === "intake" || isScheduleTab(tab) || !tab) && !uid && <SkeletonRows rows={5} what="your access" />}
         {/* Where to open is decided by the schedule: until it's read, say so. */}
-        {!tab && uid && <SkeletonRows rows={6} what="the schedule" />}
+        {!tab && uid && (stepsErr && !stepRows
+          ? <ErrorNote title="Couldn't load the schedule." next={sayError(stepsErr)} onRetry={() => { setStepsErr(null); setStepsTry((n) => n + 1); }} />
+          : <SkeletonRows rows={6} what="the schedule" />)}
         {tab === "costs" && project.id && project.orgId && uid && (
           <CostsTab
             orgId={project.orgId}

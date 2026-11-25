@@ -74,7 +74,7 @@ export default function ServiceWorkerManager() {
       {offline && (
         <div role="status" className="ui-float pointer-events-auto inline-flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-body font-medium px-3 py-1.5">
           <WifiOff aria-hidden className="w-3.5 h-3.5 text-[var(--state-held)]" />
-          Offline. Showing what was saved on this device.
+          Offline. Changes won&apos;t save until you&apos;re back online.
         </div>
       )}
       {updateReady && (

@@ -5,12 +5,14 @@
 // complete (or abort on failure, so no orphaned part storage accrues).
 //
 // Auth mirrors /api/storage/upload-url exactly: bearer session + active
-// membership of the org that owns the key prefix.
+// membership of the org that owns the key prefix (or the caller's own
+// avatar folder), and only Admin or Doc Control may start an upload onto a
+// key that already holds a file.
 
 import { NextRequest, NextResponse } from "next/server";
 import {
   CreateMultipartUploadCommand, UploadPartCommand,
-  CompleteMultipartUploadCommand, AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand, AbortMultipartUploadCommand, HeadObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2, R2_BUCKET } from "@/lib/r2";
@@ -21,6 +23,18 @@ export const runtime = "nodejs";
 
 function bad(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
+}
+
+/** true / false, or null when storage couldn't say (treated as a refusal). */
+async function objectExists(key: string): Promise<boolean | null> {
+  try {
+    await r2.send(new HeadObjectCommand({ Bucket: R2_BUCKET, Key: key }));
+    return true;
+  } catch (e) {
+    const err = e as { name?: string; $metadata?: { httpStatusCode?: number } };
+    if (err?.name === "NotFound" || err?.$metadata?.httpStatusCode === 404) return false;
+    return null;
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -37,18 +51,29 @@ export async function POST(req: NextRequest) {
   try { assertSafeStorageKey(path); } catch { return bad("Invalid path"); }
 
   // Same key-level authorization as upload-url: org-prefixed keys demand
-  // active membership in that org.
+  // active membership in that org; the only other place is the caller's own
+  // avatar folder.
   const orgMatch = path.match(/^orgs\/([0-9a-fA-F-]{36})\//);
+  const ownAvatar = path.startsWith(`avatars/${user.id}/`);
+  if (!orgMatch && !ownAvatar) return bad("You can't upload to that place.", 403);
+  let controller = false;
   if (orgMatch) {
     const { data: member } = await supabaseAdmin
-      .from("org_members").select("uid")
+      .from("org_members").select("role, roles")
       .eq("org_id", orgMatch[1]).eq("uid", user.id).eq("status", "active")
       .maybeSingle();
     if (!member) return bad("Not a member of this workspace", 403);
+    const roles = [member.role as string, ...(((member.roles as string[] | null) ?? []))];
+    controller = roles.includes("Admin") || roles.includes("DocCtrl");
   }
 
   try {
     if (action === "create") {
+      if (!controller && !ownAvatar) {
+        const exists = await objectExists(path);
+        if (exists === null) return bad("Couldn't check storage. Try again.", 503);
+        if (exists) return bad("A file is already stored there. Only Admin or Doc Control can replace it.", 409);
+      }
       const out = await r2.send(new CreateMultipartUploadCommand({
         Bucket: R2_BUCKET, Key: path,
         ContentType: String(body.contentType ?? "application/octet-stream"),

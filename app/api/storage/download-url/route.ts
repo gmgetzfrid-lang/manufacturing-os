@@ -50,37 +50,44 @@ export async function GET(req: NextRequest) {
     // or hidden AND the caller can't discover it under its ACL, deny — else a
     // member could read the bytes of a doc the ACL hides from them. This only
     // ever tightens access for private/hidden docs; normal docs are unaffected.
-    // Fail OPEN to the membership check on any lookup error, so a legitimate
-    // download is never broken by this extra guard.
+    // Fail CLOSED on any lookup error: if the ACL can't be read, no URL is
+    // signed (a retry a moment later works once the database answers).
     try {
       const orgId = orgMatch[1];
-      const { data: ver } = await supabaseAdmin
+      // EVERY document whose versions use this file, not just the first: a
+      // member could otherwise add a version of their own pointing at a
+      // restricted file's key, so the check read their row instead.
+      const { data: vers, error: verErr } = await supabaseAdmin
         .from("document_versions")
         .select("record_id")
         .eq("file_url", path)
-        .limit(1)
-        .maybeSingle();
-      const docId = (ver?.record_id as string | undefined) ?? undefined;
-      if (docId) {
-        const { data: doc } = await supabaseAdmin
-          .from("documents")
-          .select("visibility, acl, acl_index, org_id")
-          .eq("id", docId)
-          .maybeSingle();
-        const visibility = (doc?.visibility as NodeVisibility | undefined) ?? "normal";
-        if (doc && (visibility === "private" || visibility === "hidden")) {
-          const [{ data: mem }, { data: teams }] = await Promise.all([
-            supabaseAdmin.from("org_members").select("role").eq("org_id", orgId).eq("uid", user.id).eq("status", "active").maybeSingle(),
-            supabaseAdmin.from("team_members").select("team_id").eq("uid", user.id),
-          ]);
+        .limit(50);
+      if (verErr) throw verErr;
+      const docIds = [...new Set(((vers ?? []) as Array<{ record_id: string | null }>).map((v) => v.record_id).filter(Boolean) as string[])];
+      const { data: docRows, error: docErr } = docIds.length
+        ? await supabaseAdmin.from("documents").select("id, visibility, acl, acl_index, org_id").in("id", docIds)
+        : { data: [], error: null };
+      if (docErr) throw docErr;
+      const docs = (docRows ?? []) as Array<{ id: string; visibility: NodeVisibility | null; acl: unknown; acl_index: unknown; org_id: string }>;
+      // Who's asking, read once (only when a document needs it).
+      let who: { roles: string[]; role: Role; teamIds: string[] } | null = null;
+      const asker = async () => {
+        if (who) return who;
+        const [{ data: mem, error: memErr }, { data: teams, error: teamsErr }] = await Promise.all([
+          supabaseAdmin.from("org_members").select("role, roles").eq("org_id", orgId).eq("uid", user.id).eq("status", "active").maybeSingle(),
+          supabaseAdmin.from("team_members").select("team_id").eq("uid", user.id),
+        ]);
+        if (memErr || teamsErr) throw memErr ?? teamsErr;
+        const role = ((mem?.role as Role | undefined) ?? "Viewer");
+        who = { role, roles: ((mem?.roles as string[] | null) ?? [role]), teamIds: (teams ?? []).map((t) => t.team_id as string) };
+        return who;
+      };
+      for (const doc of docs) {
+        const visibility = (doc.visibility ?? "normal") as NodeVisibility;
+        if (visibility === "private" || visibility === "hidden") {
+          const w = await asker();
           const allowed = canDiscover({
-            principal: {
-              uid: user.id,
-              role: (mem?.role as Role) ?? "Viewer",
-              orgId,
-              teamIds: (teams ?? []).map((t) => t.team_id as string),
-              isActiveMember: true,
-            },
+            principal: { uid: user.id, role: w.role, orgId, teamIds: w.teamIds, isActiveMember: true },
             aclChain: [doc.acl as AccessControl | undefined],
             visibility,
           });
@@ -92,26 +99,21 @@ export async function GET(req: NextRequest) {
         // enforcement point for bytes, so an ACL "deny download" must not be
         // routable around via a hand-built request. acl_index is
         // chain-resolved, so inherited denies are covered.
-        const idx = (doc?.acl_index as { deny?: { users?: Record<string, string[]>; roles?: Record<string, string[]>; teams?: Record<string, string[]> } } | null) ?? null;
+        const idx = (doc.acl_index as { deny?: { users?: Record<string, string[]>; roles?: Record<string, string[]>; teams?: Record<string, string[]> } } | null) ?? null;
         const dl = idx?.deny;
-        if (doc && dl && ((dl.users?.download?.length ?? 0) > 0 || (dl.roles?.download?.length ?? 0) > 0 || (dl.teams?.download?.length ?? 0) > 0)) {
-          const [{ data: mem2 }, { data: teams2 }] = await Promise.all([
-            supabaseAdmin.from("org_members").select("role, roles").eq("org_id", orgId).eq("uid", user.id).eq("status", "active").maybeSingle(),
-            supabaseAdmin.from("team_members").select("team_id").eq("uid", user.id),
-          ]);
-          const heldRoles = ((mem2?.roles as string[] | null) ?? [(mem2?.role as string) ?? "Viewer"]);
-          const teamIds2 = (teams2 ?? []).map((t) => t.team_id as string);
+        if (dl && ((dl.users?.download?.length ?? 0) > 0 || (dl.roles?.download?.length ?? 0) > 0 || (dl.teams?.download?.length ?? 0) > 0)) {
+          const w = await asker();
           const denied =
             (dl.users?.download ?? []).includes(user.id) ||
-            heldRoles.some((r) => (dl.roles?.download ?? []).includes(r)) ||
-            teamIds2.some((t) => (dl.teams?.download ?? []).includes(t));
+            w.roles.some((r) => (dl.roles?.download ?? []).includes(r)) ||
+            w.teamIds.some((t) => (dl.teams?.download ?? []).includes(t));
           if (denied) {
             return NextResponse.json({ error: "Downloading this document is denied for your account" }, { status: 403 });
           }
         }
       }
     } catch {
-      /* fail open to the membership check above — never break a valid download */
+      return NextResponse.json({ error: "Couldn't check access to this file. Try again." }, { status: 503 });
     }
   }
 
@@ -141,7 +143,12 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const expiresIn = parseInt(req.nextUrl.searchParams.get("expiresIn") || "3600");
+  // At most an hour for files. Logos, covers and avatars (branding and
+  // avatar folders) keep up to a week: the app caches those links for the
+  // length it asked for, and a shorter link would break the picture later.
+  const longLived = path.startsWith("avatars/") || /^orgs\/[0-9a-fA-F-]{36}\/branding\//.test(path);
+  const asked = parseInt(req.nextUrl.searchParams.get("expiresIn") || "3600", 10);
+  const expiresIn = Math.min(longLived ? 604800 : 3600, Math.max(60, Number.isFinite(asked) ? asked : 3600));
 
   const command = new GetObjectCommand({
     Bucket: R2_BUCKET,

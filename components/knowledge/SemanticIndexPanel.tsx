@@ -40,6 +40,11 @@ import {
  *  this is a floor-of-magnitude estimate, not a quote. */
 const CENTS_PER_1K_PASSAGES = 1;
 
+/** When the database is too busy to count: ask again after these waits,
+ *  then stop asking until the page is opened again. */
+const RECOUNT_AFTER_MS = [20_000, 60_000, 180_000, 300_000];
+const COUNT_GAVE_UP = "The database was too busy to count the meaning index. Open this page again later to see it.";
+
 /** Other panels showing the same library's meaning index (the Health panel)
  *  listen for this, so the two never show different numbers. */
 export const MEANING_PROGRESS_EVENT = "knowledge:meaning-progress";
@@ -67,25 +72,48 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
    *  busy to count, instead of an error or a zero. */
   const lastGood = useRef<SemanticProgress | null>(null);
   const [recountTick, setRecountTick] = useState(0);
+  // Each count reads every passage in the library. A busy database is asked
+  // again after 20 s, 1, 3 and 5 minutes, then left alone (it used to be
+  // asked every 20 s for as long as the page stayed open).
+  const recounts = useRef(0);
+  const recountTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (recountTimer.current) clearTimeout(recountTimer.current); }, []);
+  useEffect(() => { recounts.current = 0; }, [key]);
 
   const load = useCallback(async () => {
     const prior = lastGood.current;
+    // Look again later, backing off; false once the tries are used up.
+    const recountLater = (): boolean => {
+      const delay = RECOUNT_AFTER_MS[recounts.current];
+      if (delay === undefined) return false;
+      recounts.current += 1;
+      if (recountTimer.current) clearTimeout(recountTimer.current);
+      recountTimer.current = setTimeout(() => setRecountTick((n) => n + 1), delay);
+      return true;
+    };
     try {
       const status = await semanticStatus(orgId, libraryId, prior);
       if (status.countUnavailable) {
         // Busy and nothing known yet: say "counting", look again shortly.
+        if (!recountLater() && !prior) {
+          setState({ key, status: null, unavailable: COUNT_GAVE_UP });
+          return;
+        }
         setState({ key, status: prior, unavailable: null });
-        setTimeout(() => setRecountTick((n) => n + 1), 20_000);
         return;
       }
+      recounts.current = 0;
       if (!status.busy) lastGood.current = status;
       setState({ key, status, unavailable: null });
       announce(libraryId, status);
     } catch (e) {
       // A gateway hiccup is weather: keep what's on screen, look again soon.
       if ((e as { transient?: boolean }).transient) {
+        if (!recountLater() && !prior) {
+          setState({ key, status: null, unavailable: COUNT_GAVE_UP });
+          return;
+        }
         setState({ key, status: prior, unavailable: null });
-        setTimeout(() => setRecountTick((n) => n + 1), 20_000);
         return;
       }
       // A missing migration is the common case and is a setup state, not an
@@ -121,6 +149,12 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
       } else if (final.done) {
         setBuildNote({ tone: "ok", text: "Meaning index complete: every passage carries a vector." });
         showToast({ type: "success", title: "Meaning index complete." });
+      } else if (final.paused && final.elsewhere) {
+        setBuildNote({
+          tone: "info",
+          text: "Another build of this library is running (another tab or person, or the background build), so this tab stepped back. "
+            + "Everything built is saved; press Build index to drive it from this tab again.",
+        });
       } else if (final.paused) {
         setBuildNote({
           tone: "info",
@@ -250,7 +284,8 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
           <Bar segments={[{ key: "built", value: covered, color: "var(--color-main)" }]} total={status.total} label={`${pct}% built`} />
           <p className="mt-1.5 flex items-center gap-1.5 text-body text-[var(--color-text-muted)]">
             {building && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-            {building && status.busy ? "Database busy: pausing a moment, nothing lost."
+            {building && status.elsewhere ? "Another build of this library is running: waiting for it, nothing lost."
+              : building && status.busy ? "Database busy: pausing a moment, nothing lost."
               : complete ? "Every passage carries a vector."
               : covered === 0 ? "Not built yet. Questions use keyword search alone."
               : "Partly built. The rest are keyword-only until this finishes."}

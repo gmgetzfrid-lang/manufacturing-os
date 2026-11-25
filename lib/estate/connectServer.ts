@@ -267,7 +267,8 @@ export async function connectEverything(admin: SupabaseClient, input: { orgId: s
   steps.push({ key: "read", title: "Drawings watched", state: "done", detail: readBits.join(" · ") });
 
   // 3. Index: server drains the text layer within the budget; the rest goes to the browser.
-  const drained = Date.now() < deadline ? await drainKnowledgeIngestQueue({ maxPages: 150, deadlineMs: Math.min(deadline, Date.now() + 20_000) }).catch(() => ({ docsTouched: 0, pagesIndexed: 0, completed: 0, errors: [] as string[] })) : { docsTouched: 0, pagesIndexed: 0, completed: 0, errors: [] as string[] };
+  // Only this workspace's read library: the queue is every workspace's.
+  const drained = Date.now() < deadline ? await drainKnowledgeIngestQueue({ maxPages: 150, deadlineMs: Math.min(deadline, Date.now() + 20_000), libraryIds: [r.libraryId], orgId }).catch(() => ({ docsTouched: 0, pagesIndexed: 0, completed: 0, errors: [] as string[] })) : { docsTouched: 0, pagesIndexed: 0, completed: 0, errors: [] as string[] };
   const { data: queuedRows } = await admin.from("knowledge_documents").select("id, status").eq("library_id", r.libraryId).in("status", ["pending", "stale", "indexing"]).order("created_at", { ascending: true }).limit(500);
   const queued = (queuedRows as Array<{ id: string }> | null) ?? [];
   const { count: readyCount } = await admin.from("knowledge_documents").select("id", { count: "exact", head: true }).eq("library_id", r.libraryId).eq("status", "ready");

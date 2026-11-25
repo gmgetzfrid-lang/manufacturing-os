@@ -211,12 +211,16 @@ export function makeLibraryStoragePath(params: {
   libraryId: string;
   folderPath?: string[];
   filename: string;
+  /** A fresh folder of its own (the file keeps its name): a same-named
+   *  upload never lands on another document's stored file. */
+  unique?: boolean;
 }) {
-  const { orgId, libraryId, folderPath, filename } = params;
+  const { orgId, libraryId, folderPath, filename, unique } = params;
   const safeName = sanitizeFilename(filename);
   const base = joinPath("orgs", orgId, "libraries", libraryId);
   const folder = (folderPath ?? []).map((f) => sanitizeFilename(f));
-  return joinPath(base, ...folder, safeName);
+  const own = unique ? [`u${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`] : [];
+  return joinPath(base, ...folder, ...own, safeName);
 }
 
 // ── Chunked (multipart) uploads for big files ────────────────────────────────
