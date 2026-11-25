@@ -357,8 +357,9 @@ export default function RestorePage() {
         factsHero="none"
         facts={plan ? [
           { label: "Records", value: fmtNum(plan.counts.totalRows) },
-          { label: "People re-linked", value: fmtNum(plan.counts.matchedUsers) },
-          { label: fileEntryCount ? "Files in the ZIP" : "Files", value: fmtNum(fileEntryCount || plan.counts.files) },
+          // Zeros that aren't news stay out (B7).
+          ...(plan.counts.matchedUsers > 0 ? [{ label: "People re-linked", value: fmtNum(plan.counts.matchedUsers) }] : []),
+          ...((fileEntryCount || plan.counts.files) > 0 ? [{ label: fileEntryCount ? "Files in the ZIP" : "Files", value: fmtNum(fileEntryCount || plan.counts.files) }] : []),
         ] : undefined}
         tools={step === 1 ? (
           <button type="button" className={heroQuiet} onClick={() => { setPlan(null); setPicked(null); setError(null); }}>
@@ -548,9 +549,10 @@ export default function RestorePage() {
                   <p className="mb-3 text-body text-[var(--color-text-muted)]">{plural(fileEntryCount, "file")} in this ZIP.</p>
                 )}
                 {failedFiles.length > 0 && !filesProgress.running && (
-                  <ul className="mb-3 rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] max-h-64 overflow-y-auto">
+                  // Inside the sheet: a spaced list, not a second box (B3).
+                  <ul className="mb-3 grid gap-2 max-h-64 overflow-y-auto">
                     {failedFiles.slice(0, 50).map((f) => (
-                      <li key={f.entry} className="px-3 py-2 flex items-center gap-2">
+                      <li key={f.entry} className="flex items-center gap-2">
                         <span className="min-w-0 flex-1">
                           <span className="block text-body font-mono font-medium text-[var(--color-text)] truncate" title={f.key}>{f.key.split("/").pop()}</span>
                           <span className="block text-body text-[var(--state-overdue-text)] truncate">{said(f.error)}</span>
@@ -558,7 +560,7 @@ export default function RestorePage() {
                         <Button size="sm" variant="secondary" loading={!!f.retrying} onClick={() => void retryFile(f.entry, f.key)}>Try again</Button>
                       </li>
                     ))}
-                    {failedFiles.length > 50 && <li className="px-3 py-2 text-body text-[var(--color-text-muted)]">And {fmtNum(failedFiles.length - 50)} more</li>}
+                    {failedFiles.length > 50 && <li className="text-body text-[var(--color-text-muted)]">And {fmtNum(failedFiles.length - 50)} more</li>}
                   </ul>
                 )}
                 <div className="flex items-center justify-end gap-4 flex-wrap">

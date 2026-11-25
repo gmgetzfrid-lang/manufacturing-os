@@ -274,7 +274,7 @@ export default function GraphShapeWizard({
                               <input aria-label="Connection name"
                                 value={r.label}
                                 onChange={(e) => setRows((prev) => prev.map((x) => x.key === r.key ? { ...x, label: e.target.value } : x))}
-                                className="w-full px-2 py-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)]"
+                                className="w-full px-2 py-1 pointer-coarse:min-h-11 pointer-coarse:text-reading rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)]"
                                 maxLength={120}
                               />
                               <div className="text-body text-[var(--color-text-muted)] leading-snug">{r.reason}</div>
@@ -296,13 +296,13 @@ export default function GraphShapeWizard({
                       </div>
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <select aria-label="From" value={manual.a} onChange={(e) => setManual((m) => ({ ...m, a: e.target.value }))}
-                          className="flex-1 min-w-[8rem] px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body">
+                          className="flex-1 min-w-[8rem] px-2 py-1.5 pointer-coarse:min-h-11 pointer-coarse:text-reading rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body">
                           <option value="">From…</option>
                           {candidates.map((c) => <option key={c.ref} value={c.ref}>{c.type === "document" ? "📄" : "⚙"} {c.label}</option>)}
                         </select>
                         <ArrowRight className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
                         <select aria-label="To" value={manual.b} onChange={(e) => setManual((m) => ({ ...m, b: e.target.value }))}
-                          className="flex-1 min-w-[8rem] px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body">
+                          className="flex-1 min-w-[8rem] px-2 py-1.5 pointer-coarse:min-h-11 pointer-coarse:text-reading rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body">
                           <option value="">To…</option>
                           {candidates.filter((c) => c.ref !== manual.a).map((c) => <option key={c.ref} value={c.ref}>{c.type === "document" ? "📄" : "⚙"} {c.label}</option>)}
                         </select>
@@ -310,7 +310,7 @@ export default function GraphShapeWizard({
                       <div className="flex items-center gap-1.5">
                         <input aria-label="Relationship (optional)" value={manual.label} onChange={(e) => setManual((m) => ({ ...m, label: e.target.value }))}
                           placeholder="What is the relationship? (optional)"
-                          className="flex-1 px-2 py-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body" />
+                          className="flex-1 px-2 py-1.5 pointer-coarse:min-h-11 pointer-coarse:text-reading rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body" />
                         <button type="button" onClick={addManual} disabled={!manual.a || !manual.b}
                           className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-body font-medium text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] disabled:opacity-40">
                           <Plus className="w-3.5 h-3.5" /> Add

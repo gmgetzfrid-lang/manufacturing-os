@@ -485,7 +485,8 @@ export default function AnalyticsPage() {
         facts={loadError != null ? undefined : [
           { label: "Right first time", value: metrics.totalTickets > 0 ? formatPercent(1 - metrics.globalRevisionRate) : "-", tone: metrics.globalRevisionRate > 0.3 ? "warn" : undefined, hero: metrics.totalTickets > 0 },
           { label: "Requests", value: metrics.totalTickets.toLocaleString() },
-          { label: "Untouched a week", value: metrics.staleTickets, tone: metrics.staleTickets > 0 ? "warn" : undefined },
+          // None untouched isn't news; it shows only when some are (B7).
+          ...(metrics.staleTickets > 0 ? [{ label: "Untouched a week", value: metrics.staleTickets, tone: "warn" as const }] : []),
           { label: "Documents issued", value: `${metrics.issuedDocs.toLocaleString()} of ${metrics.totalDocs.toLocaleString()}` },
         ]}
       />
@@ -541,7 +542,8 @@ export default function AnalyticsPage() {
           {metrics.rootCauseData.length === 0 ? (
             <div className={`${sheet} px-4 py-8 text-center text-reading text-[var(--color-text-muted)]`}>Nothing has been sent back yet.</div>
           ) : (
-            <ul className={`${sheet} divide-y divide-[var(--color-border)] overflow-hidden`}>
+            // A short list of reasons: space between, no rule under each (B3).
+            <ul className={`${sheet} py-1.5 overflow-hidden`}>
               {metrics.rootCauseData.map((item, i) => (
                 <li key={i}>
                   <button type="button" onClick={() => setSelectedReason(item.reason)} className="w-full text-left px-4 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors group">

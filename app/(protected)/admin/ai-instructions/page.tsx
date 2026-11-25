@@ -138,8 +138,8 @@ function AiInstructionsInner() {
         title={answer}
         sub={canWrite ? "Your site's conventions, written once. The AI follows them on every call." : "Read only. Admin and Doc Control write these."}
         factsHero="none"
-        facts={rows && rows.length > 0 ? [
-          { label: "Followed", value: on },
+        facts={rows && off > 0 ? [
+          // How many are followed is the title; only the ones turned off add news.
           { label: "Turned off", value: off },
         ] : undefined}
         primary={canWrite ? (
@@ -190,7 +190,7 @@ function AiInstructionsInner() {
                 <tr key={r.id} className={`${tbl.tr} max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto]`}>
                   <td className={`${tbl.td} max-sm:col-span-2 max-sm:pb-0`}>
                     <div className="min-w-0">
-                      <div className={`font-medium ${r.enabled ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{r.title}</div>
+                      <div className={`text-reading font-medium ${r.enabled ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{r.title}</div>
                       <div className="text-body text-[var(--color-text-muted)] line-clamp-2 max-w-[80ch]" title={r.body}>{r.body}</div>
                       <div className="md:hidden mt-0.5 text-body text-[var(--color-text-muted)]">{SCOPE_LABELS[r.scope]}</div>
                     </div>

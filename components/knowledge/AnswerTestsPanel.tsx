@@ -19,6 +19,8 @@ import {
 } from "@/lib/knowledge";
 import AnswerTestEditor, { type AnswerTestDraft } from "@/components/knowledge/AnswerTestEditor";
 import { FieldError } from "@/components/ui/Field";
+import MoreMenu from "@/components/ui/MoreMenu";
+import { btnIcon } from "@/components/admin/kit";
 
 const CHECK_LABEL: Record<string, string> = {
   class_mixup: "Mixed up the pressure class",
@@ -96,7 +98,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
             {cases.length === 0
               ? "No tests yet. Under any answer, “Make this a test case” marks what a right answer must do."
               : shownRun
-                ? <>{cases.length} test{cases.length === 1 ? "" : "s"} · last run {when(shownRun.created_at)}: <b className={shownRun.failed ? "text-[var(--state-overdue)]" : "text-[var(--state-released)]"}>{shownRun.passed} of {shownRun.total} passed</b>{shownRun.status === "stopped" ? ` · stopped - ${shownRun.stop_reason ?? ""}` : ""} · ${Number(shownRun.cost_usd).toFixed(2)}</>
+                ? <>{cases.length} test{cases.length === 1 ? "" : "s"} · last run {when(shownRun.created_at)}: <span className={`font-medium ${shownRun.failed ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>{shownRun.passed} of {shownRun.total} passed</span>{shownRun.status === "stopped" ? ` · stopped - ${shownRun.stop_reason ?? ""}` : ""} · ${Number(shownRun.cost_usd).toFixed(2)}</>
                 : <>{cases.length} test{cases.length === 1 ? "" : "s"} · never run</>}
           </div>
         </button>
@@ -107,9 +109,9 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
         ) : cases.length > 0 && (
           <div className="flex items-center gap-1.5">
             <label className="text-body text-[var(--color-text-muted)] flex items-center gap-1" title="The run stops when it has spent this much on your key">
-              up to $<input value={cap} onChange={(e) => setCap(e.target.value.replace(/[^0-9.]/g, ""))} className="w-10 rounded border border-[var(--color-border)] bg-transparent px-1 py-0.5 text-body" />
+              up to $<input value={cap} onChange={(e) => setCap(e.target.value.replace(/[^0-9.]/g, ""))} className="w-10 pointer-coarse:w-16 pointer-coarse:min-h-11 pointer-coarse:text-reading rounded border border-[var(--color-border)] bg-transparent px-1 py-0.5 text-body" />
             </label>
-            <button onClick={() => void run()} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-1.5 text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+            <button onClick={() => void run()} className="inline-flex items-center gap-1.5 pointer-coarse:min-h-11 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-1.5 text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
               <Play className="w-3.5 h-3.5" /> Run tests
             </button>
           </div>
@@ -151,7 +153,7 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
           {state.runs.length > 0 && (
             <div className="flex items-center gap-2 flex-wrap text-body text-[var(--color-text-muted)]">
               <span>Showing run</span>
-              <select aria-label="Showing run" value={state.runId ?? ""} onChange={(e) => void load(e.target.value)} className="rounded border border-[var(--color-border)] bg-transparent px-1.5 py-0.5">
+              <select aria-label="Showing run" value={state.runId ?? ""} onChange={(e) => void load(e.target.value)} className="pointer-coarse:min-h-11 pointer-coarse:text-reading rounded border border-[var(--color-border)] bg-transparent px-1.5 py-0.5">
                 {state.runs.map((r) => (
                   <option key={r.id} value={r.id}>{when(r.created_at)} - {r.passed}/{r.total}{r.is_baseline ? " (baseline)" : ""} · version {r.engine_version ?? "?"}</option>
                 ))}
@@ -179,18 +181,21 @@ export default function AnswerTestsPanel({ orgId, libraryId }: { orgId: string; 
                     <button onClick={() => setExpanded(isOpen ? null : c.id)} className="flex-1 min-w-0 text-left">
                       <div className="text-body text-[var(--color-text)]">
                         {c.question}
-                        {c.tags.includes("critical") && <span className="ml-1.5 rounded bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] px-1 text-body font-medium text-[var(--state-held)]">critical</span>}
+                        {c.tags.includes("critical") && <span className="ml-1.5 text-body font-medium text-[var(--color-text-muted)]">critical</span>}
                         {before === true && r?.pass === false && <span className="ml-1.5 text-body font-medium text-[var(--state-overdue)]">was passing</span>}
-                        {before === false && r?.pass === true && <span className="ml-1.5 text-body font-medium text-[var(--state-released)]">now passing</span>}
+                        {before === false && r?.pass === true && <span className="ml-1.5 text-body font-medium text-[var(--color-text-muted)]">now passing</span>}
                       </div>
                       {r?.error && <div className="text-body text-[var(--state-overdue)]">Couldn&apos;t run: {r.error}</div>}
                       {!r?.error && failing.length > 0 && (
                         <div className="text-body text-[var(--state-overdue)]">{[...new Set(failing.map((k) => CHECK_LABEL[k.code] ?? k.code))].join(" · ")}</div>
                       )}
                     </button>
-                    <button aria-label="Run this test" title="Run this test" disabled={!!running} onClick={() => void run([c.id])} className="inline-flex items-center justify-center pointer-coarse:size-11 p-1 text-[var(--color-text-muted)] hover:text-[var(--color-accent-hover)] disabled:opacity-40"><Play className="w-3.5 h-3.5" /></button>
-                    <button aria-label="Edit test" title="Edit" onClick={() => setEditing(toDraft(c))} className="inline-flex items-center justify-center pointer-coarse:size-11 p-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><Pencil className="w-3.5 h-3.5" /></button>
-                    <button aria-label="Remove test" title="Remove" onClick={() => void archiveAnswerTest(orgId, c.id).then(() => load(state.runId ?? undefined), (e: unknown) => setError(`The test wasn't removed: ${friendlyError(e)}`))} className="inline-flex items-center justify-center pointer-coarse:size-11 p-1 text-[var(--color-text-muted)] hover:text-[var(--state-overdue)]"><Trash2 className="w-3.5 h-3.5" /></button>
+                    {/* Three actions on every row: one menu (A3, B6). */}
+                    <MoreMenu iconOnly label={`More for this test`} triggerClass={`${btnIcon} shrink-0`} items={[
+                      ...(!running ? [{ icon: <Play className="w-4 h-4" />, label: "Run this test", onClick: () => { void run([c.id]); } }] : []),
+                      { icon: <Pencil className="w-4 h-4" />, label: "Edit test", onClick: () => setEditing(toDraft(c)) },
+                      { icon: <Trash2 className="w-4 h-4" />, label: "Remove test", tone: "bad" as const, line: true, onClick: () => { void archiveAnswerTest(orgId, c.id).then(() => load(state.runId ?? undefined), (e: unknown) => setError(`The test wasn't removed: ${friendlyError(e)}`)); } },
+                    ]} />
                   </div>
                   {isOpen && r && (
                     <div className="mt-2 ml-6 space-y-2">

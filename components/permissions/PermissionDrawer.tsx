@@ -185,6 +185,8 @@ export default function PermissionsDrawer(props: {
 
   // BULK ADD STATE
   const [showBulkSelector, setShowBulkSelector] = useState(false);
+  // The add-a-rule form opens from one button, so the rules read first (B9).
+  const [adding, setAdding] = useState(false);
   const [bulkRoles, setBulkRoles] = useState<Role[]>([]);
 
   // ... (keep existing resetFromProps, close, nodeLabel)
@@ -369,9 +371,10 @@ export default function PermissionsDrawer(props: {
             {rules.length === 0 ? (
               <p className="mt-2 text-body text-[var(--color-text-muted)]">None here{inherit ? "; the parent's rules apply" : ""}.</p>
             ) : (
-              <ul className="mt-2 rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+              // A short list: space between the rules, no box and no rule lines (B3).
+              <ul className="mt-3 grid gap-3">
                 {rules.map((r, idx) => (
-                  <li key={idx} className="flex items-start gap-3 px-3 py-2.5">
+                  <li key={idx} className="flex items-start gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="text-body">
                         <span className={`font-medium ${r.effect === "deny" ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>{r.effect === "deny" ? "Deny" : "Allow"}</span>{" "}
@@ -393,14 +396,26 @@ export default function PermissionsDrawer(props: {
             )}
           </section>
 
-          {/* Add a rule. */}
-          {canEdit && (
+          {/* Add a rule: one button opens the form. */}
+          {canEdit && !adding && (
+            <div>
+              <Button type="button" variant="secondary" onClick={() => setAdding(true)}>
+                <Plus className="h-4 w-4" /> Add a rule
+              </Button>
+            </div>
+          )}
+          {canEdit && adding && (
             <section className="space-y-4">
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
                 <h3 className={h3}>Add a rule</h3>
-                <button type="button" onClick={() => setShowBulkSelector(!showBulkSelector)} className={btnLink}>
-                  {showBulkSelector ? "One person, team or role" : "Several roles at once"}
-                </button>
+                <div className="flex items-center gap-4">
+                  <button type="button" onClick={() => setShowBulkSelector(!showBulkSelector)} className={btnLink}>
+                    {showBulkSelector ? "One person, team or role" : "Several roles at once"}
+                  </button>
+                  <button type="button" onClick={() => setAdding(false)} className={`${btnLink} !text-[var(--color-text-muted)] hover:!text-[var(--color-text)]`}>
+                    Done
+                  </button>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

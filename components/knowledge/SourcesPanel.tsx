@@ -19,6 +19,7 @@ import {
 import { useToast } from "@/components/providers/ToastProvider";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { Button } from "@/components/ui/Button";
+import HelpTooltip from "@/components/ui/HelpTooltip";
 import { Input, FieldError } from "@/components/ui/Field";
 import {
   listKnowledgeSources, browseKnowledgeContainers, addKnowledgeSources,
@@ -161,11 +162,11 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
             <span className="font-medium text-[var(--color-text)] truncate">{f.name}</span>
           </label>
           {already ? (
-            <span className="shrink-0 text-body font-medium px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">Linked</span>
+            <span className="shrink-0 text-body text-[var(--color-text-muted)] whitespace-nowrap">Linked</span>
           ) : covered ? (
-            <span className="shrink-0 text-body font-medium px-1.5 py-0.5 rounded bg-[var(--state-released)]/10 border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] text-[var(--state-released)]">Included</span>
+            <span className="shrink-0 text-body text-[var(--color-text-muted)] whitespace-nowrap">Included</span>
           ) : selected.has(folderId) ? (
-            <span className="shrink-0 text-body font-medium px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text)]">With subfolders</span>
+            <span className="shrink-0 text-body font-medium text-[var(--color-text)] whitespace-nowrap">With subfolders</span>
           ) : null}
         </div>
         {open && kids.map((kid) => renderFolder(kid, depth + 1))}
@@ -209,8 +210,8 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
                             className="accent-[var(--color-main)] w-4 h-4" />
                           <Library className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                           <span className="font-medium text-[var(--color-text)] flex-1 truncate">{l.name}</span>
-                          <span className="text-body font-medium px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
-                            {already ? "LINKED" : "WHOLE LIBRARY"}
+                          <span className="shrink-0 text-body text-[var(--color-text-muted)] whitespace-nowrap">
+                            {already ? "Linked" : "Whole library"}
                           </span>
                         </label>
                       );
@@ -228,8 +229,8 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
                             className="accent-[var(--color-main)] w-4 h-4" />
                           <FolderOpen className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                           <span className="font-medium text-[var(--color-text)] flex-1 truncate" title={path}>{path}</span>
-                          <span className="text-body font-medium px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
-                            {already ? "LINKED" : covered ? "INCLUDED" : "FOLDER + SUBFOLDERS"}
+                          <span className="shrink-0 text-body text-[var(--color-text-muted)] whitespace-nowrap">
+                            {already ? "Linked" : covered ? "Included" : "Folder and subfolders"}
                           </span>
                         </label>
                       );
@@ -265,13 +266,9 @@ function AddSourcesModal({ orgId, libraryId, existing, onClose, onAdded }: {
                               <Library className="w-3.5 h-3.5 text-[var(--color-text-muted)] shrink-0" />
                               <span className="font-medium text-[var(--color-text)] truncate">{l.name}</span>
                             </label>
-                            <span className={`shrink-0 text-body font-semibold px-1.5 py-0.5 rounded ${
-                              already
-                                ? "bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]"
-                                : selected.has(l.id)
-                                  ? "bg-[var(--color-surface-2)] text-[var(--color-text)]"
-                                  : "bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text-muted)]"}`}>
-                              {already ? "LINKED" : selected.has(l.id) ? "WHOLE LIBRARY" : "ALL"}
+                            {/* A quiet word, not a boxed capital tag (B2). */}
+                            <span className={`shrink-0 text-body whitespace-nowrap ${selected.has(l.id) && !already ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+                              {already ? "Linked" : selected.has(l.id) ? "Whole library" : "All"}
                             </span>
                           </div>
                           {open && rootFolders.map((fid) => renderFolder(fid, 1))}
@@ -363,6 +360,14 @@ export default function SourcesPanel({ orgId, libraryId, isController, onChanged
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-body font-medium text-[var(--color-text-muted)] flex items-center gap-1.5">
           <Link2 className="w-3.5 h-3.5" /> Sources
+          {/* How linking works: useful, not needed to act (B5). */}
+          {(sources?.length ?? 0) > 0 && (
+            <HelpTooltip label="Why?">
+              Live from Document Control: new documents index automatically, published revisions re-index,
+              archived ones drop out. Answers always cite the current revision. Restricted documents are
+              excluded from answers for people who can&apos;t read them.
+            </HelpTooltip>
+          )}
         </span>
         {sources === null ? (
           <span role="status" className="inline-flex items-center gap-2"><span className="sr-only">Loading sources</span><Skeleton className="!w-40" /></span>
@@ -373,7 +378,7 @@ export default function SourcesPanel({ orgId, libraryId, isController, onChanged
         ) : (
           sources.map((s) => (
             <span key={s.id}
-              className="inline-flex items-center gap-1.5 text-body font-medium px-2 py-1 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text)]">
+              className="inline-flex items-center gap-1.5 text-body font-medium px-2 py-1 rounded-lg bg-[var(--color-surface)] text-[var(--color-text)]">
               {s.sourceType === "library"
                 ? <Library className="w-3 h-3 text-[var(--color-text-muted)]" />
                 : <FolderOpen className="w-3 h-3 text-[var(--color-text-muted)]" />}
@@ -401,13 +406,6 @@ export default function SourcesPanel({ orgId, libraryId, isController, onChanged
           </span>
         )}
       </div>
-      {(sources?.length ?? 0) > 0 && (
-        <p className="mt-1.5 text-body text-[var(--color-text-muted)]">
-          Live from Document Control: new documents index automatically, published revisions re-index,
-          archived ones drop out. Answers always cite the current revision. Restricted documents are
-          excluded from answers for people who can&apos;t read them.
-        </p>
-      )}
       {showAdd && (
         <AddSourcesModal
           orgId={orgId}

@@ -48,7 +48,8 @@ export function RoleTreeSelector({ selected, onChange, disabled }: RoleTreeSelec
   };
 
   return (
-    <div className="divide-y divide-[var(--color-border)] bg-[var(--color-surface)]">
+    // A handful of groups: space between them, no rule under each (B3).
+    <div className="py-1 bg-[var(--color-surface)]">
       {ROLE_HIERARCHY.map((group) => {
         const isExpanded = expanded.includes(group.name);
         const count = group.roles.filter((r) => selected.includes(r)).length;

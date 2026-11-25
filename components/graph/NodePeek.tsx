@@ -170,7 +170,7 @@ export default function NodePeek({
       <div className="p-3 pt-2 space-y-1.5 shrink-0 border-t border-[var(--color-border)]">
         <div className="flex items-center gap-1.5">
           <button onClick={onGoIn} title="Collapse the map to this node's neighbourhood"
-            className="flex-1 inline-flex items-center justify-center gap-1 text-body font-medium text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] rounded-lg px-2 py-1.5">
+            className="pointer-coarse:min-h-11 flex-1 inline-flex items-center justify-center gap-1 text-body font-medium text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] rounded-lg px-2 py-1.5">
             <Focus className="w-3.5 h-3.5" /> Go in
           </button>
           <button onClick={onGoOut} disabled={!focused} title="Back to the whole map"
@@ -183,18 +183,18 @@ export default function NodePeek({
           </button>
           {onConnect && (
             <button onClick={onConnect} title="Draw a connection: click this node, then the other one" aria-label="Draw a connection"
-              className="pointer-coarse:min-h-11 inline-flex items-center justify-center gap-1 text-body font-medium text-[var(--state-released)] border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] rounded-lg px-2 py-1.5 hover:bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)]">
+              className="pointer-coarse:min-h-11 inline-flex items-center justify-center gap-1 text-body font-medium text-[var(--color-text)] border border-[var(--color-border)] rounded-lg px-2 py-1.5 hover:bg-[var(--color-surface-2)]">
               <Link2 className="w-3.5 h-3.5" />
             </button>
           )}
         </div>
         <button onClick={onOpen}
-          className="w-full inline-flex items-center justify-center gap-1 text-body font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] rounded-lg px-2 py-1.5">
+          className="pointer-coarse:min-h-11 w-full inline-flex items-center justify-center gap-1 text-body font-medium text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] rounded-lg px-2 py-1.5">
           Open {labelFor(node.type).replace(/s$/, "").toLowerCase()} <ArrowUpRight className="w-3.5 h-3.5" />
         </button>
         {(node.type === "document" || node.type === "asset" || node.type === "unit" || node.type === "project") && (
           <Link href={documentsGraphHref(node.id, node.label)}
-            className="mt-1.5 w-full inline-flex items-center justify-center gap-1 text-body font-medium text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] rounded-lg px-2 py-1.5">
+            className="pointer-coarse:min-h-11 mt-1.5 w-full inline-flex items-center justify-center gap-1 text-body font-medium text-[var(--color-text)] border border-[var(--color-border)] hover:bg-[var(--color-surface-2)] rounded-lg px-2 py-1.5">
             <Waypoints className="w-3.5 h-3.5" /> {node.type === "document" ? "Find it on the Documents map" : "Everything filed about it, on the Documents map"}
           </Link>
         )}

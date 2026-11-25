@@ -324,7 +324,8 @@ export function JobModelsEditor({ orgId, current, jobModels, ready, jobUse, onCh
           every job uses its default below.
         </p>
       )}
-      <ul className="-mx-4 sm:-mx-5 -my-1 divide-y divide-[var(--color-border)]">
+      {/* A handful of jobs: space between them, no rule under each (B3). */}
+      <ul className="-mx-4 sm:-mx-5 -my-1">
         {AI_JOBS.map((j) => {
           const def = jobDefault(j.id, provider);
           const chosen = picks[j.id] ?? (def ?? MAIN);
@@ -623,25 +624,28 @@ export function UsagePanel({ orgId }: { orgId: string }) {
   };
 
   const cell = "px-4 sm:px-5 py-3 min-w-0";
-  const figure = "font-display text-title leading-none font-semibold tabular-nums text-[var(--color-text)]";
+  // One number leads (what was spent); the rest step back a size (B1).
+  const hero = "font-display text-title leading-none font-semibold tabular-nums text-[var(--color-text)]";
+  const figure = "font-display text-section leading-tight font-semibold tabular-nums text-[var(--color-text)]";
   return (
     <Section title={`Your AI use, ${usage.monthLabel}`}
       help="These numbers are yours alone: every question you ask, and every indexing or drawing-reading run your key pays for, is metered under your user id with the token counts your provider reported. All of it counts toward the cap. Estimated from provider token counts times published rates. Questions stop at 100% and reset on the 1st (UTC).">
-      {/* The month in ruled cells: spent against the cap, then what it bought. */}
-      <dl className="-mx-4 sm:-mx-5 -mt-4 sm:-mt-5 grid grid-cols-2 sm:grid-cols-4 divide-x divide-[var(--color-border)] border-b border-[var(--color-border)]">
+      {/* The month in cells: spent against the cap, then what it bought.
+          Space splits the cells; no rule between them (B3). */}
+      <dl className="-mx-4 sm:-mx-5 -mt-4 sm:-mt-5 grid grid-cols-2 sm:grid-cols-4 items-end border-b border-[var(--color-border)]">
         <div className={cell}>
           <dt className="text-body text-[var(--color-text-muted)]">Spent</dt>
-          <dd className={`mt-1 ${figure} ${capped ? "!text-[var(--state-overdue)]" : hot ? "!text-[var(--state-held)]" : ""}`}>{fmtUsd(usage.spentUsd)}</dd>
+          <dd className={`mt-1 ${hero} ${capped ? "!text-[var(--state-overdue)]" : hot ? "!text-[var(--state-held)]" : ""}`}>{fmtUsd(usage.spentUsd)}</dd>
         </div>
         <div className={cell}>
           <dt className="text-body text-[var(--color-text-muted)]">Cap</dt>
           <dd className={`mt-1 ${figure}`}>{fmtUsd(usage.capUsd)}</dd>
         </div>
-        <div className={`${cell} max-sm:border-t max-sm:border-[var(--color-border)] max-sm:!border-l-0`}>
+        <div className={cell}>
           <dt className="text-body text-[var(--color-text-muted)]">Questions</dt>
           <dd className={`mt-1 ${figure}`}>{usage.asks.toLocaleString()}</dd>
         </div>
-        <div className={`${cell} max-sm:border-t max-sm:border-[var(--color-border)]`}>
+        <div className={cell}>
           <dt className="text-body text-[var(--color-text-muted)]">Tokens</dt>
           <dd className={`mt-1 ${figure}`}>{fmtTok(totalTokens)}{estTokenBudget ? <span className="text-reading font-normal text-[var(--color-text-muted)]"> of ~{fmtTok(estTokenBudget)}</span> : null}</dd>
         </div>

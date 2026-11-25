@@ -183,45 +183,6 @@ export default function ProposedLinksPage() {
 
       <PageBody>
       {error && <Problem>{error}</Problem>}
-      {lastRun && (
-        <Section label="Last scan">
-          <div className={sheet}>
-            <dl className="flex flex-wrap gap-x-8 gap-y-3 px-4 py-3">
-              {[["Documents scanned", lastRun.scanned], ["Linked for you", lastRun.autoApplied], ["Waiting for review", lastRun.proposed]].map(([l, v]) => (
-                <div key={String(l)}>
-                  <dt className="text-body text-[var(--color-text-muted)]">{l}</dt>
-                  <dd className={`text-section leading-tight font-semibold tabular-nums ${Number(v) === 0 ? "text-[var(--color-text-faint)]" : l === "Waiting for review" ? "text-[var(--state-held-text)]" : "text-[var(--color-text)]"}`}>{Number(v).toLocaleString()}</dd>
-                </div>
-              ))}
-            </dl>
-            {(lastRun.evidenceLost > 0 || lastRun.notes.length > 0 || (lastRun.proposed === 0 && lastRun.autoApplied === 0 && lastRun.inputs)) && (
-              <div className="border-t border-[var(--color-border)] px-4 py-3 space-y-1 text-body">
-                {lastRun.evidenceLost > 0 && (
-                  <p className="text-[var(--color-text)]">
-                    <b className="font-medium text-[var(--state-held-text)] tabular-nums">{lastRun.evidenceLost}</b> system link{lastRun.evidenceLost === 1 ? " no longer matches" : "s no longer match"} the reason it was made. Marked, not removed.
-                  </p>
-                )}
-                {lastRun.notes.map((n) => (
-                  <div key={n} className="text-[var(--color-text-muted)] flex items-center gap-1.5"><Info aria-hidden className="w-3.5 h-3.5 shrink-0" /> {n}</div>
-                ))}
-                {/* Zero findings explain themselves: which input was empty and
-                    what feeds it. Silence here reads as "broken"; this is the
-                    honest answer instead. */}
-                {lastRun.proposed === 0 && lastRun.autoApplied === 0 && lastRun.inputs && (
-                  <>
-                    <div className="font-medium text-[var(--color-text)]">Why nothing was found</div>
-                    <ul className="list-disc pl-5 text-[var(--color-text-muted)]">
-                      {diagnose(lastRun.inputs).map((d) => <li key={d}>{d}</li>)}
-                      {diagnose(lastRun.inputs).length === 0 && <li>Everything it needs is there. What it can find is likely already linked or was decided before.</li>}
-                    </ul>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-        </Section>
-      )}
-
       {rows === null && loadError != null ? (
         <ErrorNote error={loadError} title="Couldn't load the proposals." onRetry={() => void refresh()} />
       ) : rows === null ? (
@@ -281,6 +242,46 @@ export default function ProposedLinksPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+        </Section>
+      )}
+
+      {/* The decisions lead the page (B1); the last scan's numbers follow. */}
+      {lastRun && (
+        <Section label="Last scan">
+          <div className={sheet}>
+            <dl className="flex flex-wrap gap-x-8 gap-y-3 px-4 py-3">
+              {[["Documents scanned", lastRun.scanned], ["Linked for you", lastRun.autoApplied], ["Waiting for review", lastRun.proposed]].map(([l, v]) => (
+                <div key={String(l)}>
+                  <dt className="text-body text-[var(--color-text-muted)]">{l}</dt>
+                  <dd className={`text-section leading-tight font-semibold tabular-nums ${Number(v) === 0 ? "text-[var(--color-text-faint)]" : l === "Waiting for review" ? "text-[var(--state-held-text)]" : "text-[var(--color-text)]"}`}>{Number(v).toLocaleString()}</dd>
+                </div>
+              ))}
+            </dl>
+            {(lastRun.evidenceLost > 0 || lastRun.notes.length > 0 || (lastRun.proposed === 0 && lastRun.autoApplied === 0 && lastRun.inputs)) && (
+              <div className="border-t border-[var(--color-border)] px-4 py-3 space-y-1 text-body">
+                {lastRun.evidenceLost > 0 && (
+                  <p className="text-[var(--color-text)]">
+                    <b className="font-medium text-[var(--state-held-text)] tabular-nums">{lastRun.evidenceLost}</b> system link{lastRun.evidenceLost === 1 ? " no longer matches" : "s no longer match"} the reason it was made. Marked, not removed.
+                  </p>
+                )}
+                {lastRun.notes.map((n) => (
+                  <div key={n} className="text-[var(--color-text-muted)] flex items-center gap-1.5"><Info aria-hidden className="w-3.5 h-3.5 shrink-0" /> {n}</div>
+                ))}
+                {/* Zero findings explain themselves: which input was empty and
+                    what feeds it. Silence here reads as "broken"; this is the
+                    honest answer instead. */}
+                {lastRun.proposed === 0 && lastRun.autoApplied === 0 && lastRun.inputs && (
+                  <>
+                    <div className="font-medium text-[var(--color-text)]">Why nothing was found</div>
+                    <ul className="list-disc pl-5 text-[var(--color-text-muted)]">
+                      {diagnose(lastRun.inputs).map((d) => <li key={d}>{d}</li>)}
+                      {diagnose(lastRun.inputs).length === 0 && <li>Everything it needs is there. What it can find is likely already linked or was decided before.</li>}
+                    </ul>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         </Section>
       )}

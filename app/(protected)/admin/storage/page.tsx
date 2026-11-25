@@ -830,7 +830,8 @@ export default function StorageBackupPage() {
         facts={stats ? [
           { label: "Used", value: fmtBytes(usedBytes), tone: health === "crit" ? "bad" : health === "warn" ? "warn" : undefined, hero: true },
           { label: isRealQuota ? "Limit" : "Soft budget", value: fmtBytes(budgetBytes) },
-          { label: "Can free now", value: fmtBytes(reclaimNow) },
+          // Nothing to free isn't news; it shows only when there is (B7).
+          ...(reclaimNow > 0 ? [{ label: "Can free now", value: fmtBytes(reclaimNow) }] : []),
         ] : undefined}
         tools={
           <button type="button" onClick={() => void load()} disabled={loading} aria-label="Measure again" title="Measure again" className={heroQuiet}>
@@ -869,10 +870,11 @@ export default function StorageBackupPage() {
         <>
           {/* ── Where it stands: the limit, the database, the files ─────── */}
           <Section label="Where it stands">
-            <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
+            {/* Three facts: space between them, no rule under each (B3). */}
+            <div className={sheet}>
               <FormRow label="Storage limit" hint={isRealQuota ? "Admins are alerted at 70% and 90%." : "A guide until you set your plan's real limit."}>
                 <div className="@xl:pt-1 flex items-center gap-x-4 gap-y-2 flex-wrap">
-                  <span className="font-display text-section font-semibold tabular-nums text-[var(--color-text)]">{fmtBytes(budgetBytes)}</span>
+                  <span className="text-reading font-medium tabular-nums text-[var(--color-text)]">{fmtBytes(budgetBytes)}</span>
                   <StatusTag tone={health === "crit" ? "bad" : health === "warn" ? "warn" : "none"}>{health === "crit" ? "Act now" : health === "warn" ? "Plan a backup" : "Healthy"}</StatusTag>
                   {canPurge && (editingQuota ? (
                     <form className="inline-flex items-center gap-2 flex-wrap" onSubmit={(e) => { e.preventDefault(); void saveQuota(); }}>
@@ -890,11 +892,11 @@ export default function StorageBackupPage() {
                 </div>
               </FormRow>
               <FormRow label="Database" hint="Postgres">
-                <div className="@xl:pt-1"><span className="font-display text-section font-semibold tabular-nums">{fmtBytes(stats.db.totalBytes)}</span> <span className="text-body text-[var(--color-text-muted)]">in {plural(tables.length, "table")}</span></div>
+                <div className="@xl:pt-1"><span className="text-reading font-medium tabular-nums">{fmtBytes(stats.db.totalBytes)}</span> <span className="text-body text-[var(--color-text-muted)]">in {plural(tables.length, "table")}</span></div>
               </FormRow>
               <FormRow label="Files" hint={stats.r2Real ? "Cloudflare R2, measured" : "Cloudflare R2, estimated"}>
                 <div className="@xl:pt-1">
-                  <span className="font-display text-section font-semibold tabular-nums">{stats.r2Real ? fmtBytes(stats.r2Real.bytes) : `~${fmtBytes(stats.r2Estimate.totalBytes)}`}</span>{" "}
+                  <span className="text-reading font-medium tabular-nums">{stats.r2Real ? fmtBytes(stats.r2Real.bytes) : `~${fmtBytes(stats.r2Estimate.totalBytes)}`}</span>{" "}
                   <span className="text-body text-[var(--color-text-muted)]">
                     {stats.r2Real
                       ? `${plural(stats.r2Real.objects, "file")}, measured ${new Date(stats.generatedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`
@@ -934,7 +936,7 @@ export default function StorageBackupPage() {
                 <Disclosure title="Where the files are" meta={plural(stats.r2Real.segments!.length, "place")}>
                   <table className="w-full text-body tabular-nums">
                     <thead className="sr-only"><tr><th>Where</th><th>Share</th><th>Size</th><th>Files</th><th>Newest</th></tr></thead>
-                    <tbody className="divide-y divide-[var(--color-border)]">
+                    <tbody>
                       {stats.r2Real.segments!.map((s) => {
                         const share = stats.r2Real!.bytes > 0 ? Math.round((s.bytes / stats.r2Real!.bytes) * 100) : 0;
                         return (
@@ -1020,7 +1022,8 @@ export default function StorageBackupPage() {
                   ) : previewLoading && !preview ? (
                     <SkeletonRows rows={2} cols={2} what="what can be purged" />
                   ) : (preview?.targets.length ?? 0) > 0 ? (
-                    <div className="rounded-lg border border-[var(--color-border)] overflow-hidden">
+                    // Inside the panel: the table without a second box (B3).
+                    <div className="-mx-4 sm:-mx-5 overflow-hidden">
                       <table className={tbl.table}>
                         <thead className={tbl.thead}><tr><th className={tbl.th}>What</th><th className={`${tbl.th} text-right`}>Rows</th><th className={`${tbl.th} text-right`}>Size</th></tr></thead>
                         <tbody className={tbl.tbody}>
@@ -1171,7 +1174,7 @@ export default function StorageBackupPage() {
                             Delete them
                           </button>
                         </div>
-                        <ul className="max-h-40 overflow-y-auto rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] text-body">
+                        <ul className="max-h-40 overflow-y-auto rounded-lg bg-[var(--color-surface-2)] py-1 text-body">
                           {orphanScan.orphans.slice(0, 50).map((o) => (
                             <li key={o.key} className="px-3 py-1.5 flex items-center gap-2">
                               <span className="truncate flex-1 font-mono text-[var(--color-text-muted)]" title={o.key}>{o.key}</span>
@@ -1277,7 +1280,8 @@ export default function StorageBackupPage() {
             {canPurge && readErrors.settings != null && (
               <ErrorNote compact className="mb-3" error={readErrors.settings} title="Couldn't load the archive folder." onRetry={() => void loadArchiveSettings()} />
             )}
-            <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
+            {/* A few labeled rows: space between them, no rule under each (B3). */}
+            <div className={sheet}>
               {/* The archive folder: one place, shared, with a fixed layout under it. */}
               {canPurge && (
                 <FormRow label="Archive folder" hint="Where your team keeps backups. Anyone asked for an archived file is pointed here.">

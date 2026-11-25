@@ -17,7 +17,8 @@ import { startGlobalBackup, subscribeBackup, cancelBackup, backupIsRunning, type
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody } from "@/components/ui/PageHero";
 import { bandSeg, bandSegItem, plural } from "@/components/admin/band";
-import { tbl, sheet, link, btnQuiet, btnRow, btnIcon, FormRow, Section, StatusTag, RowEdge, Problem, shortDateTime, type Tone } from "@/components/admin/kit";
+import { tbl, sheet, link, btnQuiet, btnRow, btnIcon, FormRow, Section, StatusTag, RowEdge, Problem, shortDateTime } from "@/components/admin/kit";
+import Timeline, { type TimelineItem, type TimelineTone } from "@/components/ui/Timeline";
 import { said, responseError } from "@/components/admin/said";
 import { errorKind } from "@/lib/friendlyError";
 import HelpTooltip from "@/components/ui/HelpTooltip";
@@ -225,10 +226,9 @@ export default function DataExportPage() {
           title={answer}
           sub={isAuthorized ? "Your data, yours to take any time. Every export is written to the audit log." : "Ask an admin to export the workspace's data."}
           factsHero={failedRuns > 0 ? "auto" : "none"}
-          facts={isAuthorized && !(loading && runs.length === 0) ? [
-            ...(failedRuns > 0 ? [{ label: "Failed exports", value: failedRuns, tone: "bad" as const, hero: true }] : []),
-            { label: "Destinations", value: destinations.length },
-            { label: "Exports", value: runs.length },
+          facts={isAuthorized && !(loading && runs.length === 0) && failedRuns > 0 ? [
+            // Only failures are news here; the sections below count the rest (B5, B7).
+            { label: "Failed exports", value: failedRuns, tone: "bad" as const, hero: true },
           ] : undefined}
           tools={<Link href="/data-portability" target="_blank" className={`text-body inline-flex items-center gap-1 ${link}`}>Our data promise <ExternalLink aria-hidden className="w-3.5 h-3.5" /></Link>}
         />
@@ -245,7 +245,8 @@ export default function DataExportPage() {
         {/* ──── DOWNLOAD NOW ──── */}
         {isAuthorized && (
           <Section label="Download now">
-            <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
+            {/* Two ways to download: space between them, no rule (B3). */}
+            <div className={sheet}>
               <FormRow label="Full backup" hint="Records and every PDF and DWG, in parts of about 300 MB. Allow several downloads when the browser asks.">
                 <div className="flex flex-wrap items-center gap-3">
                   <Button loading={busyZip} disabled={!activeOrgId} onClick={() => void downloadZip()}>
@@ -342,21 +343,9 @@ export default function DataExportPage() {
             ) : runs.length === 0 ? (
               <div className={`${sheet} px-4 py-6 text-center text-reading text-[var(--color-text-muted)]`}>Every export, by hand or on a schedule, shows here.</div>
             ) : (
-              <div className={tbl.wrap}>
-                <table className={tbl.table}>
-                  <thead className={`${tbl.thead} max-md:hidden`}>
-                    <tr>
-                      <th className={tbl.th}>When</th>
-                      <th className={tbl.th}>Went to</th>
-                      <th className={tbl.th}>Status</th>
-                      <th className={`${tbl.th} max-lg:hidden`}>Run by</th>
-                      <th className={`${tbl.th} text-right`}>Size</th>
-                    </tr>
-                  </thead>
-                  <tbody className={tbl.tbody}>
-                    {runs.map((r) => <RunRow key={r.id} run={r} />)}
-                  </tbody>
-                </table>
+              // A history: newest first, by day, who ran it as an avatar (B8).
+              <div className={`${sheet} p-4 sm:p-5`}>
+                <Timeline items={runs.map(runItem)} />
               </div>
             )}
           </Section>
@@ -466,43 +455,47 @@ function duration(ms: number): string {
   return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
 }
 
-const RUN_STATUS: Record<Run["status"], { tone: Tone; word: string }> = {
-  succeeded: { tone: "good", word: "Done" },
+const RUN_STATUS: Record<Run["status"], { tone: TimelineTone; word: string }> = {
+  // Done steps stay one quiet gray so a failure stands out (S2).
+  succeeded: { tone: "muted", word: "Done" },
   failed: { tone: "bad", word: "Failed" },
-  running: { tone: "none", word: "Running" },
-  pending: { tone: "none", word: "Waiting" },
-  cancelled: { tone: "none", word: "Stopped" },
+  running: { tone: "info", word: "Running" },
+  pending: { tone: "muted", word: "Waiting" },
+  cancelled: { tone: "muted", word: "Stopped" },
 };
 const TRIGGER_WORD: Record<Run["trigger_type"], string> = { manual: "by hand", scheduled: "on schedule", api: "through the API" };
 
-function RunRow({ run }: { run: Run }) {
-  const at = run.completed_at || run.started_at;
-  const st = RUN_STATUS[run.status] ?? { tone: "none" as Tone, word: run.status };
-  return (
-    <tr className={`${tbl.tr} max-md:grid max-md:grid-cols-[minmax(0,1fr)_auto] max-md:py-1.5`}>
-      <td className={`${tbl.td} relative align-top max-md:py-0.5 whitespace-nowrap text-body text-[var(--color-text)]`}>
-        {run.status === "failed" && <RowEdge tone="bad" />}
-        {shortDateTime(at)}
-        {run.duration_ms ? <div className="text-body text-[var(--color-text-muted)]">Took {duration(run.duration_ms)}</div> : null}
-      </td>
-      <td className={`${tbl.td} align-top max-md:col-span-2 max-md:row-start-2 max-md:py-0.5`}>
-        <span className="font-medium text-[var(--color-text)]">{run.destination_name || "Direct download"}</span>
-        {run.trigger_type && <span className="ml-1.5 text-body text-[var(--color-text-muted)]">{TRIGGER_WORD[run.trigger_type] ?? run.trigger_type}</span>}
-        {run.destination_path && <div className="text-body text-[var(--color-text-muted)] truncate max-w-[48ch]" title={run.destination_path}>{run.destination_path}</div>}
-        {run.error_message && <p className="mt-0.5 text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" /><span>{pushError(run.error_message)}</span></p>}
-      </td>
-      <td className={`${tbl.td} align-top max-md:col-start-2 max-md:row-start-1 max-md:py-0.5 whitespace-nowrap`}>
-        <StatusTag tone={st.tone} colored={st.tone === "bad"}>{run.status === "running" && <Loader2 aria-hidden className="w-3.5 h-3.5 animate-spin" />}{st.word}</StatusTag>
-      </td>
-      <td className={`${tbl.td} align-top max-lg:hidden text-body text-[var(--color-text-muted)]`}>{run.triggered_by_email ?? (run.trigger_type === "scheduled" ? "Schedule" : "")}</td>
-      <td className={`${tbl.td} align-top max-md:col-span-2 max-md:row-start-3 max-md:py-0.5 md:text-right text-body text-[var(--color-text-muted)] whitespace-nowrap`}>
-        {run.total_bytes != null && <span className="text-[var(--color-text)] tabular-nums">{formatBytes(run.total_bytes)}</span>}
-        {(run.total_rows != null || run.file_count != null) && (
-          <div className="tabular-nums text-body">{[run.total_rows != null ? plural(run.total_rows, "row") : "", run.file_count != null ? plural(run.file_count, "file") : ""].filter(Boolean).join(", ")}</div>
-        )}
-      </td>
-    </tr>
-  );
+/** One export as a timeline entry: what happened, where it went, and who
+ *  ran it as an avatar (B5, B8). */
+function runItem(run: Run): TimelineItem {
+  const st = RUN_STATUS[run.status] ?? { tone: "muted" as TimelineTone, word: run.status };
+  const facts = [
+    run.duration_ms ? `Took ${duration(run.duration_ms)}` : "",
+    run.total_bytes != null ? formatBytes(run.total_bytes) : "",
+    run.total_rows != null ? plural(run.total_rows, "row") : "",
+    run.file_count != null ? plural(run.file_count, "file") : "",
+  ].filter(Boolean).join(", ");
+  return {
+    id: run.id,
+    at: run.completed_at || run.started_at,
+    kind: st.word,
+    tone: st.tone,
+    title: (
+      <>
+        {run.status === "running" && <Loader2 aria-hidden className="inline w-3.5 h-3.5 mr-1 animate-spin align-[-2px]" />}
+        {run.destination_name || "Direct download"}
+        {run.trigger_type && <span className="text-[var(--color-text-muted)]">, {TRIGGER_WORD[run.trigger_type] ?? run.trigger_type}</span>}
+      </>
+    ),
+    detail: (run.destination_path || facts || run.error_message) ? (
+      <>
+        {run.destination_path && <span className="block truncate max-w-[60ch]" title={run.destination_path}>{run.destination_path}</span>}
+        {facts && <span className="block tabular-nums">{facts}</span>}
+        {run.error_message && <span className="mt-0.5 flex items-start gap-1.5 font-medium text-[var(--state-overdue-text)]"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-px" /><span>{pushError(run.error_message)}</span></span>}
+      </>
+    ) : undefined,
+    who: run.triggered_by_email ? { email: run.triggered_by_email } : null,
+  };
 }
 
 // ─── Destination create/edit dialog ───────────────────────────────────────

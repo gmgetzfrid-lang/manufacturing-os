@@ -20,6 +20,7 @@ import { Map as MapIcon, Loader2, FileText, ClipboardCheck, Table2, BookOpen, Ch
 import { getLibraryCatalog, mapLibraryCatalog, markCatalog, unmarkCatalog, type CatalogSummaryEntry, type CatalogListingInfo } from "@/lib/knowledge";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { FieldError } from "@/components/ui/Field";
+import HelpTooltip from "@/components/ui/HelpTooltip";
 
 const TYPE_LABEL: Record<string, string> = {
   standard: "Standards", catalog: "Catalogs", form: "Forms", checklist: "Checklists",
@@ -98,21 +99,19 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
           <div className="flex items-center gap-2.5 font-display text-section font-semibold text-[var(--color-heading)]">
             Library map
             {entries.length > 0 && <span className="ui-count font-sans">{entries.length}</span>}
-          </div>
-          <div className="text-body text-[var(--color-text-muted)]">
-            What the assistant knows is here, so it can point you to the right form, checklist or spec.
+            <HelpTooltip>What the assistant knows is here, so it can point you to the right form, checklist or spec.</HelpTooltip>
           </div>
         </div>
         {data?.canMap && data.unmapped > 0 && !mapping && (
           <button type="button" onClick={() => void runMap()}
-            className="inline-flex items-center gap-1.5 h-10 px-4 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-body font-medium hover:bg-[var(--color-surface-2)]">
+            className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-4 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-body font-medium hover:bg-[var(--color-surface-2)]">
             <MapIcon className="w-4 h-4" /> Map {data.unmapped} document{data.unmapped === 1 ? "" : "s"}
           </button>
         )}
       </div>
 
       {mapping && (
-        <div className="mt-3 flex items-center gap-2 text-caption text-[var(--color-text)]" role="status">
+        <div className="mt-3 flex items-center gap-2 text-body text-[var(--color-text)]" role="status">
           <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)]" />
           Mapping: {mapping.profiled} profiled
           {mapping.remaining > 0 ? `, ${mapping.remaining} to go` : ""}. You can keep working; it continues while this page is open.
@@ -121,21 +120,23 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
       {error && <div className="mt-3"><FieldError>{error}</FieldError></div>}
 
       {entries.length > 0 && (
-        <div className="mt-4 flex flex-wrap gap-1.5">
+        // What kinds are here, as plain counts: no pill around each (B2).
+        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-body text-[var(--color-text-muted)]">
           {[...counts.entries()].sort((a, b) => b[1] - a[1]).map(([type, n]) => (
-            <span key={type} className="text-body font-medium px-2.5 py-1 rounded-full bg-[var(--color-surface-2)] border border-[var(--color-border)] text-[var(--color-text)]">
-              {n} {TYPE_LABEL[type] ?? type}
+            <span key={type}>
+              <span className="font-medium text-[var(--color-text)] tabular-nums">{n}</span> {TYPE_LABEL[type] ?? type}
             </span>
           ))}
         </div>
       )}
 
       {forms.length > 0 && (
-        <div className="mt-4">
-          <div className="text-body font-medium text-[var(--color-text-muted)] mb-1.5">Forms &amp; checklists the assistant can fill or point to</div>
-          <ul className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)] overflow-hidden">
+        <div className="mt-6">
+          <div className="text-body font-medium text-[var(--color-text-muted)] mb-2">Forms &amp; checklists the assistant can fill or point to</div>
+          {/* A short list: space between the rows, no box and no rule (B3). */}
+          <ul className="grid gap-3">
             {forms.slice(0, showAll ? forms.length : 6).map((e) => (
-              <li key={e.documentId} className="flex items-center gap-2.5 px-3.5 py-2">
+              <li key={e.documentId} className="flex items-center gap-2.5">
                 {e.type === "checklist" ? <ClipboardCheck className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" /> : <FileText className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />}
                 <span className="min-w-0 flex-1">
                   <span className="block text-body font-medium text-[var(--color-text)] truncate">{e.title || e.name}</span>
@@ -145,10 +146,8 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
                   </span>
                 </span>
                 {e.form && (
-                  <span className={`shrink-0 text-body font-bold px-2 py-0.5 rounded ${e.form.fillable
-                    ? "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)]"
-                    : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]"}`}>
-                    {e.form.fillable ? "fillable PDF" : "flat PDF"}
+                  <span className={`shrink-0 text-body ${e.form.fillable ? "text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
+                    {e.form.fillable ? "Fillable PDF" : "Flat PDF"}
                   </span>
                 )}
               </li>
@@ -158,12 +157,12 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
       )}
 
       {(catalogs.length > 0 || data?.canMap) && (
-        <div className="mt-4">
-          <div className="flex items-center gap-2 mb-1.5">
+        <div className="mt-6">
+          <div className="flex items-center gap-2 mb-2">
             <div className="text-body font-medium text-[var(--color-text-muted)]">Catalogs</div>
             {data?.canMap && (
               <button type="button" onClick={() => setMarking(true)}
-                className="ml-auto inline-flex items-center gap-1 h-8 px-2.5 rounded-lg border border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)] text-body font-medium hover:bg-[var(--color-surface-2)] dark:hover:bg-[var(--color-surface-2)]">
+                className="ml-auto inline-flex items-center gap-1 h-8 pointer-coarse:h-11 px-2.5 rounded-lg border border-[var(--color-border)] dark:border-[var(--color-border)] text-[var(--color-text)] dark:text-[var(--color-text)] text-body font-medium hover:bg-[var(--color-surface-2)] dark:hover:bg-[var(--color-surface-2)]">
                 <Plus className="w-3.5 h-3.5" /> Mark a catalog
               </button>
             )}
@@ -174,12 +173,12 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
               questions like &ldquo;which one should I use for …&rdquo; are answered by filtering every entry, not by a lucky search.
             </p>
           ) : (
-            <ul className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)] overflow-hidden">
+            <ul className="grid gap-3">
               {catalogs.map((c) => {
                 const busy = busyCatalog === (c.documentId ?? c.libraryId);
                 const here = c.libraryId === libraryId;
                 return (
-                  <li key={`${c.libraryId}:${c.documentId ?? ""}`} className="px-3.5 py-2">
+                  <li key={`${c.libraryId}:${c.documentId ?? ""}`}>
                     <div className="flex items-center gap-2">
                       <Table2 className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
                       <span className="min-w-0 flex-1">
@@ -244,7 +243,7 @@ export default function LibraryMapPanel({ orgId, libraryId, libraryName, docs }:
       )}
 
       {entries.length === 0 && !mapping && (
-        <p className="mt-3 text-caption text-[var(--color-text-muted)]">
+        <p className="mt-3 text-body text-[var(--color-text-muted)]">
           {data?.canMap
             ? "Nothing mapped yet. Mapping reads each indexed document once (fast AI tier, your key) and records what it is - forms with their fields, checklists with what they're for."
             : "Nothing mapped yet - an Admin or Document Control member can map this library."}

@@ -356,7 +356,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
                     <td className="px-4 py-2 max-md:hidden font-display tabular-nums text-[var(--color-text-muted)] truncate max-w-0 w-1/2" title={c.sample.join(", ")}>
                       {c.sample.slice(0, 3).join(", ")}{c.distinctTags > 3 ? ", …" : ""}
                     </td>
-                    <td className="px-4 sm:px-5 py-2 text-right font-display text-reading font-semibold tabular-nums text-[var(--color-text)]">{c.distinctTags}</td>
+                    <td className="px-4 sm:px-5 py-2 text-right tabular-nums text-[var(--color-text)]">{c.distinctTags}</td>
                   </tr>
                 ))}
               </tbody>
@@ -387,7 +387,7 @@ export default function DrawingIntelPanel({ orgId, libraryId, isController, refr
                       </td>
                       <td className="px-4 sm:px-5 py-2.5 text-right">
                         {c.tone === "none"
-                          ? <span className="font-display text-reading font-semibold tabular-nums text-[var(--color-text)]">{c.count.toLocaleString()}</span>
+                          ? <span className="tabular-nums text-[var(--color-text)]">{c.count.toLocaleString()}</span>
                           : <StatusTag tone={c.tone}>{c.count.toLocaleString()}</StatusTag>}
                       </td>
                     </tr>

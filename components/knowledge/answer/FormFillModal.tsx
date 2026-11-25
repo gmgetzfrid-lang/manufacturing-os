@@ -112,12 +112,12 @@ export default function FormFillModal({ orgId, documentId, formName, question, a
         <span className="mr-auto text-body text-[var(--color-text-muted)] max-sm:hidden">Check every field before you submit it.</span>
         {draft && (
           <button type="button" onClick={() => void copyAll()}
-            className="inline-flex items-center gap-1.5 h-10 text-body font-medium px-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)]">
+            className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 text-body font-medium px-3.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-border-strong)]">
             {copied ? <Check className="w-4 h-4 text-[var(--state-released)]" /> : <Copy className="w-4 h-4" />} {copied ? "Copied" : "Copy as text"}
           </button>
         )}
         <button type="button" onClick={() => void download()} disabled={!draft || busy !== null}
-          className="inline-flex items-center gap-1.5 h-10 text-body font-medium px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] shadow-[0_10px_20px_-12px_var(--color-accent)] disabled:opacity-50 disabled:shadow-none">
+          className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 text-body font-medium px-4 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] hover:bg-[var(--color-accent-hover)] shadow-[0_10px_20px_-12px_var(--color-accent)] disabled:opacity-50 disabled:shadow-none">
           {busy === "download" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} {busy === "download" ? "Filling the PDF…" : "Download filled PDF"}
         </button>
       </ModalFooter>

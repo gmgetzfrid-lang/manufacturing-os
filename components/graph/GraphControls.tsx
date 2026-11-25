@@ -192,7 +192,7 @@ export default function GraphControls({
           </Section>
 
           <Section icon={Palette} title="Groups">
-            <p className="text-body text-[var(--color-text-faint)]">
+            <p className="text-body text-[var(--color-text-muted)]">
               Paint your own meaning onto the map. Matches a node&apos;s name, or use
               <code className="mx-1 px-1 rounded bg-[var(--color-surface-2)]">type:asset</code>
               to colour a whole kind. First match wins.
@@ -204,7 +204,7 @@ export default function GraphControls({
                   className="accent-[var(--color-text)]" />
                 <input aria-label="Group search" value={g.query} onChange={(e) => patchGroup(g.id, { query: e.target.value })}
                   placeholder="e.g. 44-  ·  crude  ·  type:unit"
-                  className="flex-1 min-w-0 px-2 py-1 border border-[var(--color-border-strong)] rounded-lg text-body bg-[var(--color-surface)]" />
+                  className="flex-1 min-w-0 px-2 py-1 pointer-coarse:min-h-11 pointer-coarse:text-reading border border-[var(--color-border-strong)] rounded-lg text-body bg-[var(--color-surface)]" />
                 <input type="color" value={g.color}
                   onChange={(e) => patchGroup(g.id, { color: e.target.value })}
                   aria-label="Group colour"

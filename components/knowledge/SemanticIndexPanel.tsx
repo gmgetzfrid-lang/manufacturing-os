@@ -238,8 +238,10 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
       <div className={`${sheet} overflow-hidden`}>
         <Cells cells={[
           { label: "Passages with meaning", value: <>{status.estimated ? "≈ " : ""}{covered.toLocaleString()}<span className="text-[var(--color-text-muted)] font-medium text-section"> of {status.total.toLocaleString()}</span></> },
-          { label: "Built", value: `${pct}%`, tone: complete ? "good" : undefined },
-          { label: "Left to build", value: status.remaining.toLocaleString() },
+          // Done reads in the heading's tag; the figure stays plain (B2), and
+          // nothing left to build isn't news (B7).
+          { label: "Built", value: `${pct}%` },
+          ...(status.remaining > 0 ? [{ label: "Left to build", value: status.remaining.toLocaleString() }] : []),
           complete
             ? { label: "To rebuild, about", value: fullCents > 0 ? `${fullCents}¢` : "-", hint: "On your embeddings key" }
             : { label: "To finish, about", value: estCents > 0 ? `${estCents}¢` : "-", hint: "On your embeddings key" },

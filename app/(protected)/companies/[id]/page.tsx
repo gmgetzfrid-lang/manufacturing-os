@@ -38,7 +38,8 @@ import { PageHero, PageBody, Card, heroPrimary, heroQuiet, type HeroFact } from 
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { plural } from "@/components/admin/band";
-import { StatusTag, fmtDay, type Tone } from "@/components/requests/RequestBits";
+import { StatusTag, fmtDay } from "@/components/requests/RequestBits";
+import Timeline, { type TimelineTone } from "@/components/ui/Timeline";
 
 async function authHeader(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
@@ -414,7 +415,7 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
 
 // ── Safety & performance log ─────────────────────────────────────────────
 
-const EVENT_TONE: Record<CompanyEvent["kind"], Tone> = { recordable: "bad", stop_work: "bad", warning: "warn", commendation: "good", near_miss: "none", other: "none" };
+const EVENT_TONE: Record<CompanyEvent["kind"], TimelineTone> = { recordable: "bad", stop_work: "bad", warning: "warn", commendation: "good", near_miss: "muted", other: "muted" };
 
 function EventsPanel({ orgId, company, events, canManage, actorId, actorName, onChanged, setErr }: {
   orgId: string; company: Company; events: CompanyEvent[];
@@ -464,22 +465,20 @@ function EventsPanel({ orgId, company, events, canManage, actorId, actorName, on
       {events.length === 0 ? (
         <p className="px-4 py-4 text-reading text-[var(--color-text-muted)]">No events on record yet.</p>
       ) : (
-        <div className="max-h-96 overflow-y-auto">
-          <table className="w-full text-body">
-            <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left">
-              <tr><th className={TH}>Date</th><th className={TH}>Event</th><th className={`${TH} w-full`}>What happened</th><th className={`${TH} hidden sm:table-cell`}>Logged by</th></tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--color-border)]">
-              {events.map((e) => (
-                <tr key={e.id}>
-                  <td className="px-4 py-2.5 align-top whitespace-nowrap tabular-nums">{fmtDay(e.eventDate + "T00:00:00")}</td>
-                  <td className="px-4 py-2.5 align-top whitespace-nowrap"><StatusTag tone={EVENT_TONE[e.kind]}>{EVENT_KIND_LABEL[e.kind]}</StatusTag></td>
-                  <td className="px-4 py-2.5 align-top text-[var(--color-text)]">{e.description}</td>
-                  <td className="px-4 py-2.5 align-top whitespace-nowrap hidden sm:table-cell text-[var(--color-text-muted)]">{e.createdByName ?? ""}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        // A plain history (nothing sorts or filters it): a timeline, newest
+        // first, grouped by day. Events carry a date only, so no time shows;
+        // who logged it stays as words under each entry (B8).
+        <div className="max-h-96 overflow-y-auto px-4 py-4">
+          <Timeline items={events.map((e) => ({
+            id: e.id,
+            at: `${e.eventDate}T12:00:00`,
+            dateOnly: true,
+            kind: EVENT_KIND_LABEL[e.kind],
+            tone: EVENT_TONE[e.kind],
+            title: e.description,
+            detail: e.createdByName ? `Logged by ${e.createdByName}` : undefined,
+            who: e.createdByName ? (e.createdByName.includes("@") ? { email: e.createdByName } : { name: e.createdByName }) : null,
+          }))} />
         </div>
       )}
     </Card>

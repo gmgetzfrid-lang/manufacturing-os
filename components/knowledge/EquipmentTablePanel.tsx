@@ -52,7 +52,7 @@ export default function EquipmentTablePanel({ table, onOpenTag }: {
           <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-[var(--color-text-faint)]" />
           <input type="search" aria-label="Filter tags" value={filter} onChange={(e) => setFilter(e.target.value)}
             placeholder="Filter tags…"
-            className="pl-6 pr-2 py-1 w-36 rounded-lg text-body font-display tabular-nums border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]" />
+            className="pl-6 pr-2 py-1 w-36 pointer-coarse:h-11 rounded-lg text-body pointer-coarse:text-reading font-display tabular-nums border border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]" />
         </div>
       </div>
 

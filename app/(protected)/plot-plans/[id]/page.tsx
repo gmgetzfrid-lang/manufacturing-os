@@ -205,10 +205,9 @@ export default function PlotPlanBoard() {
     : counts.blocked > 0 ? `${counts.blocked} blocked.`
     : counts.completed === total ? `All ${total} done.`
     : `${counts.completed} of ${total} done.`;
-  const facts = total === 0 ? undefined : [
-    ...(counts.blocked > 0 ? [{ label: "Done", value: `${counts.completed} of ${total}` }] : []),
-    { label: "Markers", value: total.toLocaleString() },
-  ];
+  // The title already says how many are done out of how many; "Done" shows
+  // only when the title is about the blocked ones instead (B5).
+  const facts = total > 0 && counts.blocked > 0 ? [{ label: "Done", value: `${counts.completed} of ${total}` }] : undefined;
   const cancelEdit = () => { setMarkers(plan.markers); setDirty(false); setEditing(false); setPlacingAssetId(null); };
 
   return (
@@ -319,7 +318,7 @@ export default function PlotPlanBoard() {
               <div className="text-body font-medium text-[var(--color-text-muted)] flex-1">On this drawing</div>
               <button type="button" onClick={() => setSelectedMarker(null)} aria-label="Close" className="ui-hit w-9 h-9 grid place-items-center rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><X className="w-4 h-4" /></button>
             </div>
-            <div className="font-display text-[26px] leading-tight font-semibold text-[var(--color-text)] break-words mb-2"><CopyId value={selAsset.tag} label="tag" /></div>
+            <div className="font-display text-section leading-tight font-semibold text-[var(--color-text)] break-words mb-2"><CopyId value={selAsset.tag} label="tag" /></div>
             {selAsset.description && <p className="text-body text-[var(--color-text-muted)] mb-3">{selAsset.description}</p>}
             <div className="mb-3">
               <span className="inline-flex items-center gap-1.5 text-body font-medium text-[var(--color-text)]">

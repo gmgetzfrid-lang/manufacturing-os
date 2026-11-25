@@ -77,6 +77,8 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
   const [grantNote, setGrantNote] = useState("");
   const [grantBusy, setGrantBusy] = useState(false);
   const [grantErr, setGrantErr] = useState<string | null>(null);
+  // The delegate form opens from one button, so what they can do reads first (B9).
+  const [delegating, setDelegating] = useState(false);
 
   const refreshPolicy = useCallback(async () => {
     if (!activeOrgId) return;
@@ -218,7 +220,10 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
                   ))}
                 </ul>
               )}
-              {canEdit && (
+              {canEdit && !delegating && (
+                <Button type="button" variant="secondary" className="mt-4" onClick={() => setDelegating(true)}>Delegate an action</Button>
+              )}
+              {canEdit && delegating && (
                 <form className="mt-4 grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_160px] gap-3" onSubmit={(e) => { e.preventDefault(); void doGrant(); }}>
                   <Field label="Delegate an action" className="sm:col-span-2">
                     <Select value={grantCap} onChange={(e) => setGrantCap(e.target.value as CapabilityId)}>
@@ -233,6 +238,7 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
                   </Field>
                   <div className="sm:col-span-2 flex flex-wrap items-center gap-3">
                     <Button type="submit" variant="secondary" loading={grantBusy}>Delegate</Button>
+                    <button type="button" onClick={() => setDelegating(false)} disabled={grantBusy} className={`${btnLink} !text-[var(--color-text-muted)] hover:!text-[var(--color-text)]`}>Cancel</button>
                     <span className="text-body text-[var(--color-text-muted)]">Only adds to what {who.name} can do; nobody else loses anything.</span>
                   </div>
                   {grantErr && <p role="alert" className="sm:col-span-2 text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" /><span>{grantErr}</span></p>}

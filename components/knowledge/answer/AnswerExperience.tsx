@@ -814,7 +814,7 @@ function ProofItem({ c, onOpen, open, onToggle, flash, domId }: {
 }) {
   const doc = (c.documentName ?? "Document").replace(/\.pdf$/i, "");
   return (
-    // One source, one ruled row: the document (condensed type) and its
+    // One source, one row: the document (condensed type) and its
     // page, what it proves, and (open) the exact words.
     <li id={domId}
       className={`-mx-2 px-2 scroll-mt-24 transition-colors duration-500 ${flash ? "bg-[var(--color-accent-soft)]" : ""}`}>
@@ -873,7 +873,8 @@ function ProofTrail({ citations, onOpen, openSet, onToggle, onShowRelated, showR
       flash={flashN === c.n} domId={`${idPrefix}-${c.n}`} />
   );
   const rows = (list: KnowledgeCitation[]) => (
-    <ol className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">{list.map(item)}</ol>
+    // A short list of sources: space between them, no rule under each (B3).
+    <ol className="grid gap-1">{list.map(item)}</ol>
   );
   const groupHead = (label: string, dot: string, count: number) => (
     <div className="flex items-center gap-2 pb-1.5">
@@ -1219,7 +1220,7 @@ function HelperBand({ answer, mode, onRethink, onOpenDoc, onFill, primary }: {
         </button>
       )}
       {docs.length > 0 && (
-        <ul className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
+        <ul className="grid gap-1">
           {docs.map((d) => (
             <li key={d.documentId} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-2.5">
               <span className="min-w-0 flex-1 basis-48">
@@ -1630,7 +1631,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
               <p className="pb-2 text-body text-[var(--color-text-muted)]">
                 Not your controlled documents: check it against the publication.
               </p>
-              <ol className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
+              <ol className="grid gap-1">
                 {webCitations.map((c) => {
                   let host = c.url ?? "";
                   try { host = new URL(c.url ?? "").hostname.replace(/^www\./, ""); } catch { /* keep */ }
@@ -1668,7 +1669,7 @@ export function AnswerExperience({ question, answer, onCite, onOpenTag, onOpenDo
                 <span className={COUNT}>{jobCitations.length}</span>
               </div>
               <p className="pb-2 text-body text-[var(--color-text-muted)]">Kept at the close-out reviews of earlier projects.</p>
-              <ol className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
+              <ol className="grid gap-1">
                 {jobCitations.map((c) => (
                   <li key={c.n} className={`-mx-2 px-2 py-2.5 space-y-2 transition-colors duration-500 ${flashN === c.n ? "bg-[var(--color-accent-soft)]" : ""}`}>
                     <div className="flex items-start gap-3">
@@ -1852,7 +1853,7 @@ export function CitationChips({ citations, onOpen }: {
         <span className="font-display text-section font-semibold text-[var(--color-text)]">Sources</span>
         <span className={COUNT}>{citations.length}</span>
       </div>
-      <ol className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
+      <ol className="grid gap-1">
         {citations.map((c) => c.url?.startsWith("/") ? (
           // A past job → its project.
           <li key={c.n}>
@@ -2052,7 +2053,7 @@ export function StreamingAnswer({ status, draft }: { status: string; draft: stri
               {inEvidence ? "Marking the exact words on each page" : "They arrive with the answer"}
             </span>
           </div>
-          <ol className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]" aria-hidden>
+          <ol className="grid gap-1" aria-hidden>
             {[0, 1, 2].map((i) => (
               <li key={i} className="py-3 flex items-start gap-3">
                 <Shimmer className="w-6 h-6" />

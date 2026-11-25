@@ -785,7 +785,7 @@ function GraphPageInner() {
                               <div className="flex items-center gap-1.5 min-w-0">
                                 <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[b.a.type] }} />
                                 <span className="text-body font-medium text-[var(--color-text)] truncate">{b.a.label}</span>
-                                <span className="text-body text-[var(--state-held)] font-medium shrink-0">↔</span>
+                                <span className="text-body text-[var(--color-text-muted)] font-medium shrink-0">↔</span>
                                 <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[b.b.type] }} />
                                 <span className="text-body font-medium text-[var(--color-text)] truncate">{b.b.label}</span>
                               </div>
@@ -942,9 +942,9 @@ function GraphPageInner() {
                 picture instead of a tool. */}
             {/* Connect panel — the manual edge, drawn where the map is. */}
             {connect && (
-              <div className="absolute bottom-3 right-3 w-72 max-w-[calc(100%-1.5rem)] rounded-xl border border-[color-mix(in_srgb,var(--state-released)_35%,transparent)] bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl p-3 space-y-2 z-10">
+              <div className="absolute bottom-3 right-3 w-72 max-w-[calc(100%-1.5rem)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl p-3 space-y-2 z-10">
                 <div className="flex items-center gap-1.5">
-                  <Link2 className="w-3.5 h-3.5 text-[var(--state-released)]" />
+                  <Link2 className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                   <span className="text-body font-medium text-[var(--color-text)] flex-1">Draw a connection</span>
                   <button onClick={() => setConnect(null)} aria-label="Done connecting"
                     className="ui-hit text-[var(--color-text-faint)] hover:text-[var(--color-text)]">

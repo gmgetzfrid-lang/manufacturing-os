@@ -47,7 +47,8 @@ import { collectDroppedFiles, filesFromDirectoryInput } from "@/lib/folderUpload
 import { friendlyError } from "@/lib/friendlyError";
 import { ErrorNote } from "@/components/ui/ErrorNote";
 import { SkeletonRows } from "@/components/ui/Skeleton";
-import { btnIcon } from "@/components/admin/kit";
+import { btnIcon, btnRow } from "@/components/admin/kit";
+import HelpTooltip from "@/components/ui/HelpTooltip";
 
 // pdf.js only loads when someone actually opens a cited page.
 const CitedPageViewer = dynamic(() => import("@/components/knowledge/CitedPageViewer"), { ssr: false });
@@ -479,13 +480,55 @@ export default function KnowledgeLibraryPage() {
       : readyDocs === 0
         ? "Nothing indexed yet."
         : `${readyDocs.toLocaleString()} of ${docs.length.toLocaleString()} documents indexed.`;
-  // A failure is the one number that needs someone; the rest stay small.
-  const facts = docs.length > 0 ? [
+  // A failure is the one number that needs someone. How many there are and
+  // how many are indexed is the title already, so it isn't said twice (B5).
+  const factList = [
     ...(docGroups.failed > 0 ? [{ label: "Failed", value: docGroups.failed.toLocaleString(), tone: "bad" as const, hero: true }] : []),
-    { label: "Documents", value: docs.length.toLocaleString() },
-    { label: "Indexed", value: readyDocs.toLocaleString() },
     ...(indexingDocs > 0 ? [{ label: "In progress", value: indexingDocs.toLocaleString() }] : []),
-  ] : undefined;
+  ];
+  const facts = factList.length > 0 ? factList : undefined;
+
+  // Two rare library-wide jobs, from the Documents menu.
+  const reindexAll = async () => {
+    const ok = await appConfirm({
+      title: "Re-index all documents?",
+      message:
+        "Every document re-reads from scratch - text, tables, tags, and anchors. "
+        + "Do this after an ingestion upgrade or when indexing missed things. "
+        + "Runs in the background; you can leave this page.",
+      confirmLabel: "Re-index",
+    });
+    if (!ok || !activeOrgId) return;
+    try {
+      const res = await rebuildDrawingIndex(activeOrgId, libraryId);
+      showToast({ type: "success", title: `${res.docs} ${res.docs === 1 ? "document" : "documents"} queued. Indexing starts now.` });
+      void refresh();
+    } catch (e) {
+      showToast({ type: "error", title: friendlyError(e) });
+    }
+  };
+  // Figure pages indexed as their labels only (before the reader looked at
+  // figures): re-read just those documents.
+  const readFigures = async () => {
+    const ok = await appConfirm({
+      title: "Read the figures?",
+      message:
+        "Finds figure pages that were indexed as their labels only, and re-reads those documents so "
+        + "each drawing is looked at and described: what is attached to what, how, and its limits. "
+        + "Pages already read are reused, and search keeps working while it runs. Uses your AI key.",
+      confirmLabel: "Read figures",
+    });
+    if (!ok || !activeOrgId) return;
+    try {
+      const res = await readLibraryFigures(activeOrgId, libraryId);
+      showToast(res.docs === 0
+        ? { type: "success", title: "Every figure page has been read already." }
+        : { type: "success", title: `Reading ${res.pages} figure ${res.pages === 1 ? "page" : "pages"} in ${res.docs} ${res.docs === 1 ? "document" : "documents"}. You can leave this page.` });
+      void refresh();
+    } catch (e) {
+      showToast({ type: "error", title: friendlyError(e) });
+    }
+  };
 
   return (
     <PageShell>
@@ -591,64 +634,6 @@ export default function KnowledgeLibraryPage() {
                 {indexingDocs > 0 && <span className="ui-pill is-muted ml-1"><Loader2 aria-hidden className="w-3 h-3 animate-spin" /> {indexingDocs} in progress</span>}
               </span>
             </button>
-            {/* Re-index lives HERE, with the documents — not inside Drawing
-                Intelligence, where gating that panel to drawing sets briefly
-                made rebuilding unreachable for every prose library. The
-                action was always general; now its home is too. */}
-            {isController && docs.length > 0 && (
-              <button
-                onClick={async () => {
-                  const ok = await appConfirm({
-                    title: "Re-index all documents?",
-                    message:
-                      "Every document re-reads from scratch - text, tables, tags, and anchors. "
-                      + "Do this after an ingestion upgrade or when indexing missed things. "
-                      + "Runs in the background; you can leave this page.",
-                    confirmLabel: "Re-index",
-                  });
-                  if (!ok || !activeOrgId) return;
-                  try {
-                    const res = await rebuildDrawingIndex(activeOrgId, libraryId);
-                    showToast({ type: "success", title: `${res.docs} ${res.docs === 1 ? "document" : "documents"} queued. Indexing starts now.` });
-                    void refresh();
-                  } catch (e) {
-                    showToast({ type: "error", title: friendlyError(e) });
-                  }
-                }}
-                className="inline-flex items-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
-              >
-                <RefreshCw aria-hidden className="w-3.5 h-3.5" /> Re-index all
-              </button>
-            )}
-            {/* Figure pages indexed as their labels only (before the reader
-                looked at figures): re-read just those documents. */}
-            {isController && docs.length > 0 && (
-              <button
-                onClick={async () => {
-                  const ok = await appConfirm({
-                    title: "Read the figures?",
-                    message:
-                      "Finds figure pages that were indexed as their labels only, and re-reads those documents so "
-                      + "each drawing is looked at and described: what is attached to what, how, and its limits. "
-                      + "Pages already read are reused, and search keeps working while it runs. Uses your AI key.",
-                    confirmLabel: "Read figures",
-                  });
-                  if (!ok || !activeOrgId) return;
-                  try {
-                    const res = await readLibraryFigures(activeOrgId, libraryId);
-                    showToast(res.docs === 0
-                      ? { type: "success", title: "Every figure page has been read already." }
-                      : { type: "success", title: `Reading ${res.pages} figure ${res.pages === 1 ? "page" : "pages"} in ${res.docs} ${res.docs === 1 ? "document" : "documents"}. You can leave this page.` });
-                    void refresh();
-                  } catch (e) {
-                    showToast({ type: "error", title: friendlyError(e) });
-                  }
-                }}
-                className="inline-flex items-center gap-1.5 h-8 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
-              >
-                <ImageIcon aria-hidden className="w-3.5 h-3.5" /> Read figures
-              </button>
-            )}
             {isController && (
               <>
                 <input ref={fileInput} type="file" accept=".pdf,application/pdf" multiple hidden
@@ -671,13 +656,23 @@ export default function KnowledgeLibraryPage() {
                   <Button size="sm" variant="secondary" onClick={() => fileInput.current?.click()} disabled={uploadState !== null}>
                     <Upload className="w-3.5 h-3.5" /> Add PDFs
                   </Button>
+                  {/* Re-index lives HERE, with the documents (not inside Drawing
+                      Intelligence, where gating that panel to drawing sets once
+                      made rebuilding unreachable for prose libraries). Rare, so
+                      it and Read figures sit in one menu (A3, B6). */}
+                  {docs.length > 0 && (
+                    <MoreMenu iconOnly label="More document actions" triggerClass={btnRow} items={[
+                      { icon: <RefreshCw className="w-4 h-4" />, label: "Re-index all", onClick: () => void reindexAll() },
+                      { icon: <ImageIcon className="w-4 h-4" />, label: "Read figures", onClick: () => void readFigures() },
+                    ]} />
+                  )}
                 </div>
               </>
             )}
           </div>
 
           {uploadState && (
-            <div className="mb-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 flex items-center gap-2 text-body">
+            <div className="mb-2 rounded-lg bg-[var(--color-surface-2)] px-3 py-2.5 flex items-center gap-2 text-body">
               <Loader2 className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />
               <span className="font-medium truncate">{uploadState.name}</span>
               <span className="text-[var(--color-text-muted)] shrink-0 ml-auto">{uploadState.phase}</span>
@@ -696,7 +691,7 @@ export default function KnowledgeLibraryPage() {
             </ul>
           )}
           {autoIndexing && (
-            <div role="status" className="mb-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2.5 text-body">
+            <div role="status" className="mb-2 rounded-lg bg-[var(--color-surface-2)] px-3 py-2.5 text-body">
               <div className="flex items-center gap-2">
                 <Loader2 aria-hidden className="w-4 h-4 animate-spin text-[var(--color-text-muted)] shrink-0" />
                 <span className="font-medium truncate">Indexing {autoIndexing.name}</span>
@@ -725,7 +720,7 @@ export default function KnowledgeLibraryPage() {
           )}
 
           {!docsOpen && docs.length > 0 ? null : docs.length === 0 && !uploadState ? (
-            <div className="rounded-lg border border-dashed border-[var(--color-border-strong)] p-6 text-center text-reading text-[var(--color-text-muted)]">
+            <div className="p-6 text-center text-reading text-[var(--color-text-muted)]">
               {isController ? "Drag PDFs or whole folders here, or use Add PDFs above." : "No documents yet. Admin or Doc Control can add PDFs."}
             </div>
           ) : (
@@ -847,7 +842,7 @@ export default function KnowledgeLibraryPage() {
                     </div>
                     </div>
                   </td>
-                  <td className="px-3 py-3 text-right font-display tabular-nums font-semibold text-reading text-[var(--color-text)] hidden sm:table-cell whitespace-nowrap">{doc.pageCount ?? "?"}</td>
+                  <td className="px-3 py-3 text-right tabular-nums text-[var(--color-text)] hidden sm:table-cell whitespace-nowrap">{doc.pageCount ?? "?"}</td>
                   <td className="px-3 py-3 hidden md:table-cell whitespace-nowrap">{statusTag}</td>
                   <td className="px-2 py-2 whitespace-nowrap text-right">
                     {reindexing === doc.id ? (
@@ -963,23 +958,25 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
     <section>
       <div className="flex items-end gap-x-3 gap-y-1 flex-wrap mb-2.5 min-h-8">
         <div className="min-w-0 flex-1 basis-[16rem]">
-          <h2 className="font-display text-section leading-tight font-semibold text-[var(--color-text)]">
+          <h2 className="inline-flex items-center gap-2 font-display text-section leading-tight font-semibold text-[var(--color-text)]">
             Ask this library
+            {/* Where answers come from: useful, not needed to ask (B5). */}
+            <HelpTooltip>Answers come only from the indexed documents, cited to the page.</HelpTooltip>
           </h2>
-          <div className="mt-0.5 text-body text-[var(--color-text-muted)]">
-            Answers come only from the indexed documents, cited to the page.
-            {instructionCount > 0 && (
-              <Link href="/admin/ai-instructions" className="ml-1.5 text-[var(--color-accent-text)] hover:underline underline-offset-2">
+          {instructionCount > 0 && (
+            <div className="mt-0.5 text-body">
+              <Link href="/admin/ai-instructions" className="text-[var(--color-accent-text)] hover:underline underline-offset-2">
                 {instructionCount} standing instruction{instructionCount === 1 ? "" : "s"} apply
               </Link>
-            )}
-          </div>
+            </div>
+          )}
         </div>
         <Link href={askHref} className="text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">
           All conversations
         </Link>
       </div>
-      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 sm:p-5">
+      {/* The ask box stands on its own: no second box around it (B3). */}
+      <div>
       {/* Ask right here — the question opens in the chat already running,
           instead of a door you have to walk through first. Focus is a soft
           ring outside the box (the border never changes), the box grows
@@ -1018,11 +1015,12 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
           <div className="text-body font-medium text-[var(--color-text)] mb-1.5 flex items-baseline gap-2">
             Recent conversations <span className="ui-count">{recent.length}</span>
           </div>
-          <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)] -mx-4 sm:-mx-5">
+          {/* At most four: space between them, no rule under each (B3). */}
+          <ul className="grid gap-1 -mx-3">
             {recent.map((t) => (
               <li key={t.id}>
                 <Link href={`/assistant?thread=${t.id}&library=${libraryId}`}
-                  className="flex items-center gap-2.5 px-4 sm:px-5 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors group">
+                  className="flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-[var(--color-surface)] transition-colors group">
                   <span aria-hidden className="ui-icon-tile is-sm">
                     {t.scope === "internet" ? <Globe className="w-4 h-4" /> : t.scope === "tools" ? <Bot className="w-4 h-4" /> : <MessageSquare className="w-4 h-4" />}
                   </span>
@@ -1030,7 +1028,7 @@ function AskEntry({ orgId, libraryId, libraryName, readyDocs, docsTotal }: {
                     <span className="block text-reading font-medium text-[var(--color-text)] group-hover:text-[var(--color-accent-text)] truncate">{t.title || "Untitled"}</span>
                     <span className="flex gap-3 text-body text-[var(--color-text-muted)]">
                       <span>{(t.createdByName ?? "Someone").split("@")[0]}</span>
-                      <span>{new Date(t.lastMessageAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}, {new Date(t.lastMessageAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</span>
+                      <span>{new Date(t.lastMessageAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}, {new Date(t.lastMessageAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</span>
                       {t.settledAt && <span className="ui-pill is-good">Settled</span>}
                     </span>
                   </span>
