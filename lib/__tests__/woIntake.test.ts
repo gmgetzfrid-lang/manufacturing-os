@@ -31,6 +31,24 @@ describe("a work order list read into a project's scope", () => {
     expect(r.items[1].drafted).toBe(true);
   });
 
+  it("keeps every other column of the list under its own heading, and says when one changes", () => {
+    const withMore: Sheet = { name: "APPROVED", rows: [
+      ["Work Order", "Description of Work", "Equipment", "Priority", "Permit", "Est Hours"],
+      ["400101", "Pull bundle", "9030.01", "2", "Hot work", "36"],
+      ["400102", "Coat channel", "9030.01", "", "Cold work", ""],
+    ] };
+    const r = readScope(withMore);
+    expect(r.items[0].extra).toEqual({ Priority: "2", Permit: "Hot work", "Est Hours": "36" });
+    expect(r.items[1].extra).toEqual({ Permit: "Cold work" });
+    const again = readScope({ ...withMore, rows: withMore.rows.map((row) => (row[0] === "400101" ? [...row.slice(0, 3), "1", "Hot work", "40"] : row)) });
+    expect(diffScope(r.items, again.items).changed.map((c) => [c.after.wo, c.fields])).toEqual([["400101", ["Priority", "Est Hours"]]]);
+    // A project imported before the other columns were kept: not every row "changed".
+    const old = r.items.map(({ extra: _e, ...x }) => x);
+    expect(diffScope(old, again.items).changed).toEqual([]);
+    // The owner's list maps every column, so nothing extra is kept.
+    expect(readScope(approved).items[0].extra).toBeUndefined();
+  });
+
   it("the note under the list is scope still coming, each with its owner", () => {
     expect(readScope(approved).coming).toEqual([
       { what: "Control Valves", owner: "Pat Q." }, { what: "PSVs", owner: "Lee R." }, { what: "Inspections", owner: "MI" },

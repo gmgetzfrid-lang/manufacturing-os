@@ -81,6 +81,7 @@ Also read: `docs/design-rules.md` (rules are musts, ideas are optional) and `doc
 48. **Never use the THOR indexer** (the network-drive indexer script in the repo) for anything in the app. Forget it entirely. (Nov 25)
 49. **Every dialog opens over the whole screen**, wherever it's opened from: use the shared `Modal` (it draws over the page), never a hand-made `fixed inset-0` box, and check it on a long page scrolled down. (Nov 25: "that tiny modal is way down the scroll screen")
 50. **Don't box him in with fixed slots.** His sheets and forms are his: he says what each sheet is and what the app fills on it; the app reads the labels on it and suggests, he confirms or changes; some sheets are just printed blank and swapped once signed. (Nov 25)
+52. **The scope is a list of work orders, one row each, with everything his list says** (WO, description, equipment number, tag and name, category, date added and by whom, notes, drafted/approved, any other column). Grouping by category or equipment is a view he picks, never the shape of the list; nothing is cut off behind "Show all". (Nov 25)
 51. **Count things as what they are.** Packages are counted as packages (one per piece of equipment), not as work orders; a number is never shown twice on one screen. (Nov 25)
 
 ---
@@ -99,6 +100,8 @@ Also read: `docs/design-rules.md` (rules are musts, ideas are optional) and `doc
 ---
 
 ## Mistakes log (newest first; add one line each time he corrects something)
+
+- Nov 25: The imported work order list read by equipment (equipment name in bold, the WO number small and grey on the right), hid the date added, who added it, the equipment number and some notes, and cut groups off behind "Show all". Rebuilt as a work order register (lesson 52). Also: I had reported dark mode as checked for the kit setup when the test hadn't switched the app to dark; re-checked for real. Lesson: look at every screenshot before saying a state was checked.
 
 - Nov 25 (found by running the checklist, before he did): on a phone, a tap on "Check the kit first" landed on "Not needed for this job" under it: the touch-size trick for text links made stacked links overlap. Fixed at the root (37 links app-wide). The builder's "Scan pages" saved everything as "Scanned pages (n)" and never read the form's code: it now swaps a signed form in by its code, or asks which form or a name. The cover's QR is now also a clickable link with the address printed. Lesson: tap every control on a phone, not just look at it.
 

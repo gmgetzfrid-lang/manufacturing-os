@@ -14,31 +14,30 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Check, ChevronDown, FileSpreadsheet, FileText, Paperclip, Upload, Package, CalendarRange, Handshake, Pencil, X, RotateCcw, Plus } from "lucide-react";
+import { Check, ChevronDown, FileSpreadsheet, FileText, Upload, Package, CalendarRange, Handshake, RotateCcw, Plus } from "lucide-react";
 import { planningPath, scheduleMatch, type PathKey } from "@/lib/planningPath";
 import { Button } from "@/components/ui/Button";
 import { ErrorNote } from "@/components/ui/ErrorNote";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 import { cancelMilestone, restoreCancelledMilestone } from "@/lib/milestones";
-import { field as fieldCls } from "@/components/admin/kit";
 import { sayError } from "@/components/projects/sayError";
 import ProjectFilePlace, { useProjectFileHome } from "@/components/projects/ProjectFilePlace";
 import JobsScheduleDialog from "@/components/projects/setup/JobsScheduleDialog";
 import RfqDialog from "@/components/projects/setup/RfqDialog";
 import { uploadProjectFile } from "@/lib/projectUpload";
-import { applyScope, byCategory, diffScope, isTypedItem, packageGroup, packageGroups, pickSheet, readScope, shared, typedItem, woKey, type ScopeDiff, type ScopeRead, type ScopeWO, type WoOnSchedule } from "@/lib/woIntake";
+import { applyScope, diffScope, isTypedItem, packageGroup, packageGroups, pickSheet, readScope, shared, typedItem, woKey, type ScopeDiff, type ScopeRead, type ScopeWO } from "@/lib/woIntake";
 import { InlineAddRow, type AddField } from "@/components/ui/InlineAddRow";
 import Timeline, { type TimelineItem, type TimelineTone } from "@/components/ui/Timeline";
 import UserAvatar from "@/components/ui/UserAvatar";
 import { loadScope, readSheets, saveScope, scheduleFacts, LIST_ACCEPT, OPEN_SCHEDULE_IMPORT, TYPED_SOURCE, type RemovedWO, type ScheduleFacts, type ScopeChange, type ScopeState } from "@/lib/scopeStore";
-import { draftMissing, loadKit, loadPackages, packageStage, PACKAGES_CHANGED, EMPTY_KIT, type PackageKit, type ProjectPackages, type WoPackage } from "@/lib/woPackages";
+import { draftMissing, loadKit, loadPackages, PACKAGES_CHANGED, EMPTY_KIT, type PackageKit, type ProjectPackages } from "@/lib/woPackages";
 import PackagesBar from "@/components/projects/packages/PackagesBar";
+import WoRegister from "@/components/projects/setup/WoRegister";
 import PackageBuilder from "@/components/projects/packages/PackageBuilder";
 import PackageKitDialog from "@/components/projects/packages/PackageKitDialog";
 import { useOrgBranding } from "@/components/providers/OrgBrandingProvider";
 import { supabase } from "@/lib/supabase";
 
-const SHOW = 6;
 const when = (iso: string, tz?: string) => new Date(iso).toLocaleString("en-US", { timeZone: tz, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 /** A change to the scope on the timeline: the word and its dot. */
 const KIND: Record<ScopeChange["kind"], { word: string; tone: TimelineTone }> = {
@@ -60,7 +59,6 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
   const [error, setError] = useState<string | null>(null);
   const [incoming, setIncoming] = useState<{ file: File; read: ScopeRead; diff: ScopeDiff } | null>(null);
   const [busy, setBusy] = useState(false);
-  const [open, setOpen] = useState<Record<string, boolean>>({});
   const [attaching, setAttaching] = useState<string | null>(null);
   const [rfqOpen, setRfqOpen] = useState(false);
   const [makeOpen, setMakeOpen] = useState(false);
@@ -106,7 +104,6 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
     if (k) setBuilding(k);
   }, []);
 
-  const groups = useMemo(() => (scope ? byCategory(scope.items) : []), [scope]);
   const vs = useMemo(() => (scope ? scheduleMatch(scope.items, facts) : null), [scope, facts]);
 
   const save = async (next: ScopeState) => { await saveScope(projectId, next); setScope(next); };
@@ -500,31 +497,11 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
           </div>
         )}
 
-        <div className="border-t border-[var(--color-border)]">
-          {groups.map((g) => {
-            const isOpen = open[g.category] ?? false;
-            const rows = isOpen ? g.items : g.items.slice(0, SHOW);
-            return (
-              <div key={g.category} className="border-b border-[var(--color-border)] last:border-b-0">
-                <div className="px-5 py-2 bg-[var(--color-surface-2)] text-body font-semibold text-[var(--color-text)]">
-                  {g.category} <span className="font-normal text-[var(--color-text-muted)] tabular-nums">· {g.equipment} piece{g.equipment === 1 ? "" : "s"}, {g.items.length} {g.items.every((x) => isTypedItem(x.wo)) ? "job" : "WO"}{g.items.length === 1 ? "" : "s"}</span>
-                </div>
-                <ul>
-                  {rows.map((x) => <WoRow key={x.wo} x={x} items={scope.items} canManage={canManage} busy={attaching === x.wo} offSchedule={!!vs && !isTypedItem(x.wo) && !onSched.has(x.wo)} noPkg={!!sc.skipped?.includes("pkg")}
-                    sched={facts?.byWo[x.wo]} late={!!since && !!x.addedAt && x.addedAt > since}
-                    pkg={pkgs?.packages[packageGroup(scope.items, x.wo)[0].wo]} onBuild={() => setBuilding(packageGroup(scope.items, x.wo)[0].wo)}
-                    onAttach={() => pickPackage(x.wo)} onApprove={() => void approve(x.wo)} onRemove={() => void remove(x)} onSave={(v) => saveEdit(x, v)} />)}
-                </ul>
-                {g.items.length > SHOW && (
-                  <button type="button" onClick={() => setOpen((o) => ({ ...o, [g.category]: !isOpen }))} aria-expanded={isOpen}
-                    className="w-full flex items-center gap-1.5 px-5 min-h-11 text-left text-body font-medium text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]">
-                    <ChevronDown aria-hidden className={`ui-chevron w-4 h-4 ${isOpen ? "" : "-rotate-90"}`} />{isOpen ? "Show fewer" : `Show all ${g.items.length}`}
-                  </button>
-                )}
-              </div>
-            );
-          })}
-        </div>
+        {/* Every work order on its own row, with all the list says about it. */}
+        <WoRegister projectId={projectId} items={scope.items} canManage={canManage} attaching={attaching} noPkg={!!sc.skipped?.includes("pkg")}
+          onSched={vs ? onSched : null} byWo={facts?.byWo} since={since} packages={pkgs?.packages}
+          onBuild={(k) => setBuilding(k)} onAttach={(wo) => pickPackage(wo)} onApprove={(wo) => void approve(wo)}
+          onRemove={(x) => void remove(x)} onSave={(x, v) => saveEdit(x, v)} />
         {/* Taken off the scope, with why: each can be put back. Quiet: the
             number struck through, the why in quotes, who as an avatar. */}
         {removed.length > 0 && (
@@ -609,98 +586,6 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
 }
 
 /** One work order: what and where, its number, and its package. */
-function WoRow({ x, items, canManage, busy, offSchedule, noPkg, sched, late, pkg, onBuild, onAttach, onApprove, onRemove, onSave }: {
-  x: ScopeWO; items: ScopeWO[]; canManage: boolean; busy: boolean; offSchedule: boolean;
-  /** Its work order package, when it has been built (shared by its equipment's WOs). */
-  pkg?: WoPackage;
-  onBuild: () => void;
-  /** Packages marked not needed for this job: no package asks on the row. */
-  noPkg: boolean;
-  /** Its steps on the schedule, once there is one. */
-  sched?: WoOnSchedule;
-  /** Added after the RFQ went out (scope growth). */
-  late: boolean;
-  onAttach: () => void; onApprove: () => void; onRemove: () => void;
-  onSave: (v: { what: string; equipment: string; wo: string }) => Promise<string | null>;
-}) {
-  const [edit, setEdit] = useState<{ what: string; equipment: string; wo: string } | null>(null);
-  const [editErr, setEditErr] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const group = packageGroup(items, x.wo);
-  // Where it stands on the schedule, in words.
-  const schedSaid = !sched ? "" : sched.cancelled ? "Cancelled on the schedule" : !sched.steps ? "" : sched.done === sched.steps ? "Done on the schedule" : `On the schedule: ${sched.done} of ${sched.steps} step${sched.steps === 1 ? "" : "s"} done`;
-  const ask = /need|add .*drawing|missing/i.test(x.notes);
-  const noteShown = x.notes && !(x.conditional && /inspect for clean/i.test(x.notes)) ? x.notes : "";
-  return (
-    <li id={`wo-${x.wo}`} className="px-5 py-2.5 border-t border-[var(--color-border)] first:border-t-0 flex flex-wrap sm:flex-nowrap items-start gap-x-4 gap-y-1.5">
-      <div className="min-w-0 flex-1">
-        <div className="text-body font-medium text-[var(--color-text)] break-words">{x.tag && <span className="ui-id mr-1.5">{x.tag}</span>}{x.equipmentName || (x.tag ? "" : x.equipment)}</div>
-        <div className="text-body text-[var(--color-text)] break-words">{x.what}</div>
-        {(noteShown || x.conditional || offSchedule || late) && (
-          <div className="text-caption break-words text-[var(--color-text-muted)]">
-            {[x.conditional ? "Depends on inspection" : "", offSchedule ? "Not on the schedule" : "", late && x.addedAt ? `Added ${new Date(x.addedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}, after the RFQ` : ""].filter(Boolean).map((t) => <span key={t} className="mr-2 font-medium text-[var(--state-held-text)]">{t}</span>)}
-            {noteShown && <span className={ask ? "font-medium text-[var(--state-held-text)]" : ""}>{noteShown}</span>}
-          </div>
-        )}
-        {schedSaid && <div className={`text-caption ${sched?.cancelled ? "text-[var(--state-held-text)] font-medium" : sched && sched.done === sched.steps ? "text-[var(--state-released-text)] font-medium" : "text-[var(--color-text-muted)]"}`}>{schedSaid}</div>}
-        {canManage && !edit && (
-          <div className="flex flex-wrap gap-x-1">
-            <button type="button" onClick={() => { setEditErr(null); setEdit({ what: x.what, equipment: x.equipment, wo: isTypedItem(x.wo) ? "" : x.wo }); }} className="-ml-1 inline-flex items-center gap-1 min-h-9 pointer-coarse:min-h-11 px-1 text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><Pencil aria-hidden className="w-3.5 h-3.5" />Edit</button>
-            <button type="button" onClick={onRemove} className="inline-flex items-center gap-1 min-h-9 pointer-coarse:min-h-11 px-1 text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)]"><X aria-hidden className="w-3.5 h-3.5" />Remove</button>
-          </div>
-        )}
-        {edit && (
-          <form className="mt-2 grid gap-2 sm:grid-cols-[1fr_10rem_9rem] items-end" onSubmit={(e) => { e.preventDefault(); setSaving(true); void onSave(edit).then((err) => { setSaving(false); if (err) setEditErr(err); else setEdit(null); }); }}>
-            <label className="grid gap-1 text-caption text-[var(--color-text-muted)]">What the work is<input value={edit.what} onChange={(e) => setEdit({ ...edit, what: e.target.value })} className={fieldCls} /></label>
-            <label className="grid gap-1 text-caption text-[var(--color-text-muted)]">Equipment<input value={edit.equipment} onChange={(e) => setEdit({ ...edit, equipment: e.target.value })} className={fieldCls} /></label>
-            <label className="grid gap-1 text-caption text-[var(--color-text-muted)]">WO number<input value={edit.wo} disabled={!isTypedItem(x.wo)} placeholder="If it has one" onChange={(e) => setEdit({ ...edit, wo: e.target.value })} className={`${fieldCls} disabled:opacity-60`} /></label>
-            <div className="sm:col-span-3 flex flex-wrap items-center gap-2">
-              <Button type="submit" variant="secondary" loading={saving}>Save</Button>
-              <Button type="button" variant="ghost" onClick={() => setEdit(null)}>Cancel</Button>
-              {!x.typed && <span className="text-caption text-[var(--color-text-muted)]">The next import of the list puts back what the list says.</span>}
-            </div>
-            {editErr && <p className="sm:col-span-3 text-body font-medium text-[var(--state-overdue-text)]">{editErr}</p>}
-          </form>
-        )}
-      </div>
-      <div className="sm:text-right shrink-0 grid gap-1 sm:justify-items-end text-caption text-[var(--color-text-muted)]">
-        {!isTypedItem(x.wo) && <div className="tabular-nums">WO {x.wo}</div>}
-        {noPkg && !x.pkg && !pkg ? null : pkg ? (() => {
-          const s = packageStage(pkg);
-          const word = pkg.status === "filed" ? "Filed" : pkg.status === "issued" ? "Printed" : pkg.status === "approved" ? "Approved" : "Draft";
-          const dot = pkg.status === "filed" ? "bg-[var(--state-released)]" : pkg.status === "issued" ? "bg-[var(--state-held)]" : pkg.status === "approved" ? "bg-[var(--state-locked)]" : "bg-[var(--color-text-faint)]";
-          return (
-            <>
-              <button type="button" onClick={onBuild} className="inline-flex items-center gap-1 min-h-9 pointer-coarse:min-h-11 font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2"><Package aria-hidden className="w-3.5 h-3.5" />Package · {pkg.items.length + 2} items</button>
-              <span className="inline-flex items-center gap-1.5"><span aria-hidden className={`w-2 h-2 rounded-full ${dot}`} />{word}{s.forms && pkg.status !== "draft" ? `, ${s.signed} of ${s.forms} forms back` : ""}</span>
-            </>
-          );
-        })() : x.pkg ? (
-          <>
-            <Link href={x.pkg.href} className="inline-flex items-center gap-1 min-h-9 pointer-coarse:min-h-11 font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2"><FileText aria-hidden className="w-3.5 h-3.5" />{x.pkg.label}</Link>
-            {x.approved
-              ? <span className="inline-flex items-center gap-1.5"><span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-released)]" />Approved{x.approvedBy ? ` by ${x.approvedBy}` : ""}</span>
-              : canManage
-                ? <button type="button" onClick={onApprove} className="inline-flex items-center gap-1 min-h-9 pointer-coarse:min-h-11 px-2 rounded-md border border-[var(--color-border-strong)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><Check aria-hidden className="w-3.5 h-3.5" />Mark approved</button>
-                : <span className="inline-flex items-center gap-1.5"><span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-held)]" />To approve</span>}
-          </>
-        ) : canManage ? (
-          <>
-            <button type="button" onClick={onBuild} className="inline-flex items-center gap-1 min-h-9 pointer-coarse:min-h-11 px-2 rounded-md border border-[var(--color-border-strong)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-              <Package aria-hidden className="w-3.5 h-3.5" />{group.length > 1 ? `Build package (${group.length} ${group.every((g) => isTypedItem(g.wo)) ? "jobs" : "WOs"})` : "Build package"}
-            </button>
-            <button type="button" onClick={onAttach} disabled={busy} className="inline-flex items-center gap-1 min-h-9 pointer-coarse:min-h-11 text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-60">
-              <Paperclip aria-hidden className="w-3.5 h-3.5" />{busy ? "Attaching..." : "Or attach a finished file"}
-            </button>
-          </>
-        ) : (
-          <span className="inline-flex items-center gap-1.5"><span aria-hidden className="w-2 h-2 rounded-full bg-[var(--color-text-faint)]" />No package yet</span>
-        )}
-      </div>
-    </li>
-  );
-}
-
 function Metric({ label, value }: { label: string; value: string }) {
   return <div><div className="text-caption text-[var(--color-text-muted)]">{label}</div><div className="text-reading font-semibold tabular-nums text-[var(--color-text)]">{value}</div></div>;
 }

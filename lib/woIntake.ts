@@ -38,6 +38,9 @@ export interface ScopeWO {
   notes: string;
   /** The notes say the work depends on what's found ("inspect for cleanliness"). */
   conditional: boolean;
+  /** Every other column of the list, by its heading ("Priority": "2"), so
+   *  nothing in the file is lost. */
+  extra?: Record<string, string>;
   drafted: boolean;
   approved: boolean;
   addedBy?: string;
@@ -190,6 +193,9 @@ export function readScope(sheet: Sheet, override?: ColumnMap): ScopeRead {
   const map = { ...mapColumns(headers, body), ...(override ?? {}) };
   const title = rows.slice(0, h).flat().find((c) => c.length > 3) ?? "";
   const at = (r: string[], role: ColumnRole) => (map[role] != null ? clean(r[map[role]!]) : "");
+  // The columns no role took: kept under their own headings.
+  const used = new Set(Object.values(map).filter((v): v is number => typeof v === "number"));
+  const others = headers.map((hd, j) => ({ hd: clean(hd), j })).filter((c) => c.hd && !used.has(c.j));
   const items: ScopeWO[] = [];
   const coming: ScopeComing[] = [];
   const seen = new Set<string>();
@@ -203,6 +209,8 @@ export function readScope(sheet: Sheet, override?: ColumnMap): ScopeRead {
       const eqName = at(r, "equipmentName");
       const { tag, name } = splitTag(eqName);
       const notes = at(r, "notes");
+      const extra: Record<string, string> = {};
+      for (const c of others) { const v = clean(r[c.j]); if (v) extra[c.hd] = v; }
       items.push({
         wo, what: at(r, "what"), equipment: at(r, "equipment"), tag, equipmentName: name,
         category: at(r, "category") || "Other", notes,
@@ -210,6 +218,7 @@ export function readScope(sheet: Sheet, override?: ColumnMap): ScopeRead {
         drafted: truthy(at(r, "drafted")), approved: truthy(at(r, "approved")),
         ...(at(r, "addedBy") ? { addedBy: at(r, "addedBy") } : {}),
         ...(at(r, "added") ? { added: at(r, "added") } : {}),
+        ...(others.length ? { extra } : {}),
       });
       continue;
     }
@@ -252,7 +261,8 @@ export interface ScopeDiff {
   /** Removed in the app and still in the list: they stay removed. */
   stillRemoved?: ScopeWO[];
   added: ScopeWO[];
-  changed: Array<{ before: ScopeWO; after: ScopeWO; fields: Array<"what" | "equipment" | "category" | "notes"> }>;
+  /** The fields that changed: the four kept by name, or another column's heading. */
+  changed: Array<{ before: ScopeWO; after: ScopeWO; fields: string[] }>;
   dropped: ScopeWO[];
   same: number;
 }
@@ -271,7 +281,11 @@ export function diffScope(before: ScopeWO[], after: ScopeWO[], removed: Iterable
   for (const a of after) {
     const b = old.get(a.wo);
     if (!b) continue;
-    const fields = (["what", "equipment", "category", "notes"] as const).filter((k) => clean(b[k]) !== clean(a[k]));
+    const fields: string[] = (["what", "equipment", "category", "notes"] as const).filter((k) => clean(b[k]) !== clean(a[k]));
+    // The list's other columns, once both imports kept them.
+    if (b.extra && a.extra) {
+      for (const k of new Set([...Object.keys(b.extra), ...Object.keys(a.extra)])) if (clean(b.extra[k]) !== clean(a.extra[k])) fields.push(k);
+    }
     if (fields.length) changed.push({ before: b, after: a, fields: [...fields] });
     else same++;
   }
