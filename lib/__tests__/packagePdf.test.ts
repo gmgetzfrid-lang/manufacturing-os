@@ -332,4 +332,47 @@ describe("packagePdf", () => {
     const plainToc = await assemblePackage(meta, parts, { toc: { bytes: tpl, region: { x: 52, y: 54, w: 524, h: 600 } } });
     expect(pageText(await PDFDocument.load(plainToc.pdf), 1)).toContain(hex("Kind"));
   });
+
+  it("draws the cover on the project's letterhead, with one photo or two side by side", async () => {
+    const logo = `data:image/png;base64,${Buffer.from(makePng(23, 8)).toString("base64")}`;
+    // Shaped like the KERN letterhead: a logo at the top left, the address on the right.
+    const letterhead = {
+      v: 1 as const, name: "Letterhead.docx", kind: "docx" as const, page: { w: 8.5, h: 11 }, pages: "all" as const,
+      margins: { top: 1.71, right: 1, bottom: 0.8, left: 1 },
+      layer: { floats: [{ x: 1, y: 0.5, w: 2.3, h: 0.78, src: logo }] },
+      first: {
+        floats: [{ x: 1, y: 0.5, w: 2.3, h: 0.78, src: logo }],
+        header: { x: 1, w: 6.5, top: 0.5, floats: [], items: [
+          { p: { align: "right" as const, line: 1.15, runs: [{ tab: true }, { t: "7724 E. Panama Lane", pt: 10, font: "Lato" }] } },
+          { p: { align: "right" as const, line: 1.15, runs: [{ t: "Bakersfield, CA  93307", pt: 10, color: "000000", font: "Lato" }] } },
+        ] },
+      },
+    };
+    const parts = [pdfPart("it_1", "Exchanger closure", await makePdf([[612, 792]]), "form")];
+    const images = (doc: PDFDocument) => doc.getPage(0).node.Resources()?.lookup(PDFName.of("XObject"), PDFDict)?.keys().length ?? 0;
+
+    const one = await PDFDocument.load((await assemblePackage({ ...meta, letterhead, coverPhotos: [{ bytes: makeJpeg(60, 40, 1), mime: "image/jpeg", caption: "Bundle pulled" }] }, parts)).pdf);
+    const t1 = pageText(one, 0);
+    expect(t1).toContain(hex("7724 E. Panama Lane"));
+    expect(t1).toContain(hex("Work package"));
+    expect(t1).toContain(hex("Bundle pulled"));
+    expect(images(one)).toBe(2);                         // the letterhead's logo and the photo
+    expect(one.getPageCount()).toBe(3);                  // cover, contents, the form: the photo took no page
+
+    const two = await PDFDocument.load((await assemblePackage({ ...meta, letterhead, coverPhotos: [
+      { bytes: makeJpeg(60, 40, 1), mime: "image/jpeg", caption: "IMG_4021" },
+      { bytes: makePng(30, 50), mime: "image/png", caption: "Channel head" },
+    ] }, parts)).pdf);
+    const t2 = pageText(two, 0);
+    expect(images(two)).toBe(3);
+    expect(t2).toContain(hex("Channel head"));
+    expect(t2).not.toContain(hex("IMG_4021"));          // a camera's name isn't printed
+    expect(two.getPageCount()).toBe(3);
+
+    // No letterhead: the logo cover as before.
+    const plainCover = await PDFDocument.load((await assemblePackage(meta, parts)).pdf);
+    expect(pageText(plainCover, 0)).toContain(hex("Kern Energy"));
+    expect(pageText(plainCover, 0)).not.toContain(hex("7724 E. Panama Lane"));
+  });
 });
+

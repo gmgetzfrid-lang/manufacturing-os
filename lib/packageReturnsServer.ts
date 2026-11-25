@@ -17,9 +17,15 @@ import { EMPTY_PROJECT_PACKAGES, packagesKey, type ProjectPackages, type WoPacka
 
 export const RETURNS_PURPOSE = "package-returns";
 
-const secret = () => createHmac("sha256", process.env.SUPABASE_SERVICE_ROLE_KEY || "dev-only").update("wo-package-codes/v1").digest();
+// The QR codes on printed packages are signed. PACKAGE_CODE_SECRET, when set,
+// signs new ones (so rotating the database key never breaks a printout);
+// codes signed before it was set (with the database key) still open.
+const keyed = (k: string) => createHmac("sha256", k).update("wo-package-codes/v1").digest();
+const secrets = () => [process.env.PACKAGE_CODE_SECRET, process.env.SUPABASE_SERVICE_ROLE_KEY].filter((k): k is string => !!k && !!k.trim()).map(keyed);
+const secret = () => secrets()[0] ?? keyed("dev-only");
 const b64url = (b: Buffer) => b.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-const sign = (linkId: string, key: string) => b64url(createHmac("sha256", secret()).update(`${linkId}|${key}`).digest()).slice(0, 22);
+const signWith = (s: Buffer, linkId: string, key: string) => b64url(createHmac("sha256", s).update(`${linkId}|${key}`).digest()).slice(0, 22);
+const sign = (linkId: string, key: string) => signWith(secret(), linkId, key);
 
 /** The code for a package's QR: link id, package key, signature. */
 export function packageCode(linkId: string, key: string): string {
@@ -34,9 +40,10 @@ export function readPackageCode(code: string): { linkId: string; key: string } |
   const linkId = `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
   let key: string;
   try { key = Buffer.from(m[2].replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8"); } catch { return null; }
-  const want = Buffer.from(sign(linkId, key)), got = Buffer.from(m[3]);
-  if (want.length !== got.length || !timingSafeEqual(want, got)) return null;
-  return { linkId, key };
+  const got = Buffer.from(m[3]);
+  const all = secrets();
+  const ok = (all.length ? all : [keyed("dev-only")]).some((sec) => { const want = Buffer.from(signWith(sec, linkId, key)); return want.length === got.length && timingSafeEqual(want, got); });
+  return ok ? { linkId, key } : null;
 }
 
 export interface ReturnsLink { id: string; org_id: string; project_id: string; company_name: string; expires_at: string | null; revoked_at: string | null; purpose?: string | null }

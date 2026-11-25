@@ -21,6 +21,7 @@ import {
   setFillingRgbColor,
 } from "pdf-lib";
 import type { PDFFont, PDFPage, PDFImage } from "pdf-lib";
+import type { Letterhead, LhItem, LhLayer, LhPara } from "@/lib/letterhead";
 
 export type PartKind = "form" | "drawing" | "photo" | "file";
 
@@ -54,7 +55,15 @@ export interface PackMeta {
   status?: string;
   /** Who printed it, for a sheet's "Prepared by". */
   preparedBy?: string;
+  /** The project's letterhead: the generated cover is drawn on it (its
+   *  page 1), the job inside its margins, in place of the logo line. */
+  letterhead?: Letterhead | null;
+  /** Up to two photos printed on the generated cover (one big, or two side
+   *  by side), so they don't take pages of their own. */
+  coverPhotos?: CoverPhoto[];
 }
+
+export interface CoverPhoto { bytes: Uint8Array; mime: "image/jpeg" | "image/png"; caption?: string }
 
 /** Where a value is written on a sheet: PDF points, origin bottom-left, on
  *  page `page` (0, the first, when not given). */
@@ -645,19 +654,27 @@ function count(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
-/** US letter, black on white. Logo (or workspace name) and status word on
- *  top, the job in big type, the details, then the package QR and the
- *  contents count along the bottom. */
+/** Where the cover's content goes: points from the page's bottom-left. */
+interface CoverFrame { left: number; right: number; top: number; bottom: number }
+/** A photo for the cover, embedded, with the way its EXIF says is up. */
+interface CoverImg { img: PDFImage; o: number; caption: string }
+
+/** Black on white. Logo (or workspace name) and status word on top, or the
+ *  project's letterhead around it all; the job in big type, the details,
+ *  up to two photos, then the package QR and the contents count along the
+ *  bottom. Everything inside `frame` (the letterhead's margins). */
 function drawCover(
   page: PDFPage, fonts: Fonts, meta: PackMeta, logo: PDFImage | null,
   items: number, total: number, landing: QrCode | null, when: { date: string; time: string },
+  frame: CoverFrame = { left: 60, right: LETTER[0] - 60, top: LETTER[1] - 60, bottom: 60 },
+  photos: CoverImg[] = [], onLetterhead = false,
 ): void {
   const { reg, bold } = fonts;
-  const W = LETTER[0];
-  const M = 60;
-  const R = W - M;
+  const M = frame.left;
+  const R = frame.right;
   const CW = R - M;
-  const top = LETTER[1] - M;
+  const top = frame.top;
+  const B = frame.bottom;
 
   let statusW = 0;
   const status = clip(bold, plain(bold, meta.status), 11, 160);
@@ -666,17 +683,24 @@ function drawCover(
     page.drawRectangle({ x: R - statusW, y: top - 24, width: statusW, height: 24, borderColor: BLACK, borderWidth: 1 });
     text(page, status, R - statusW + 10, top - 16, 11, bold);
   }
-  if (logo && logo.width > 0 && logo.height > 0) {
-    const s = Math.min(160 / logo.width, 48 / logo.height);
-    page.drawImage(logo, { x: M, y: top - logo.height * s, width: logo.width * s, height: logo.height * s });
+  let y: number;
+  if (onLetterhead) {
+    // The letterhead carries the company: the job starts at the top of its margins.
+    y = top - 26;
+    text(page, "Work package", M, y, 26, bold);
+    y -= 36;
   } else {
-    text(page, clip(bold, plain(bold, meta.workspace), 14, CW - statusW - 20), M, top - 16, 14, bold);
+    if (logo && logo.width > 0 && logo.height > 0) {
+      const s = Math.min(160 / logo.width, 48 / logo.height);
+      page.drawImage(logo, { x: M, y: top - logo.height * s, width: logo.width * s, height: logo.height * s });
+    } else {
+      text(page, clip(bold, plain(bold, meta.workspace), 14, CW - statusW - 20), M, top - 16, 14, bold);
+    }
+    rule(page, M, R, top - 64, 1, BLACK);
+    y = top - 116;
+    text(page, "Work package", M, y, 30, bold);
+    y -= 40;
   }
-  rule(page, M, R, top - 64, 1, BLACK);
-
-  let y = top - 116;
-  text(page, "Work package", M, y, 30, bold);
-  y -= 40;
   const wo = plain(bold, woLabel(meta.wos));
   for (const line of wo ? wrap(bold, wo, 24, CW, 3) : []) {
     text(page, line, M, y, 24, bold);
@@ -689,18 +713,31 @@ function drawCover(
   }
 
   const qrSize = 96;
-  const bottomTop = M + (landing ? qrSize : 52) + 28;
+  const bottomTop = B + (landing ? qrSize : 52) + 28;
   const details = ([["Project", plain(reg, meta.project)], ["Printed", `${when.date} ${when.time}`]] as Array<[string, string]>)
     .filter(([, v]) => v);
   const detailsH = 18 + details.length * 20;
+  const shown = photos.slice(0, 2);
+  // Room the photos keep: one big, or two side by side; the description
+  // gives way to them (never the other way round).
+  const photoMin = shown.length === 1 ? 170 : shown.length === 2 ? 130 : 0;
   const description = plain(reg, meta.description, 4000);
   if (description) {
     y -= 10;
-    const fit = Math.floor((y - bottomTop - detailsH) / 16) + 1;
+    const room = y - bottomTop - detailsH - (shown.length ? photoMin + 18 : 0);
+    const fit = Math.floor(room / 16) + 1;
     for (const line of wrap(reg, description, 12, CW, Math.min(16, Math.max(1, fit)))) {
       text(page, line, M, y, 12, reg);
       y -= 16;
     }
+  }
+  if (shown.length) {
+    // The photos fill the space between the job and the details, which sit
+    // just above the QR (no gap left under the photos).
+    y -= 14;
+    const roomH = y - (bottomTop + detailsH + 8);
+    const used = drawCoverPhotos(page, fonts, shown, M, y, CW, Math.max(60, roomH));
+    y = Math.min(y - used, bottomTop + detailsH);
   }
   y -= 18;
   for (const [label, value] of details) {
@@ -712,10 +749,10 @@ function drawCover(
   const boxW = 170;
   const boxH = 52;
   if (landing) {
-    drawQr(page, landing, M, M, qrSize);
+    drawQr(page, landing, M, B, qrSize);
     const tx = M + qrSize + 14;
     const tw = R - boxW - 16 - tx;
-    let ty = M + qrSize - 14;
+    let ty = B + qrSize - 14;
     text(page, "Scan for this package", tx, ty, 11, bold);
     ty -= 16;
     for (const line of wrap(reg, "Check the drawings are current and return signed forms.", 10.5, tw, 3)) {
@@ -728,14 +765,246 @@ function drawCover(
       ty -= 2;
       const lines = urlLines(reg, url, 8, tw, 3);
       lines.forEach((line, i) => text(page, line, tx, ty - i * 10, 8, reg, GRAY));
-      linkTo(page, url, M, M, qrSize, qrSize);
+      linkTo(page, url, M, B, qrSize, qrSize);
       linkTo(page, url, tx, ty - (lines.length - 1) * 10 - 3, tw, lines.length * 10 + 2);
     }
   }
   const bx = landing ? R - boxW : M;
-  page.drawRectangle({ x: bx, y: M, width: boxW, height: boxH, borderColor: BLACK, borderWidth: 1 });
-  text(page, "Contents", bx + 12, M + 32, 10, bold, GRAY);
-  text(page, `${count(items, "item", "items")}, ${count(total, "page", "pages")}`, bx + 12, M + 14, 12, reg);
+  page.drawRectangle({ x: bx, y: B, width: boxW, height: boxH, borderColor: BLACK, borderWidth: 1 });
+  text(page, "Contents", bx + 12, B + 32, 10, bold, GRAY);
+  text(page, `${count(items, "item", "items")}, ${count(total, "page", "pages")}`, bx + 12, B + 14, 12, reg);
+}
+
+/** A name worth printing under a photo: one a person gave it, not the
+ *  camera's ("IMG_4021", "PXL_2026…"). */
+function photoCaption(raw: unknown): string {
+  const s = String(raw ?? "").trim();
+  return !s || /^(img|dsc|dscn|pxl|photo|image|screenshot|whatsapp image)[\s_-]*[\d_ -]+$/i.test(s) || /^\d[\d_ -]+$/.test(s) ? "" : s;
+}
+
+/** Up to two photos under the job, from `yTop` down, `w` wide, at most `h`
+ *  tall. One: as big as fits, centered. Two: one row, both the same height
+ *  (wide or tall, nothing cropped), side by side and centered together, so
+ *  their tops and bottoms line up. A hairline round each, its name under
+ *  it. Returns the height used. */
+function drawCoverPhotos(page: PDFPage, fonts: Fonts, photos: CoverImg[], x: number, yTop: number, w: number, h: number): number {
+  const gap = 16;
+  const capH = photos.some((p) => p.caption) ? 15 : 0;
+  // Each photo's shape as it's seen (turned per its EXIF).
+  const ar = photos.map((p) => (p.o >= 5 ? p.img.height / p.img.width : p.img.width / p.img.height));
+  const room = w - gap * (photos.length - 1);
+  const rowH = Math.max(20, Math.min(h - capH, room / ar.reduce((a, b) => a + b, 0)));
+  const widths = ar.map((a) => a * rowH);
+  let px = x + (w - widths.reduce((a, b) => a + b, 0) - gap * (photos.length - 1)) / 2;
+  const py = yTop - rowH;
+  photos.forEach((f, i) => {
+    const dw = widths[i];
+    const name = page.node.newXObject("Image", f.img.ref);
+    page.pushOperators(pushGraphicsState(), concatTransformationMatrix(...orientMatrix(f.o, px, py, dw, rowH)), drawObject(name), popGraphicsState());
+    page.drawRectangle({ x: px, y: py, width: dw, height: rowH, borderColor: LIGHT, borderWidth: 0.5 });
+    if (f.caption) {
+      const c = clip(fonts.reg, plain(fonts.reg, f.caption, 200), 9, dw);
+      text(page, c, px + (dw - fonts.reg.widthOfTextAtSize(c, 9)) / 2, py - 12, 9, fonts.reg, GRAY);
+    }
+    px += dw + gap;
+  });
+  return rowH + capH;
+}
+
+/** The cover's photos, embedded; one that can't be read is left off. */
+async function embedCoverPhotos(out: PDFDocument, photos: CoverPhoto[] | undefined): Promise<CoverImg[]> {
+  const got: CoverImg[] = [];
+  for (const p of (photos ?? []).slice(0, 2)) {
+    try {
+      const b = own(toU8(p.bytes));
+      const kind = sniff(b, p.mime);
+      if (kind === "pdf") continue;
+      const img = kind === "png" ? await out.embedPng(b) : await out.embedJpg(b);
+      if (img.width > 0 && img.height > 0) got.push({ img, o: kind === "jpg" ? jpegOrientation(b) : 1, caption: photoCaption(p.caption) });
+    } catch { /* left off */ }
+  }
+  return got;
+}
+
+// ─── Letterhead (drawn, not pictured) ────────────────────────────────────
+// The project's letterhead as it prints on reports: pictures and coloured
+// boxes where Word placed them, the header's and footer's text in the
+// standard fonts nearest the ones it names. Inches from the page's top-left.
+
+type LhFonts = { pick: (name: string | undefined, b?: boolean, i?: boolean) => Promise<PDFFont> };
+
+function lhFontsFor(out: PDFDocument): LhFonts {
+  const cache = new Map<string, Promise<PDFFont>>();
+  const FAMILY: Record<string, [StandardFonts, StandardFonts, StandardFonts, StandardFonts]> = {
+    sans: [StandardFonts.Helvetica, StandardFonts.HelveticaBold, StandardFonts.HelveticaOblique, StandardFonts.HelveticaBoldOblique],
+    serif: [StandardFonts.TimesRoman, StandardFonts.TimesRomanBold, StandardFonts.TimesRomanItalic, StandardFonts.TimesRomanBoldItalic],
+    mono: [StandardFonts.Courier, StandardFonts.CourierBold, StandardFonts.CourierOblique, StandardFonts.CourierBoldOblique],
+  };
+  return {
+    pick: (name, b, i) => {
+      const fam = /times|georgia|garamond|cambria|book|serif|palatino/i.test(name ?? "") && !/sans/i.test(name ?? "") ? "serif" : /courier|consol|mono/i.test(name ?? "") ? "mono" : "sans";
+      const which = FAMILY[fam][(b ? 1 : 0) + (i ? 2 : 0)];
+      let f = cache.get(which);
+      if (!f) { f = out.embedFont(which); cache.set(which, f); }
+      return f;
+    },
+  };
+}
+
+function b64Bytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const u = new Uint8Array(bin.length);
+  for (let k = 0; k < bin.length; k += 1) u[k] = bin.charCodeAt(k);
+  return u;
+}
+
+const hexColor = (hex?: string): Color => {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex ?? "");
+  if (!m) return BLACK;
+  const n = parseInt(m[1], 16);
+  return rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
+};
+
+/** Text a standard font can print, spaces kept (runs sit side by side). */
+function enc(font: PDFFont, s: string): string {
+  let known = charsets.get(font);
+  if (!known) { known = new Set(font.getCharacterSet()); charsets.set(font, known); }
+  const set = known;
+  let out = "";
+  for (const ch of PICTO ? s.replace(PICTO, "") : s) {
+    const cp = ch.codePointAt(0) ?? 63;
+    if (set.has(cp)) out += ch;
+    else if (LOOKALIKE[ch]) out += LOOKALIKE[ch];
+    else if (/\s/.test(ch)) out += " ";
+    else {
+      const base = ch.normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
+      out += base && Array.from(base).every((c) => set.has(c.codePointAt(0) ?? -1)) ? base : "";
+    }
+  }
+  return out;
+}
+
+/** Draw one page of the letterhead on `page` (`pageIn`: its size, inches). */
+async function drawLetterheadLayer(out: PDFDocument, page: PDFPage, layer: LhLayer, pageIn: { w: number; h: number }): Promise<void> {
+  const H = pageIn.h * 72;
+  const fonts = lhFontsFor(out);
+  const pics = new Map<string, Promise<PDFImage | null>>();
+  const picture = (src: string) => {
+    let p = pics.get(src);
+    if (!p) {
+      p = (async () => {
+        const m = /^data:image\/(png|jpe?g);base64,(.+)$/i.exec(src);
+        if (!m) return null;
+        try { const b = b64Bytes(m[2]); return /png/i.test(m[1]) ? await out.embedPng(b) : await out.embedJpg(b); } catch { return null; }
+      })();
+      pics.set(src, p);
+    }
+    return p;
+  };
+  const placeImage = async (src: string, x: number, yTop: number, w: number, h: number) => {
+    const img = await picture(src);
+    if (img) page.drawImage(img, { x: x * 72, y: H - (yTop + h) * 72, width: w * 72, height: h * 72 });
+  };
+
+  // A paragraph's runs, word-wrapped to `w`, aligned; returns its height (in).
+  const para = async (p: LhPara, x: number, yTop: number, w: number): Promise<number> => {
+    type Piece = { t?: string; font?: PDFFont; pt: number; color: Color; u?: boolean; img?: { src: string; w: number; h: number }; gap?: number; br?: boolean };
+    const pieces: Piece[] = [];
+    for (const r of p.runs ?? []) {
+      if (r.br) { pieces.push({ br: true, pt: r.pt ?? 11, color: BLACK }); continue; }
+      if (r.tab) { pieces.push({ gap: 36, pt: r.pt ?? 11, color: BLACK }); continue; }
+      if (r.img) { pieces.push({ img: r.img, pt: r.img.h * 72, color: BLACK }); continue; }
+      if (!r.t) continue;
+      const font = await fonts.pick(r.font, r.b, r.i);
+      // Words (with the space after each) so a long run wraps.
+      for (const part of enc(font, r.t).match(/\S+\s*|\s+/g) ?? []) pieces.push({ t: part, font, pt: r.pt ?? 11, color: hexColor(r.color), u: r.u });
+    }
+    const widthOf = (q: Piece) => q.gap ?? (q.img ? q.img.w * 72 : q.t && q.font ? q.font.widthOfTextAtSize(q.t, q.pt) : 0);
+    const lines: Piece[][] = [[]];
+    let lineW = 0;
+    const maxW = w * 72;
+    for (const q of pieces) {
+      if (q.br) { lines.push([]); lineW = 0; continue; }
+      const qw = widthOf(q);
+      if (lineW + qw > maxW + 0.5 && lines[lines.length - 1].length && !(q.t && !q.t.trim())) { lines.push([]); lineW = 0; }
+      lines[lines.length - 1].push(q);
+      lineW += qw;
+    }
+    let y = yTop * 72 + (p.before ?? 0);
+    const lead = (p.line ?? 1) * 1.17;
+    for (const line of lines) {
+      const big = Math.max(p.runs?.length ? 0 : 11, ...line.map((q) => q.pt), line.length ? 0 : 11);
+      const lh = big * lead;
+      // Trailing spaces don't count toward where an aligned line sits.
+      const last = [...line].reverse().findIndex((q) => !(q.t && !q.t.trim()));
+      const shown = last < 0 ? [] : line.slice(0, line.length - last);
+      if (shown.length && shown[shown.length - 1].t) shown[shown.length - 1] = { ...shown[shown.length - 1], t: shown[shown.length - 1].t!.trimEnd() };
+      const lw = shown.reduce((a, q) => a + widthOf(q), 0);
+      let cx = x * 72 + (p.align === "right" ? maxW - lw : p.align === "center" ? (maxW - lw) / 2 : 0);
+      const base = H - (y + (lh - big) / 2 + big * 0.82);
+      // Words in the same type sit in one piece of text (it copies as one line).
+      const merged: Piece[] = [];
+      for (const q of shown) {
+        const m = merged[merged.length - 1];
+        if (m && m.t != null && q.t != null && m.font === q.font && m.pt === q.pt && m.u === q.u && JSON.stringify(m.color) === JSON.stringify(q.color)) m.t += q.t;
+        else merged.push({ ...q });
+      }
+      for (const q of merged) {
+        const qw = widthOf(q);
+        if (q.img) await placeImage(q.img.src, cx / 72, (H - base - q.img.h * 72) / 72, q.img.w, q.img.h);
+        else if (q.t && q.font && q.t.trim()) {
+          page.drawText(q.t, { x: cx, y: base, size: q.pt, font: q.font, color: q.color });
+          if (q.u) page.drawLine({ start: { x: cx, y: base - 1.5 }, end: { x: cx + qw, y: base - 1.5 }, thickness: 0.6, color: q.color });
+        }
+        cx += qw;
+      }
+      y += lh;
+    }
+    return (y + (p.after ?? 0)) / 72 - yTop;
+  };
+  const block = async (items: LhItem[], x: number, yTop: number, w: number): Promise<number> => {
+    let y = yTop;
+    for (const it of items ?? []) {
+      if ("p" in it) { y += await para(it.p, x, y, w); continue; }
+      for (const row of it.table.rows ?? []) {
+        const cells = row.cells ?? [];
+        const given = cells.reduce((a, c) => a + (c.w ?? 0), 0);
+        const free = cells.filter((c) => !c.w).length;
+        const each = free ? Math.max(0, (w - given) / free) : 0;
+        let cx = x, rowH = 0;
+        for (const c of cells) {
+          const cw = c.w ?? each;
+          rowH = Math.max(rowH, await block(c.items, cx, y, cw));
+          cx += cw;
+        }
+        y += rowH;
+      }
+    }
+    return y - yTop;
+  };
+
+  if (layer.image) await placeImage(layer.image, 0, 0, pageIn.w, pageIn.h);
+  for (const f of layer.floats ?? []) {
+    if (f.src) { await placeImage(f.src, f.x, f.y, f.w, f.h); continue; }
+    if (f.fill) page.drawRectangle({ x: f.x * 72, y: H - (f.y + f.h) * 72, width: f.w * 72, height: f.h * 72, color: hexColor(f.fill) });
+    if (f.items) await block(f.items, f.x, f.y, f.w);
+  }
+  for (const band of [layer.header, layer.footer]) {
+    if (!band) continue;
+    for (const f of band.floats ?? []) if (f.src) await placeImage(f.src, f.x, f.y, f.w, f.h);
+    const top = band === layer.header ? band.top ?? 0.5 : pageIn.h - (band.bottom ?? 0.5) - bandHeightOf(band.items);
+    await block(band.items, band.x, top, band.w);
+  }
+}
+
+/** A band's height (in), the way the letterhead reader estimates it. */
+function bandHeightOf(items: LhItem[]): number {
+  const ph = (p: LhPara) => {
+    const pt = Math.max(0, ...(p.runs ?? []).map((r) => (r.img ? r.img.h * 72 : r.pt ?? 11)));
+    return (pt * 1.17 * (p.line ?? 1) * (1 + (p.runs ?? []).filter((r) => r.br).length) + (p.before ?? 0) + (p.after ?? 0)) / 72;
+  };
+  const ih = (it: LhItem): number => ("p" in it ? ph(it.p) : it.table.rows.reduce((a, r) => a + Math.max(0, ...r.cells.map((c) => c.items.reduce((s2, x) => s2 + ih(x), 0))), 0));
+  return (items ?? []).reduce((a, it) => a + ih(it), 0);
 }
 
 /** What each fill writes, from the package. */
@@ -1180,10 +1449,23 @@ export async function assemblePackage(meta: PackMeta, parts: PackPart[], kit?: K
   // 3. Cover, first.
   const covered = kit?.cover?.bytes ? await addTemplateCover(out, fonts, meta, kit.cover, makeQr, when) : false;
   if (!covered) {
-    const page = out.insertPage(0, LETTER);
+    const lh = meta.letterhead && meta.letterhead.page?.w > 0 && meta.letterhead.page?.h > 0 ? meta.letterhead : null;
+    const size: [number, number] = lh ? [lh.page.w * 72, lh.page.h * 72] : LETTER;
+    const page = out.insertPage(0, size);
     page.setFont(fonts.reg);
-    const logo = await embedLogo(out, meta.logo);
-    drawCover(page, fonts, meta, logo, list.length, total, makeQr(meta.landingUrl), when);
+    let frame: CoverFrame = { left: 60, right: size[0] - 60, top: size[1] - 60, bottom: 60 };
+    let onLetterhead = false;
+    if (lh) {
+      try {
+        await drawLetterheadLayer(out, page, lh.first ?? lh.layer, lh.page);
+        const m = lh.margins;
+        frame = { left: m.left * 72, right: size[0] - m.right * 72, top: size[1] - m.top * 72, bottom: Math.max(36, m.bottom * 72) };
+        onLetterhead = true;
+      } catch { /* the plain cover */ }
+    }
+    const logo = onLetterhead ? null : await embedLogo(out, meta.logo);
+    const photos = await embedCoverPhotos(out, meta.coverPhotos);
+    drawCover(page, fonts, meta, logo, list.length, total, makeQr(meta.landingUrl), when, frame, photos, onLetterhead);
   }
 
   // 4. Footer on every page after the cover; a QR on every page of a form.

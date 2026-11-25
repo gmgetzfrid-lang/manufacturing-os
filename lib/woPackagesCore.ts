@@ -57,7 +57,17 @@ export interface PkgItem {
   signed?: SignedCopy;
   /** A reference sheet from the kit: printed, never comes back. */
   ref?: boolean;
+  /** A photo printed on the cover (two at most), not on a page of its own. */
+  cover?: boolean;
+  /** A photo of the equipment from the registry: used here, never deleted with the package. */
+  shared?: boolean;
 }
+
+/** Photos that go on the cover: two at most, in package order. */
+export const COVER_PHOTOS = 2;
+export const coverPhotos = (items: PkgItem[]) => items.filter((i) => i.kind === "photo" && i.cover).slice(0, COVER_PHOTOS);
+/** The items that print as pages of their own (cover photos don't). */
+export const pageItems = (items: PkgItem[]) => { const c = new Set(coverPhotos(items).map((i) => i.id)); return items.filter((i) => !c.has(i.id)); };
 export type PackageStatus = "draft" | "approved" | "issued" | "filed";
 export interface WoPackage {
   /** The equipment group's key: its first work order. */
@@ -162,7 +172,7 @@ export function moveItem(items: PkgItem[], from: number, to: number): PkgItem[] 
  *  copies): deleted once the package is filed. Kit forms and library
  *  drawings are never deleted here. */
 export function workingPaths(p: WoPackage): string[] {
-  return p.items.flatMap((i) => [i.kind === "photo" || i.kind === "file" ? i.path : undefined, i.signed?.path]).filter((x): x is string => !!x);
+  return p.items.flatMap((i) => [(i.kind === "photo" || i.kind === "file") && !i.shared ? i.path : undefined, i.signed?.path]).filter((x): x is string => !!x);
 }
 
 /** A path on the network drive: the folder and the file name, with the

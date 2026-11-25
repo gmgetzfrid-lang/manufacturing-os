@@ -95,7 +95,7 @@ export default function PackagesBar({
       for (const [i, p] of complete.entries()) {
         setBusy(`Filing ${i + 1} of ${complete.length}`);
         try {
-          const b = await buildPackagePdf({ orgId, projectId, projectName, workspace, logoUrl, pkg: p, kit, tz, who: { email: actorEmail }, withQr: false, signed: true });
+          const b = await buildPackagePdf({ orgId, projectId, projectName, workspace, logoUrl, pkg: p, kit, tz, who: { email: actorEmail }, withQr: false, signed: true, filing: true });
           await writeToFolder(dir, b.fileName, b.pdf);
           const at = new Date().toISOString();
           await updatePackages(orgId, projectId, (a) => ({ ...a, packages: { ...a.packages, [p.key]: { ...a.packages[p.key], status: "filed", filed: { path: joinPath(path, b.fileName), at, by: actorEmail ?? "", pages: b.pages, bytes: b.pdf.byteLength, how: "folder" }, updatedAt: at } } }));

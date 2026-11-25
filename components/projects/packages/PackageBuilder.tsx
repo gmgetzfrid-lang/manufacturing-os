@@ -30,13 +30,16 @@ import { sayError } from "@/components/projects/sayError";
 import DocScanner from "@/components/scan/DocScanner";
 import AddFromApp from "@/components/projects/packages/AddFromApp";
 import FileToAsset, { type Filed } from "@/components/projects/packages/FileToAsset";
+import CoverRow from "@/components/projects/packages/CoverRow";
+import { useLetterhead } from "@/lib/letterheadStore";
+import { printsPointAtPreview } from "@/lib/publicOrigin";
 import { assetDocs, findPackageAsset, type PackageAsset } from "@/lib/equipmentFiles";
 import type { FindDoc } from "@/lib/findEverywhere";
 import { contentsPages } from "@/lib/packagePdf";
 import { supabase } from "@/lib/supabase";
 import { uploadToPath } from "@/lib/storage";
 import {
-  draftPackage, joinPath, kitItem, moveItem, newItemId, packageFilePath, packageStage, sayPackagesChanged,
+  COVER_PHOTOS, coverPhotos, draftPackage, joinPath, kitItem, moveItem, newItemId, packageFilePath, packageStage, sayPackagesChanged,
   updatePackage, updatePackages, type PackageKit, type PkgItem, type ProjectPackages, type WoPackage,
 } from "@/lib/woPackages";
 import {
@@ -97,6 +100,8 @@ export default function PackageBuilder({
   const [code, setCode] = useState<string | null>(null);
   const fileIn = useRef<HTMLInputElement>(null);
   const signedIn = useRef<HTMLInputElement>(null);
+  // The project's letterhead: the cover is printed on it.
+  const { lh: letterhead, loaded: lhLoaded } = useLetterhead(projectId);
   const signedFor = useRef<string | null>(null);
 
   // A package that isn't there yet is drafted from the kit as it opens:
@@ -173,11 +178,15 @@ export default function PackageBuilder({
   // whenever the order changes (cover 1, then the contents page, then the
   // items). Unknown only while a drawing's pages are still being counted.
   const formPages = new Map(kit.forms.map((f) => [f.id, f.pages]));
-  const tocN = contentsPages(items.length, kit.toc ? (kit.toc.region?.h ?? 550) : null, !!kit.toc?.region?.cols);
+  // Photos on the cover don't take pages of their own (a kit's own cover has no room: they do then).
+  const onCover = new Set(kit.cover ? [] : coverPhotos(items).map((i) => i.id));
+  const listed = items.map((it, i) => ({ it, i })).filter((x) => !onCover.has(x.it.id));
+  const tocN = contentsPages(listed.length, kit.toc ? (kit.toc.region?.h ?? 550) : null, !!kit.toc?.region?.cols);
   const starts: Array<number | null> = [];
   {
     let at: number | null = 2 + tocN;
     for (const it of items) {
+      if (onCover.has(it.id)) { starts.push(null); continue; }
       starts.push(at);
       const n = it.kind === "form" && it.formId ? formPages.get(it.formId) : it.kind === "photo" ? 1 : it.pages;
       at = at != null && n ? at + n : null;
@@ -228,7 +237,7 @@ export default function PackageBuilder({
   };
 
   // ── The main button, by where it stands ──
-  const build = async (opts: { withQr: boolean; signed: boolean }) => buildPackagePdf({
+  const build = async (opts: { withQr: boolean; signed: boolean; filing?: boolean }) => buildPackagePdf({
     orgId, projectId, projectName, workspace, logoUrl, pkg, kit, tz, who: { email: actorEmail }, ...opts, onStep: setStep,
   });
   const preview = async () => {
@@ -260,7 +269,8 @@ export default function PackageBuilder({
   const remove = async (it: PkgItem) => {
     if (!(await appConfirm({ title: `Take ${it.title} out of the package?`, message: it.signed ? "Its signed copy goes with it." : undefined, confirmLabel: `Take it out`, tone: "danger" }))) return;
     await change("Taking it out", (p) => ({ ...p, items: p.items.filter((i) => i.id !== it.id) }));
-    const gone = [it.kind === "photo" || it.kind === "file" ? it.path : undefined, it.signed?.path].filter(Boolean) as string[];
+    // A photo borrowed from the equipment registry stays there.
+    const gone = [(it.kind === "photo" || it.kind === "file") && !it.shared ? it.path : undefined, it.signed?.path].filter(Boolean) as string[];
     for (const g of gone) void import("@/lib/storage").then((m) => m.deleteFile(g)).catch(() => undefined);
   };
   const move = (from: number, to: number) => change("Moving", (p) => ({ ...p, items: moveItem(p.items, from, to) }));
@@ -324,6 +334,9 @@ export default function PackageBuilder({
       )}>
       {error && <ErrorNote title={error} />}
       {note && <p role="status" className="text-body text-[var(--color-text)] flex items-start gap-1.5"><Check aria-hidden className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-released)]" />{note}</p>}
+      {canManage && (pkg.status === "approved" || pkg.status === "issued") && printsPointAtPreview() && (
+        <p role="status" className="text-body text-[var(--state-held-text)]">This is a preview copy of the app: a QR printed from here opens the preview, which people outside can&apos;t reach. Print packages for the field from the live app.</p>
+      )}
 
       {/* What's on file for its equipment and not in the package yet: asked up front. */}
       {canManage && !filed && asset && !suggestOff && adding !== "app" && (() => {
@@ -394,19 +407,23 @@ export default function PackageBuilder({
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-body">
           <Link2 aria-hidden className="w-4 h-4 text-[var(--color-text-muted)]" />
           <span className="text-[var(--color-text-muted)]">{pkg.status === "issued" ? "Crews send signed forms back from the QR on the cover, or this page:" : "Once printed, crews send signed forms back from the QR on the cover, or this page:"}</span>
-          <a href={packageUrl(code)} target="_blank" rel="noreferrer" className="font-medium text-[var(--color-accent-text)] hover:underline">Open the package page</a>
+          <a href={packageUrl(code)} target="_blank" rel="noreferrer" className="font-medium text-[var(--color-accent-text)] hover:underline" title={packageUrl(code)}>Open the package page</a>
+          <span className="basis-full text-caption text-[var(--color-text-muted)]">The QR opens {packageUrl(code).replace(/^https?:\/\//, "").split("/")[0]}/r/… : no account needed; it shows this package only, says if each drawing is still current, and takes the signed forms back. Once the package is filed it says so and takes nothing more.</span>
           <button type="button" onClick={() => void navigator.clipboard?.writeText(packageUrl(code))} className="min-h-9 pointer-coarse:min-h-11 font-medium text-[var(--color-accent-text)] hover:underline">Copy the link</button>
         </div>
       )}
 
       {/* The contents, in print order. */}
       <ol aria-label="What's in the package" className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
-        <Fixed icon={FileStack} title="Cover sheet" meta={`Page 1 · ${kit.cover ? `your cover, with the work order filled in${pkg.status !== "draft" ? " and the package's QR" : ""}` : "made for it, with your logo and the package's QR"}`} />
+        <CoverRow orgId={orgId} projectId={projectId} pkgKey={key} items={items} kit={kit} asset={asset} letterhead={lhLoaded ? letterhead : undefined}
+          withQr={pkg.status !== "draft"} canEdit={canManage && !filed} change={change} />
         <Fixed icon={FileText} title="Contents" meta={`Page${tocN > 1 ? `s 2 to ${1 + tocN}` : " 2"} · every item below and the page it starts on`} />
-        {items.map((it, i) => {
+        {listed.map(({ it, i }, k) => {
           const menu: MoreItem[] = [
-            ...(i > 0 ? [{ icon: <MoveUp aria-hidden className="w-4 h-4" />, label: "Move up", onClick: () => move(i, i - 1) }] : []),
-            ...(i < items.length - 1 ? [{ icon: <MoveDown aria-hidden className="w-4 h-4" />, label: "Move down", onClick: () => move(i, i + 1) }] : []),
+            ...(k > 0 ? [{ icon: <MoveUp aria-hidden className="w-4 h-4" />, label: "Move up", onClick: () => move(i, listed[k - 1].i) }] : []),
+            ...(k < listed.length - 1 ? [{ icon: <MoveDown aria-hidden className="w-4 h-4" />, label: "Move down", onClick: () => move(i, listed[k + 1].i) }] : []),
+            // Two at most on the cover: past that, one comes off first (on the cover row).
+            ...(it.kind === "photo" && it.path && !kit.cover && coverPhotos(items).length < COVER_PHOTOS ? [{ icon: <FileImage aria-hidden className="w-4 h-4" />, label: "Put on the cover (one page fewer)", onClick: () => void change("Putting it on the cover", (p) => ({ ...p, items: p.items.map((x) => (x.id === it.id ? { ...x, cover: true } : x)) })) }] : []),
             { icon: <Pencil aria-hidden className="w-4 h-4" />, label: "Rename", onClick: () => setRenaming(it.id) },
             ...(it.kind === "form" && !it.ref ? [
               { icon: <Camera aria-hidden className="w-4 h-4" />, label: it.signed ? "Rescan the signed copy" : "Scan the signed copy", line: true, onClick: () => setScan({ for: "signed", id: it.id, title: it.title }) },
@@ -425,7 +442,7 @@ export default function PackageBuilder({
               onDrop={(e) => { e.preventDefault(); if (drag !== null && drag !== i) void move(drag, i); setDrag(null); setOver(null); }}
               className={`flex items-center gap-2.5 px-2.5 py-2 min-h-14 bg-[var(--color-surface)] ${drag === i ? "opacity-50" : ""} ${over === i && drag !== null && drag !== i ? "shadow-[inset_0_2px_0_var(--color-current)]" : ""}`}>
               {canManage && !filed && <GripVertical aria-hidden className="w-4 h-4 shrink-0 text-[var(--color-text-faint)] cursor-grab pointer-coarse:hidden" />}
-              <span className="w-6 shrink-0 text-center text-caption tabular-nums text-[var(--color-text-muted)]">{i + 1}</span>
+              <span className="w-6 shrink-0 text-center text-caption tabular-nums text-[var(--color-text-muted)]">{k + 1}</span>
               <Icon aria-hidden className="w-4 h-4 shrink-0 text-[var(--color-text-muted)]" />
               <span className="min-w-0 flex-1">
                 {renaming === it.id ? (
@@ -449,7 +466,7 @@ export default function PackageBuilder({
             </li>
           );
         })}
-        {!items.length && <li className="px-3 py-3 text-body text-[var(--color-text-muted)]">Nothing in it yet. {kit.forms.length ? "Add forms, drawings or files." : "The kit has no forms yet: add them once and every package gets the right ones."}</li>}
+        {!listed.length && <li className="px-3 py-3 text-body text-[var(--color-text-muted)]">Nothing in it yet. {kit.forms.length ? "Add forms, drawings or files." : "The kit has no forms yet: add them once and every package gets the right ones."}</li>}
       </ol>
 
       {canManage && !filed && (
@@ -482,7 +499,7 @@ export default function PackageBuilder({
 
       {filing && (
         <FileIt orgId={orgId} projectId={projectId} pkg={pkg} folder={all.folder ?? ""} actorEmail={actorEmail}
-          build={() => build({ withQr: false, signed: true })} onStep={setStep}
+          build={() => build({ withQr: false, signed: true, filing: true })} onStep={setStep}
           onCancel={() => setFiling(false)} onDone={(words) => { setFiling(false); setNote(words); sayPackagesChanged(projectId); }} />
       )}
 

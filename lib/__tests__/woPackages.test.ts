@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { draftPackage, formsFor, joinPath, moveItem, packageStage, workingPaths, type PackageKit, type WoPackage } from "@/lib/woPackagesCore";
+import { coverPhotos, draftPackage, formsFor, joinPath, moveItem, packageStage, pageItems, workingPaths, type PackageKit, type PkgItem, type WoPackage } from "@/lib/woPackagesCore";
 import type { ScopeWO } from "@/lib/woIntake";
 
 const wo = (o: Partial<ScopeWO>): ScopeWO => ({ wo: "400101", what: "Pull and clean bundle", equipment: "E-101", tag: "E-101", equipmentName: "Overhead Exchanger", category: "Exchanger", notes: "", conditional: false, drafted: false, approved: false, ...o });
@@ -54,6 +54,21 @@ describe("work order packages: order, stage, working copies, paths", () => {
 
 describe("work order packages: the cover's QR code", () => {
   beforeAll(() => { process.env.SUPABASE_SERVICE_ROLE_KEY = "test-key"; });
+  it("a code printed before the package-code secret was set still opens; new ones use the secret", async () => {
+    const { packageCode, readPackageCode } = await import("@/lib/packageReturnsServer");
+    const link = "0f8fad5b-d9cb-469f-a165-70867728950e";
+    const old = packageCode(link, "400101");
+    process.env.PACKAGE_CODE_SECRET = "a-long-random-secret";
+    try {
+      const fresh = packageCode(link, "400101");
+      expect(fresh).not.toBe(old);
+      expect(readPackageCode(old)).toEqual({ linkId: link, key: "400101" });
+      expect(readPackageCode(fresh)).toEqual({ linkId: link, key: "400101" });
+      // The database key rotated: codes signed with the secret still open.
+      process.env.SUPABASE_SERVICE_ROLE_KEY = "rotated";
+      expect(readPackageCode(fresh)).toEqual({ linkId: link, key: "400101" });
+    } finally { delete process.env.PACKAGE_CODE_SECRET; process.env.SUPABASE_SERVICE_ROLE_KEY = "test-key"; }
+  });
   it("opens its own package only, and a changed code is refused", async () => {
     const { packageCode, readPackageCode, visiblePackages } = await import("@/lib/packageReturnsServer");
     const link = "0f8fad5b-d9cb-469f-a165-70867728950e";
@@ -70,5 +85,18 @@ describe("work order packages: the cover's QR code", () => {
     expect(visiblePackages(all, "c").map((p) => p.key)).toEqual(["c"]);
     expect(visiblePackages(all, "d")).toEqual([]);
     expect(visiblePackages(all, null).map((p) => p.key).sort()).toEqual(["b", "c"]);
+  });
+});
+
+describe("photos on the cover", () => {
+  const photo = (id: string, extra: Partial<PkgItem> = {}): PkgItem => ({ id, kind: "photo", title: id, path: `orgs/o/p/${id}.jpg`, mime: "image/jpeg", pages: 1, ...extra });
+  it("two at most go on the cover, and they don't print as pages", () => {
+    const items = [photo("a", { cover: true }), { id: "f", kind: "form", title: "Flange log", formId: "k1" } as PkgItem, photo("b", { cover: true }), photo("c", { cover: true }), photo("d")];
+    expect(coverPhotos(items).map((i) => i.id)).toEqual(["a", "b"]);
+    expect(pageItems(items).map((i) => i.id)).toEqual(["f", "c", "d"]);
+  });
+  it("a photo borrowed from the registry is never deleted with the package", () => {
+    const pkg = { key: "1", wos: ["1"], equipment: "X-2", description: "", status: "filed", items: [photo("a", { cover: true, shared: true, path: "orgs/o/assets/x/photos/1.jpg" }), photo("b", { cover: true })] } as WoPackage;
+    expect(workingPaths(pkg)).toEqual(["orgs/o/p/b.jpg"]);
   });
 });

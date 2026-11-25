@@ -17,6 +17,18 @@
 export function publicOrigin(): string {
   const configured = (process.env.NEXT_PUBLIC_SITE_URL || "").trim().replace(/\/+$/, "");
   if (configured) return configured;
+  // Not set: the production domain Vercel gives every build of the project
+  // (so a print from a preview still opens production), then this page's own.
+  const prod = (process.env.NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL || "").trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
+  if (prod) return `https://${prod}`;
   if (typeof window !== "undefined") return window.location.origin;
   return "";
+}
+
+/** A print made here would carry a preview's address: this is a Vercel
+ *  preview and no production address is known. Its QR codes would dead-end
+ *  on Vercel's own sign-in for anyone outside. */
+export function printsPointAtPreview(): boolean {
+  if ((process.env.NEXT_PUBLIC_SITE_URL || "").trim() || (process.env.NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL || "").trim()) return false;
+  return process.env.NEXT_PUBLIC_VERCEL_ENV === "preview";
 }

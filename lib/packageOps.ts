@@ -13,8 +13,9 @@ import { supabase } from "@/lib/supabase";
 import { getSignedUrlForPath, deleteFile } from "@/lib/storage";
 import { applyStampToPdfDoc } from "@/lib/stamping";
 import { publicOrigin } from "@/lib/publicOrigin";
-import { assemblePackage, suggestFileName, type PackPart, type KitTemplates } from "@/lib/packagePdf";
-import { workingPaths, type PackageKit, type PkgItem, type WoPackage } from "@/lib/woPackagesCore";
+import { assemblePackage, suggestFileName, type CoverPhoto, type PackPart, type KitTemplates } from "@/lib/packagePdf";
+import { coverPhotos, workingPaths, type PackageKit, type PkgItem, type WoPackage } from "@/lib/woPackagesCore";
+import { loadLetterhead } from "@/lib/letterheadStore";
 
 type Mime = PackPart["mime"];
 const mimeOf = (m?: string | null, path?: string): Mime =>
@@ -102,8 +103,10 @@ export interface BuildInput {
   who: { email?: string | null };
   /** Print the cover's QR (the package's own page). */
   withQr?: boolean;
-  /** Use the signed copies in place of the blank forms (filing). */
+  /** Use the signed copies in place of the blank forms (filing, or a preview). */
   signed?: boolean;
+  /** The copy being filed: its cover says "Filed". A preview says what the package is. */
+  filing?: boolean;
   onStep?: (words: string) => void;
 }
 export interface Built {
@@ -125,10 +128,20 @@ export async function buildPackagePdf(input: BuildInput): Promise<Built> {
   const drawings: Built["drawings"] = [];
   const parts: PackPart[] = [];
   const formFile = new Map(kit.forms.map((f) => [f.id, f]));
+  // Photos on the generated cover don't print again as pages (a kit's own
+  // cover sheet has no room for them: they print as pages then).
+  const onCover = kit.cover ? [] : coverPhotos(pkg.items);
+  const coverIds = new Set(onCover.map((i) => i.id));
+  const cover: CoverPhoto[] = [];
+  for (const it of onCover) {
+    try { cover.push({ bytes: await fetchStored(it.path!), mime: mimeOf(it.mime, it.path!) === "image/png" ? "image/png" : "image/jpeg", caption: it.title }); }
+    catch (e) { problems.push(`${it.title} (cover photo): ${(e as Error).message}`); }
+  }
   let n = 0;
   for (const it of pkg.items) {
+    if (coverIds.has(it.id)) continue;
     n++;
-    say(`Adding ${it.title} (${n} of ${pkg.items.length})`);
+    say(`Adding ${it.title} (${n} of ${pkg.items.length - coverIds.size})`);
     try {
       if (it.kind === "form") {
         if (input.signed && it.signed) {
@@ -158,8 +171,10 @@ export async function buildPackagePdf(input: BuildInput): Promise<Built> {
   const templates: KitTemplates = {};
   if (kit.cover) templates.cover = { bytes: await fetchStored(kit.cover.path), fields: kit.cover.fields };
   if (kit.toc) templates.toc = { bytes: await fetchStored(kit.toc.path), region: kit.toc.region };
+  // The generated cover sits on the project's letterhead when it has one.
+  const letterhead = kit.cover ? null : await loadLetterhead(input.projectId).catch(() => null);
   let logo: { bytes: Uint8Array; mime: "image/png" | "image/jpeg" } | null = null;
-  if (input.logoUrl && !kit.cover) {
+  if (input.logoUrl && !kit.cover && !letterhead) {
     try {
       const res = await fetch(input.logoUrl);
       const type = res.headers.get("content-type") ?? "";
@@ -173,8 +188,8 @@ export async function buildPackagePdf(input: BuildInput): Promise<Built> {
   }
   const meta = {
     workspace: input.workspace, project: input.projectName, wos: pkg.wos, equipment: pkg.equipment, description: pkg.description,
-    printedAt: new Date(), timeZone: input.tz, logo, landingUrl, preparedBy: input.who.email ?? undefined,
-    status: input.signed ? "Filed" : pkg.status === "draft" ? "Draft" : pkg.status === "approved" ? "Approved" : "Issued",
+    printedAt: new Date(), timeZone: input.tz, logo, landingUrl, preparedBy: input.who.email ?? undefined, letterhead, coverPhotos: cover,
+    status: input.filing || pkg.status === "filed" ? "Filed" : pkg.status === "draft" ? "Draft" : pkg.status === "approved" ? "Approved" : "Issued",
   };
   const out = await assemblePackage(meta, parts, templates);
   return { pdf: out.pdf, pages: out.pages, fileName: suggestFileName(meta), drawings, problems };
