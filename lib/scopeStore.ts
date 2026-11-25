@@ -4,7 +4,10 @@
 // the list; a second import replaces it after the change is reviewed.
 
 import { supabase } from "@/lib/supabase";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 import type { ColumnMap, ScopeComing, ScopeWO, Sheet } from "@/lib/woIntake";
+
+export interface ScopeRfq { at: string; by?: string; service: string; to: string[] }
 
 export interface ScopeImport { at: string; by?: string; file: string; sheet: string; added: number; changed: number; dropped: number }
 
@@ -15,6 +18,8 @@ export interface ScopeState {
    *  import of the same layout needs nothing picked), and each import. */
   source: { file: string; sheet: string; headers: string[]; map: ColumnMap };
   imports: ScopeImport[];
+  /** RFQs written from this scope. */
+  rfqs?: ScopeRfq[];
 }
 
 const KEY = "scope";
@@ -52,3 +57,24 @@ export async function readSheets(file: File): Promise<Sheet[]> {
 
 /** Spreadsheet files the list can come in. */
 export const LIST_ACCEPT = ".xlsx,.xlsm,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv";
+
+/** The schedule as the scope needs it: its work order numbers, the crews on
+ *  it, and whether any contract has been awarded. */
+export async function scheduleFacts(projectId: string): Promise<{ wos: string[]; crews: string[]; steps: number; awarded: number }> {
+  const [ms, parties] = await Promise.all([
+    // Paged: a schedule can have more than a thousand steps.
+    fetchAllRows<{ work_order_ref: string | null; responsible_party: string | null }>((from, to) =>
+      supabase.from("milestones").select("id, work_order_ref, responsible_party").eq("project_id", projectId).order("id").range(from, to)),
+    supabase.from("project_parties").select("id").eq("project_id", projectId).not("contract_value", "is", null).limit(50),
+  ]);
+  const rows = ms.error ? [] : ms.rows;
+  return {
+    wos: [...new Set(rows.map((r) => (r.work_order_ref ?? "").trim()).filter(Boolean))],
+    crews: [...new Set(rows.map((r) => (r.responsible_party ?? "").trim()).filter(Boolean))].sort(),
+    steps: rows.length,
+    awarded: parties.error ? 0 : (parties.data ?? []).length,
+  };
+}
+
+/** Asks the schedule tab to open its import (the planning path's Schedule step). */
+export const OPEN_SCHEDULE_IMPORT = "schedule-import:open";

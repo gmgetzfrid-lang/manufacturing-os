@@ -42,7 +42,13 @@ export interface ScopeWO {
   approved: boolean;
   addedBy?: string;
   added?: string;
+  /** The work package, attached in the app: a controlled document. */
+  pkg?: ScopePackage;
+  approvedBy?: string;
+  approvedAt?: string;
 }
+
+export interface ScopePackage { documentId: string; label: string; href: string; at: string; by?: string }
 
 export interface ScopeComing { what: string; owner: string }
 
@@ -267,5 +273,32 @@ export function diffScope(before: ScopeWO[], after: ScopeWO[]): ScopeDiff {
  *  set in the app stays set). */
 export function applyScope(before: ScopeWO[], after: ScopeWO[]): ScopeWO[] {
   const old = new Map(before.map((x) => [x.wo, x]));
-  return after.map((a) => { const b = old.get(a.wo); return b ? { ...a, drafted: a.drafted || b.drafted, approved: a.approved || b.approved } : a; });
+  return after.map((a) => {
+    const b = old.get(a.wo);
+    return b ? { ...a, drafted: a.drafted || b.drafted, approved: a.approved || b.approved, ...(b.pkg ? { pkg: b.pkg } : {}), ...(b.approvedBy ? { approvedBy: b.approvedBy, approvedAt: b.approvedAt } : {}) } : a;
+  });
+}
+
+/** A piece of equipment with its own number or tag ("X-1", "2030.01"), as
+ *  opposed to a whole unit ("20 - Crude"): its work orders share a package. */
+export const realEquipment = (x: ScopeWO) => !!x.tag || /^\d{3,5}[.-][\w.-]+$/.test(x.equipment);
+
+/** The work orders one package covers: this one and, on a piece of
+ *  equipment, every other work order of the same kind on it (X-1's service
+ *  and its coating; not H-2's decoke and its I/E checks). */
+export function packageGroup(items: ScopeWO[], wo: string): ScopeWO[] {
+  const x = items.find((i) => i.wo === wo);
+  if (!x) return [];
+  return realEquipment(x) ? items.filter((i) => i.equipment === x.equipment && i.category === x.category) : [x];
+}
+
+/** The scope against the schedule's work order numbers. */
+export function againstSchedule(items: ScopeWO[], scheduled: Iterable<string>): { on: ScopeWO[]; missing: ScopeWO[]; extra: string[] } {
+  const sched = new Set([...scheduled].map((s) => s.trim()).filter(Boolean));
+  const mine = new Set(items.map((x) => x.wo));
+  return {
+    on: items.filter((x) => sched.has(x.wo)),
+    missing: items.filter((x) => !sched.has(x.wo)),
+    extra: [...sched].filter((w) => !mine.has(w)).sort(),
+  };
 }

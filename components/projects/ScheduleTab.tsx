@@ -19,6 +19,7 @@
 // All mutations route through lib/milestones.ts → audit_logs →
 // Phase 3 timeline. We don't reach into supabase directly here.
 
+import { OPEN_SCHEDULE_IMPORT } from "@/lib/scopeStore";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Flag, Plus, Loader2, Check, Calendar, ChevronRight, Upload, Eye, EyeOff, Clock, Trash2, RotateCcw, MoreHorizontal } from "lucide-react";
@@ -156,6 +157,12 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   const [showGhost, setShowGhost] = useState(true);
   const [adding, setAdding] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  // The planning path's "Import the schedule" opens it from the scope.
+  useEffect(() => {
+    const on = () => { onMode("plan"); setImportOpen(true); };
+    window.addEventListener(OPEN_SCHEDULE_IMPORT, on);
+    return () => window.removeEventListener(OPEN_SCHEDULE_IMPORT, on);
+  }, [onMode]);
   const [rebaseOpen, setRebaseOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 

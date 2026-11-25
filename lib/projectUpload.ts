@@ -143,7 +143,7 @@ export async function uploadProjectFile(input: {
 }
 
 /** The kinds of file a project screen uploads (their numbers start with these). */
-export const UPLOAD_PREFIXES = ["PSSR", "TURNOVER", "MI", "QAQC", "CHECKLIST"] as const;
+export const UPLOAD_PREFIXES = ["PSSR", "TURNOVER", "MI", "QAQC", "CHECKLIST", "PACKAGE"] as const;
 
 export interface StrayFile { id: string; number: string; title: string; libraryId: string; libraryName: string; collectionId: string | null; sameLibrary: boolean }
 

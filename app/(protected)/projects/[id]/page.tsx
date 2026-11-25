@@ -882,7 +882,8 @@ function ProjectDetail() {
         )}
         {/* The scope, as the work order list says it (components/projects/setup). */}
         {tab === "plan" && project.id && (
-          <ScopeList projectId={project.id} canManage={!!canManage} noSchedule={!!noSchedule} actorEmail={userEmail ?? undefined} />
+          <ScopeList orgId={project.orgId} projectId={project.id} projectName={project.name} uid={uid ?? null} canManage={!!canManage} noSchedule={!!noSchedule} actorEmail={userEmail ?? undefined}
+            finish={project.targetCompletionDate ? String(project.targetCompletionDate).slice(0, 10) : undefined} />
         )}
         {/* Everything this project asks for, from day one, each changed in
             place. With no schedule yet, importing it comes first (below). */}

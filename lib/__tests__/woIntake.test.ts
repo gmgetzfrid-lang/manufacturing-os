@@ -79,3 +79,36 @@ describe("setup asks for night shifts only once there's a schedule", () => {
     expect(missingRequired(setupChecklist({ ...base, scheduleIn: true })).map((i) => i.id)).toEqual(["night"]);
   });
 });
+
+describe("packages, the schedule and the RFQ from the scope", () => {
+  it("one package covers every work order on a piece of equipment, not a whole unit", async () => {
+    const { packageGroup } = await import("@/lib/woIntake");
+    const r = readScope(approved);
+    expect(packageGroup(r.items, "400101").map((x) => x.wo)).toEqual(["400101", "400102"]);
+    expect(packageGroup([...r.items, { ...r.items[2], wo: "400199", equipment: "20 - Unit 9", tag: "" }, { ...r.items[2], wo: "400198", equipment: "20 - Unit 9", tag: "" }], "400199").map((x) => x.wo)).toEqual(["400199"]);
+  });
+
+  it("the schedule against the list: on it, missing from it, and on it but not in the list", async () => {
+    const { againstSchedule } = await import("@/lib/woIntake");
+    const v = againstSchedule(readScope(approved).items, ["400101", "400103", "999001"]);
+    expect(v.on.map((x) => x.wo)).toEqual(["400101", "400103"]);
+    expect(v.missing.map((x) => x.wo)).toEqual(["400102", "400104"]);
+    expect(v.extra).toEqual(["999001"]);
+  });
+
+  it("the RFQ says the scope counted from the list, the shifts and meetings from the project", async () => {
+    const { rfqContent, rfqDocx } = await import("@/lib/rfqFromScope");
+    const r = readScope(approved);
+    const f = { project: "Unit 9 Turnaround", org: "Acme Refining", service: "Mechanical Contractor Services", to: "Contractor A", fromName: "Planner", contact: "555-0100", location: "Plant 1",
+      quoteBy: "2027-01-15", start: "2027-03-01", finish: "2027-03-20", dayStart: "06:00", nightStart: "18:00", meetingBefore: 30, nights: true, items: r.items, coming: r.coming, today: new Date("2027-01-02T12:00:00") };
+    const c = rfqContent(f);
+    expect(c.title).toBe("Request for Quotation (RFQ): 2027 Unit 9 Turnaround");
+    expect(c.glance.rows).toEqual([["Heat exchangers (open, clean, service)", 1, 2], ["Piping work orders", 1, 1], ["Towers (tunnel and clean)", 1, 1]]);
+    expect(c.coverage.shifts).toBe("Shifts run 0600 to 1800 (days) and 1800 to 0600 (nights).");
+    expect(c.expectations[1][1]).toContain("daily at 0530 and 1730");
+    expect(c.glance.coming).toBe("Scope still being added: control valves, PSVs, inspections. An addendum will follow.");
+    expect(c.quoteBy).toBe("1/15/2027");
+    expect(c.workOrders[0].rows[0]).toEqual(["400101", "X-1 Overhead Cooler", "Annual Service, Clean, and Inspect 9030.01"]);
+    expect(rfqDocx(f).byteLength).toBeGreaterThan(1000);
+  });
+});

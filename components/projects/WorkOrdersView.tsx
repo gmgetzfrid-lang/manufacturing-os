@@ -13,7 +13,9 @@
 import { EquipmentField } from "@/components/projects/EquipmentPicker";
 import { searchFilter } from "@/lib/fuzzySearch";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Search, ChevronDown, ChevronUp, Printer, Ban, Plus, Lightbulb } from "lucide-react";
+import { Search, ChevronDown, ChevronUp, Printer, Ban, Plus, Lightbulb, FileText } from "lucide-react";
+import Link from "next/link";
+import { loadScope } from "@/lib/scopeStore";
 import { notesFor } from "@/lib/milestones";
 import { loadProgressLog, type ProgressLogRow } from "@/lib/progressHistory";
 import { JobFindings, newFinding } from "@/components/projects/Findings";
@@ -96,6 +98,20 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
   const [units, setUnits] = useState<string[]>([]);
   const [types, setTypes] = useState<string[]>([]);
   const [open, setOpen] = useState<Set<string>>(new Set());
+  // The project's scope (its work order list): each work order's package, by
+  // number, and which numbers the list has at all. Null: no list imported.
+  const [pkgs, setPkgs] = useState<Map<string, { label: string; href: string }> | null>(null);
+  const [inScope, setInScope] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    if (!projectId) return;
+    let on = true;
+    void loadScope(projectId).then((sc) => {
+      if (!on || !sc) return;
+      setInScope(new Set(sc.items.map((x) => x.wo)));
+      setPkgs(new Map(sc.items.filter((x) => x.pkg).map((x) => [x.wo, { label: x.pkg!.label, href: x.pkg!.href }])));
+    }, () => undefined);
+    return () => { on = false; };
+  }, [projectId]);
   // How many work orders the list shows before "Show N more".
   const [limit, setLimit] = useState(WO_STEP);
   // The work order being taken off the schedule (its key).
@@ -427,6 +443,10 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
                     <div className="flex-1 min-w-0">
                       <div className="flex flex-wrap items-baseline gap-x-2">
                         {o.wo ? <span className="ui-id text-reading">WO {o.wo}</span> : <span className="ui-pill is-muted">No WO</span>}
+                        {/* Its work package, matched by number from the scope (lib/scopeStore). */}
+                        {o.wo && pkgs?.has(o.wo) && <span className="ui-pill is-good">Package</span>}
+                        {o.wo && pkgs && !pkgs.has(o.wo) && inScope?.has(o.wo) && <span className="ui-pill is-muted">No package yet</span>}
+                        {o.wo && inScope && !inScope.has(o.wo) && <span className="ui-pill is-warn">Not in the scope list</span>}
                         <span className="text-body font-medium text-[var(--color-text)] break-words">{o.owner.name}{o.also?.map((x) => <span key={x.id} className="text-[var(--color-text-muted)]"> · {x.name}</span>)}</span>
                       </div>
                       {!isOpen && detailsOf(o)}
@@ -449,6 +469,11 @@ export default function WorkOrdersView({ milestones, cancelled = [], childrenByP
                       {originBlock(o)}
                     </div>
                     <div className="px-3 sm:px-4 pt-2.5 flex flex-wrap gap-1.5">
+                        {o.wo && pkgs?.get(o.wo) && (
+                          <Link href={pkgs.get(o.wo)!.href} className="inline-flex items-center gap-1.5 h-10 px-3 rounded-lg bg-[var(--color-surface)] text-body font-medium text-[var(--color-accent-text)] hover:bg-[var(--color-border)]">
+                            <FileText className="w-3.5 h-3.5" /> Open the work package
+                          </Link>
+                        )}
                         {/* The equipment it's on: picked from the project's unit. */}
                         <EquipmentField milestone={o.owner} milestones={milestones} />
                         {canEdit && onDiscovery && (
