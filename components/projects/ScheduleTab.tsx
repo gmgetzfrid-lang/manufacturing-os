@@ -20,6 +20,7 @@
 // Phase 3 timeline. We don't reach into supabase directly here.
 
 import { OPEN_SCHEDULE_IMPORT } from "@/lib/scopeStore";
+import { sharedLoad, lastLoaded } from "@/lib/warmLoads";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Flag, Plus, Loader2, Check, Calendar, ChevronRight, Upload, Eye, EyeOff, Clock, Trash2, RotateCcw, MoreHorizontal } from "lucide-react";
@@ -121,6 +122,14 @@ interface ScheduleTabProps {
   bandAction?: boolean;
 }
 
+/** A project's whole schedule as one shared load (lib/warmLoads): the
+ *  project page starts it with its own reads, this tab picks it up, and
+ *  the project opened again shows the schedule as last read at once. */
+export const scheduleKey = (orgId: string, projectId: string, uid: string | null | undefined) => `schedule:${orgId}|${projectId}|${uid ?? ""}`;
+export function loadSchedule(orgId: string, projectId: string, uid: string | null | undefined, opts: { fresh?: boolean } = {}): Promise<Milestone[]> {
+  return sharedLoad(scheduleKey(orgId, projectId, uid), () => listMilestones({ orgId, projectId, includeGhost: true }), opts.fresh ? { fresh: true } : { maxAgeMs: 1500 });
+}
+
 export default function ScheduleTab({ orgId, projectId, projectName, projectStatus, userId, userName, userEmail, userRole, isProjectOwner, canEditSchedule, timezone, canManage, onProjectChanged, mode, onMode, phases = NO_PHASES, phase = null, onPickPhase, bandAction = false }: ScheduleTabProps) {
   const view = mode === "plan" ? "planning" : "execution";
   // One orange per screen: on Plan and Work it's the band's (the page's
@@ -132,7 +141,9 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   // schedules (lib/projectAccess; the page works it out from the members).
   const canEdit = canEditSchedule ?? (!!isProjectOwner || (!!userRole && ADMIN_ROLES.has(userRole)));
 
-  const [allMilestones, setMilestones] = useState<Milestone[]>([]);
+  // Opened again: the schedule as last read, at once (read afresh below).
+  const [keptSchedule] = useState(() => lastLoaded<Milestone[]>(scheduleKey(orgId, projectId, userId)));
+  const [allMilestones, setMilestones] = useState<Milestone[]>(keptSchedule ?? []);
   // The phase picked: its schedule only (every view, report and count);
   // all phases is the whole project.
   const phaseMilestones = useMemo(() => inPhase(allMilestones, phases, phase), [allMilestones, phases, phase]);
@@ -152,7 +163,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   // cancelled, nights as staffed).
   const phaseCtx = useMemo(() => ({ phases, phase, all: phases.length ? applyNightStaffing(splitCancelled(allMilestones).active, shiftTimes.nightJobs) : milestones, pick: onPickPhase }),
     [phases, phase, allMilestones, shiftTimes.nightJobs, milestones, onPickPhase]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!keptSchedule);
   const [error, setError] = useState<string | null>(null);
   const [showGhost, setShowGhost] = useState(true);
   const [adding, setAdding] = useState(false);
@@ -177,16 +188,18 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
   const refreshRef = useRef<() => void>(() => undefined);
   const equipmentScope = useMemo(() => ({ orgId, projectId, projectName: projectName ?? "", canEdit, canManage: !!canManage, userId: userId ?? null, userName: userName ?? userEmail ?? null, onChanged: () => refreshRef.current() }),
     [orgId, projectId, projectName, canEdit, canManage, userId, userName, userEmail]);
-  const refresh = useCallback(async () => {
+  // `fresh`: after a change (a save, another planner's edit) the schedule
+  // is read anew; the first read picks up the one the page started.
+  const refresh = useCallback(async (opts: { first?: boolean } = {}) => {
     setError(null);
     try {
-      const list = await listMilestones({ orgId, projectId, includeGhost: true });
+      const list = await loadSchedule(orgId, projectId, userId, { fresh: !opts.first });
       setMilestones(list);
     } catch (e) { setError(sayError(e)); }
     finally { setLoading(false); }
-  }, [orgId, projectId]);
+  }, [orgId, projectId, userId]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { void refresh({ first: true }); }, [refresh]);
   useEffect(() => { refreshRef.current = () => { void refresh(); }; }, [refresh]);
   // A change made outside this tab's own views (the baseline set from
   // Setup opened on another part of the page): Shift and Work re-read

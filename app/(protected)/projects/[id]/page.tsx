@@ -30,7 +30,6 @@ import {
   UploadCloud, ClipboardList, Sun, FileBarChart, RotateCcw, ListChecks, Bell, BellOff,
 } from "lucide-react";
 import { PageHero, PageBody, Card, StepLine, heroPrimary, heroQuiet, type HeroFact } from "@/components/ui/PageHero";
-import { listMilestones } from "@/lib/milestones";
 import { phaseStandings, standingOf, lateWords, type PhaseStanding } from "@/lib/phaseStanding";
 import { phaseDates } from "@/lib/projectPhases";
 import { useShiftTimes } from "@/lib/shiftTimesStore";
@@ -83,7 +82,7 @@ import {
 import { getProjectTimeline, type TimelineEvent } from "@/lib/timeline";
 import { openProjectEvidencePack } from "@/lib/evidencePack";
 import TimelineFeed from "@/components/documents/TimelineFeed";
-import ScheduleTab from "@/components/projects/ScheduleTab";
+import ScheduleTab, { loadSchedule } from "@/components/projects/ScheduleTab";
 import MoreMenu from "@/components/ui/MoreMenu";
 import CloseoutTab, { useCloseOpen, PathSteps, type CloseOpen, type PathRow } from "@/components/projects/CloseoutTab";
 import { openReportNext } from "@/components/projects/ReportsView";
@@ -304,7 +303,9 @@ function ProjectDetail() {
     if (!project?.orgId || !projectId) return;
     let live = true;
     const t = setTimeout(() => {
-      listMilestones({ orgId: project.orgId, projectId, includeGhost: true })
+      // The same read as the schedule's (one request, shared); a change
+      // asks it anew.
+      loadSchedule(project.orgId, projectId, uid, { fresh: stepsKey > 0 })
         .then((m) => {
           if (!live) return;
           const active = m.filter((x) => !x.cancelledAt);
@@ -314,7 +315,14 @@ function ProjectDetail() {
         .catch(() => { if (live) setAllSteps([]); });
     }, stepsKey ? 600 : 0);
     return () => { live = false; clearTimeout(t); };
-  }, [project?.orgId, projectId, stepsKey, allStepsKey]);
+  }, [project?.orgId, projectId, stepsKey, allStepsKey, uid]);
+  // The schedule is read with the page's first reads, not after them: the
+  // workspace is known before the project answers (the read above and the
+  // schedule tab pick this one up).
+  useEffect(() => {
+    if (!activeOrgId || !projectId) return;
+    void loadSchedule(activeOrgId, projectId, uid).catch(() => undefined);
+  }, [activeOrgId, projectId, uid]);
   const shiftTimes = useShiftTimes(projectId);
   const criticalMode = useCriticalMode(projectId);
   const [nowMs] = useState(() => Date.now());

@@ -15,10 +15,15 @@ import { btnQuiet } from "@/components/admin/kit";
 
 const ID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 
-/** The screen shows its content: no loading bars or busy regions in sight,
- *  and words in the page. */
-function contentShown(): boolean {
-  const seen = (e: Element) => e.getClientRects().length > 0;
+/** The screen shows its content: no loading bars or busy regions (in
+ *  view only, or anywhere on the page), and words in the page. */
+function contentShown(inViewOnly: boolean): boolean {
+  const seen = (e: Element) => {
+    if (e.getClientRects().length === 0) return false;
+    if (!inViewOnly) return true;
+    const r = e.getBoundingClientRect();
+    return r.bottom > 0 && r.top < window.innerHeight;
+  };
   for (const e of document.querySelectorAll(".ui-skeleton")) if (seen(e)) return false;
   for (const e of document.querySelectorAll('[aria-busy="true"]')) if (seen(e)) return false;
   const root = document.querySelector("main") ?? document.body;
@@ -57,6 +62,9 @@ function patchFetch() {
   };
 }
 
+// This module loads only in the browser, only with the view open.
+if (typeof window !== "undefined") patchFetch();
+
 let version = 0;
 const subscribe = (fn: () => void) => {
   const bump = () => { version++; fn(); };
@@ -67,7 +75,6 @@ const subscribe = (fn: () => void) => {
 const snapshot = () => version;
 
 export default function TimingPanel() {
-  patchFetch();
   const pathname = usePathname() ?? "/";
   const v = useSyncExternalStore(subscribe, snapshot, () => 0);
   // When the screen was asked for: the last press or key just before the
@@ -85,7 +92,9 @@ export default function TimingPanel() {
       window.removeEventListener("submit", mark, true);
     };
   }, []);
-  const [screen, setScreen] = useState<{ path: string; t0: number; shownMs: number | null }>({ path: pathname, t0: 0, shownMs: null });
+  // firstMs: the first screenful shown (nothing loading in view);
+  // shownMs: everything on the page loaded.
+  const [screen, setScreen] = useState<{ path: string; t0: number; firstMs: number | null; shownMs: number | null }>({ path: pathname, t0: 0, firstMs: null, shownMs: null });
   const first = useRef(true);
   useEffect(() => {
     const now = performance.now();
@@ -93,15 +102,18 @@ export default function TimingPanel() {
     first.current = false;
     let alive = true;
     let raf = 0;
+    let firstMs: number | null = null;
     const started = performance.now();
     const tick = () => {
       if (!alive) return;
-      if (contentShown()) { setScreen({ path: pathname, t0, shownMs: Math.round(performance.now() - t0) }); return; }
+      const now = Math.round(performance.now() - t0);
+      if (firstMs === null && contentShown(true)) { firstMs = now; setScreen({ path: pathname, t0, firstMs, shownMs: null }); }
+      if (firstMs !== null && contentShown(false)) { setScreen({ path: pathname, t0, firstMs, shownMs: now }); return; }
       if (performance.now() - started > 30_000) return;
       raf = requestAnimationFrame(tick);
     };
     // Set in a callback (not during the effect body), then watch for content.
-    raf = requestAnimationFrame(() => { setScreen({ path: pathname, t0, shownMs: null }); tick(); });
+    raf = requestAnimationFrame(() => { setScreen({ path: pathname, t0, firstMs: null, shownMs: null }); tick(); });
     return () => { alive = false; cancelAnimationFrame(raf); };
   }, [pathname]);
 
@@ -120,11 +132,13 @@ export default function TimingPanel() {
   const own = rows.filter((r) => !r.shared);
   const slowest = own.reduce((m, r) => Math.max(m, r.ms ?? 0), 0);
   const waiting = own.filter((r) => r.ms === null).length;
+  const shownWords = screen.firstMs === null ? "Content: still loading"
+    : `First content in ${screen.firstMs} ms, ${screen.shownMs === null ? "the rest still loading" : `all loaded in ${screen.shownMs} ms`}`;
   const summary = [
     `Screen ${route}`,
-    screen.shownMs === null ? "Content: still loading" : `Content shown in ${screen.shownMs} ms`,
+    shownWords,
     `${own.length} requests${rows.length > own.length ? `, ${rows.length - own.length} answered by one already on its way` : ""}, slowest ${slowest} ms`,
-    ...rows.map((r) => `+${Math.round(r.at - screen.t0)} ms  ${r.what}${r.method !== "GET" ? ` (${r.method})` : ""}  ${r.ms === null ? "waiting" : `${r.ms} ms`}${r.rows !== null ? `  ${r.rows} rows` : ""}${r.shared ? "  shared" : ""}${r.status && r.status >= 400 ? `  status ${r.status}` : ""}`),
+    ...rows.map((r) => `+${Math.round(r.at - screen.t0)} ms  ${r.what}${r.method !== "GET" ? ` (${r.method})` : ""}  ${r.ms === null ? "waiting" : `${r.ms} ms`}${r.rows !== null ? `  ${r.rows} rows` : ""}${r.count != null ? `  count ${r.count}` : ""}${r.shared ? "  shared" : ""}${r.status && r.status >= 400 ? `  status ${r.status}` : ""}`),
   ].join("\n");
 
   return (
@@ -137,7 +151,7 @@ export default function TimingPanel() {
           </button>
         </div>
         <p className="text-body tabular-nums">
-          {screen.shownMs === null ? "Content: still loading" : <>Content shown in <b>{screen.shownMs} ms</b></>}
+          {screen.firstMs === null ? "Content: still loading" : <>First content in <b>{screen.firstMs} ms</b>{screen.shownMs === null ? ", the rest still loading" : <>, all loaded in <b>{screen.shownMs} ms</b></>}</>}
         </p>
         <p className="text-caption text-[var(--color-text-muted)] tabular-nums">
           {own.length} {own.length === 1 ? "request" : "requests"}
@@ -154,7 +168,7 @@ export default function TimingPanel() {
                 <span className="w-12 shrink-0 text-right text-[var(--color-text-muted)]">+{Math.round(r.at - screen.t0)}</span>
                 <span className="flex-1 min-w-0 truncate">{r.what}{r.method !== "GET" && r.method !== "HEAD" ? ` (${r.method})` : ""}{r.shared ? " · shared" : ""}{r.status && r.status >= 400 ? ` · ${r.status}` : ""}</span>
                 <span className="w-14 shrink-0 text-right">{r.ms === null ? "…" : `${r.ms} ms`}</span>
-                <span className="w-16 shrink-0 text-right text-[var(--color-text-muted)]">{r.rows === null ? "" : `${r.rows} ${r.rows === 1 ? "row" : "rows"}`}</span>
+                <span className="w-16 shrink-0 text-right text-[var(--color-text-muted)]">{r.count != null ? `count ${r.count}` : r.rows === null ? "" : `${r.rows} ${r.rows === 1 ? "row" : "rows"}`}</span>
               </li>
             ))}
           </ol>

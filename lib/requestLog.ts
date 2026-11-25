@@ -22,6 +22,8 @@ export interface TimedRequest {
   method: string;
   /** Rows in the answer (from the Content-Range header), when it says. */
   rows: number | null;
+  /** A count asked for (HEAD with count): the total the server counted. */
+  count?: number | null;
   status: number | null;
   /** Answered by a request already on its way (no request of its own). */
   shared?: boolean;
@@ -128,7 +130,24 @@ export const loggedFetch: typeof fetch = async (input, init) => {
     ? { id: ++seq, at: performance.now(), ms: null, what: whatOf(url), method, rows: null, status: null }
     : null;
   const done = (res: Response) => {
-    if (entry) { entry.ms = Math.round(performance.now() - entry.at); entry.status = res.status; entry.rows = rowsOf(res); emit(); }
+    if (entry) {
+      entry.ms = Math.round(performance.now() - entry.at); entry.status = res.status;
+      if (method === "HEAD") {
+        const total = (res.headers.get("content-range") ?? "").split("/")[1];
+        entry.count = total && /^\d+$/.test(total) ? Number(total) : null;
+      } else entry.rows = rowsOf(res);
+      emit();
+      // No row count in the headers (a proxy kept them back): count the
+      // answer's rows from a copy, after the caller has it.
+      if (entry.rows === null && res.ok && method === "GET" && (res.headers.get("content-type") ?? "").includes("json")) {
+        const e = entry;
+        void res.clone().text().then((t) => {
+          const j: unknown = JSON.parse(t);
+          e.rows = Array.isArray(j) ? j.length : j && typeof j === "object" ? 1 : 0;
+          emit();
+        }).catch(() => undefined);
+      }
+    }
     return res;
   };
   const failed = (e: unknown) => {

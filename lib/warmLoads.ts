@@ -13,7 +13,9 @@
 // shows another's; signing out forgets them all (forgetLoads).
 
 const store = new Map<string, { at: number; p: Promise<unknown> }>();
-const last = new Map<string, { at: number; v: unknown }>();
+// `n` orders the answers: the load started last wins, whichever answers first.
+const last = new Map<string, { n: number; v: unknown }>();
+let started = 0;
 // Bumped by forgetLoads: a load still on its way when the account signs
 // out never lands in `last`.
 let generation = 0;
@@ -22,6 +24,7 @@ export function sharedLoad<T>(key: string, load: () => Promise<T>, opts: { maxAg
   const hit = store.get(key);
   if (!opts.fresh && hit && Date.now() - hit.at < (opts.maxAgeMs ?? 20_000)) return hit.p as Promise<T>;
   const at = Date.now();
+  const n = ++started;
   const gen = generation;
   const p = load();
   store.set(key, { at, p });
@@ -29,7 +32,7 @@ export function sharedLoad<T>(key: string, load: () => Promise<T>, opts: { maxAg
     // The newest answer wins, whichever arrives first.
     if (gen !== generation) return;
     const had = last.get(key);
-    if (!had || had.at <= at) last.set(key, { at, v });
+    if (!had || had.n <= n) last.set(key, { n, v });
   }, () => {
     // A failed load is not kept: the next ask tries again.
     if (store.get(key)?.p === p) store.delete(key);
@@ -44,7 +47,7 @@ export function lastLoaded<T>(key: string | null | undefined): T | undefined {
 
 /** Keep an answer a screen read on its own (not through sharedLoad). */
 export function keepLoaded<T>(key: string, v: T): void {
-  last.set(key, { at: Date.now(), v });
+  last.set(key, { n: ++started, v });
 }
 
 /** Forget every shared load and every kept answer (signing out). */

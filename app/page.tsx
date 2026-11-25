@@ -192,11 +192,7 @@ export default function LoginPage() {
         // "Opening your workspace" has a job: the top of Home (what needs
         // you, the layout) loads now, so it opens filled in. Never more than
         // 2.5 s: past that it opens and the rest arrives in place.
-        // [timing experiment] mos.navEarly: open Home at once instead.
-        let early = false;
-        try { early = sessionStorage.getItem("mos.navEarly") === "1"; } catch { /* no */ }
-        if (early) void warm(user, answer);
-        else await Promise.race([warm(user, answer), new Promise((r) => setTimeout(r, 2500))]);
+        await Promise.race([warm(user, answer), new Promise((r) => setTimeout(r, 2500))]);
         router.replace("/dashboard");
         return;
       }

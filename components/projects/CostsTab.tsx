@@ -17,6 +17,7 @@
 import { activeOnly } from "@/lib/activeMilestones";
 import { Card } from "@/components/ui/PageHero";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { lastLoaded, keepLoaded } from "@/lib/warmLoads";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { SubTabs } from "@/components/projects/SubTabs";
 import { SkeletonRows } from "@/components/ui/Skeleton";
@@ -63,6 +64,14 @@ const ENTRY_TYPES: Array<{ v: CostEntryType; label: string; hint: string }> = [
   { v: "adjustment", label: "Adjustment", hint: "Signed correction (can be negative to credit back)" },
 ];
 
+/** What the Costs tab read, kept for the sign-in (lib/warmLoads). */
+interface CostsKept {
+  accounts: CostAccount[]; entries: CostEntry[]; parties: CostParty[]; docs: CostDocument[];
+  milestones: Array<{ id: string; name: string; pct: number }>; projectPct: number | null;
+  schedSpan: { start: string | null; end: string | null }; basis: BudgetBasis | null;
+  budgetHistory: Map<string, BudgetChange[]>; view: CostView;
+}
+
 export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, onDataChanged, phases = [], phase = null, tz = "America/Los_Angeles" }: {
   orgId: string; projectId: string; canManage: boolean; uid: string; userEmail?: string | null;
   /** The plant's time zone (shift windows for the contractors' days). */
@@ -74,27 +83,31 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
   phases?: ProjectPhase[];
   phase?: string | null;
 }) {
-  const [accounts, setAccounts] = useState<CostAccount[]>([]);
-  const [entries, setEntries] = useState<CostEntry[]>([]);
-  const [parties, setParties] = useState<CostParty[]>([]);
-  const [docs, setDocs] = useState<CostDocument[]>([]);
-  const [milestones, setMilestones] = useState<Array<{ id: string; name: string; pct: number }>>([]);
+  // Opened again in this sign-in: the costs as last read, at once, while
+  // they are read afresh (kept per workspace, project and account).
+  const keptKey = `costs:${orgId}|${projectId}|${uid}`;
+  const [kept] = useState(() => lastLoaded<CostsKept>(keptKey));
+  const [accounts, setAccounts] = useState<CostAccount[]>(kept?.accounts ?? []);
+  const [entries, setEntries] = useState<CostEntry[]>(kept?.entries ?? []);
+  const [parties, setParties] = useState<CostParty[]>(kept?.parties ?? []);
+  const [docs, setDocs] = useState<CostDocument[]>(kept?.docs ?? []);
+  const [milestones, setMilestones] = useState<Array<{ id: string; name: string; pct: number }>>(kept?.milestones ?? []);
   // Whole-schedule % complete — the progress an unpinned budget line uses.
-  const [projectPct, setProjectPct] = useState<number | null>(null);
-  const [schedSpan, setSchedSpan] = useState<{ start: string | null; end: string | null }>({ start: null, end: null });
-  const [loading, setLoading] = useState(true);
+  const [projectPct, setProjectPct] = useState<number | null>(kept?.projectPct ?? null);
+  const [schedSpan, setSchedSpan] = useState<{ start: string | null; end: string | null }>(kept?.schedSpan ?? { start: null, end: null });
+  const [loading, setLoading] = useState(!kept);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [showParties, setShowParties] = useState(false);
   // A view asked for from elsewhere (a contractor's page from the shift meeting).
   const [asked, setAsked] = useState<CostsViewAsked | null>(() => takePendingCosts());
-  const [view, setView] = useState<CostView | null>(() => asked?.view ?? null);
+  const [view, setView] = useState<CostView | null>(() => asked?.view ?? kept?.view ?? null);
   useEffect(() => {
     const on = (e: Event) => { const a = (e as CustomEvent<CostsViewAsked>).detail; if (!a) return; takePendingCosts(); setAsked({ ...a }); setView(a.view); };
     window.addEventListener(OPEN_COSTS_EVENT, on);
     return () => window.removeEventListener(OPEN_COSTS_EVENT, on);
   }, []);
-  const [basis, setBasis] = useState<BudgetBasis | null>(null);
+  const [basis, setBasis] = useState<BudgetBasis | null>(kept?.basis ?? null);
   const [importing, setImporting] = useState<BudgetReadResult | null>(null);
   const [showDrop, setShowDrop] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -102,13 +115,20 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
   const [preview, setPreview] = useState<PreviewFile | null>(null);
   // A budget line being edited, and each line's budget changes.
   const [editingLine, setEditingLine] = useState<string | null>(null);
-  const [budgetHistory, setBudgetHistory] = useState<Map<string, BudgetChange[]>>(new Map());
+  const [budgetHistory, setBudgetHistory] = useState<Map<string, BudgetChange[]>>(kept?.budgetHistory ?? new Map());
 
   const actor = useMemo(() => ({ uid, email: userEmail ?? null }), [uid, userEmail]);
 
   const refresh = useCallback(async () => {
     setErr(null);
     try {
+      // The budget's basis and each line's history need only the project:
+      // asked for alongside the rest, not after it.
+      const basisP = Promise.resolve(supabase.from("projects")
+        .select("afe_number, charge_account, authorized_amount, budget_doc_id").eq("id", projectId).maybeSingle());
+      const historyP = loadBudgetHistory(projectId);
+      // Settled where they're used below; unread if the rest fails.
+      basisP.catch(() => undefined); historyP.catch(() => undefined);
       const [a, e, p, d, { data: ms }] = await Promise.all([
         listAccounts(orgId, projectId),
         listEntries(orgId, projectId),
@@ -130,32 +150,37 @@ export default function CostsTab({ orgId, projectId, canManage, uid, userEmail, 
         id: string; name: string; percent_complete: number | null; status: string; planned_at: string | null;
         parent_id: string | null; weight: number | null; duration_hours: number | null;
       }>);
-      setProjectPct(rows.length > 0 ? overallPercent(rows.map((m) => ({
+      const pct = rows.length > 0 ? overallPercent(rows.map((m) => ({
         id: m.id, parentId: m.parent_id, status: m.status as MilestoneStatus,
         percentComplete: m.percent_complete, weight: m.weight, durationHours: m.duration_hours,
-      }))) : null);
+      }))) : null;
+      setProjectPct(pct);
       const idx = milestonePctIndex(rows.map((m) => ({ id: m.id, percentComplete: m.percent_complete, status: m.status })));
-      setMilestones(rows.map((m) => ({ id: m.id, name: m.name, pct: idx.get(m.id) ?? 0 })));
+      const msList = rows.map((m) => ({ id: m.id, name: m.name, pct: idx.get(m.id) ?? 0 }));
+      setMilestones(msList);
       const dates = rows.map((m) => m.planned_at).filter((v): v is string => !!v).sort();
-      setSchedSpan(dates.length >= 2
+      const span = dates.length >= 2
         ? { start: dates[0].slice(0, 10), end: dates[dates.length - 1].slice(0, 10) }
-        : { start: null, end: null });
+        : { start: null, end: null };
+      setSchedSpan(span);
       // Budget basis (20261020) — absent columns just mean no header line.
-      const { data: pb, error: pbErr } = await supabase.from("projects")
-        .select("afe_number, charge_account, authorized_amount, budget_doc_id").eq("id", projectId).maybeSingle();
-      setBasis(!pbErr && pb ? {
+      const { data: pb, error: pbErr } = await basisP;
+      const b: BudgetBasis | null = !pbErr && pb ? {
         afeNumber: (pb.afe_number as string | null) ?? null,
         chargeAccount: (pb.charge_account as string | null) ?? null,
         authorized: pb.authorized_amount == null ? null : Number(pb.authorized_amount),
         docId: (pb.budget_doc_id as string | null) ?? null,
-      } : null);
-      setBudgetHistory(await loadBudgetHistory(projectId));
+      } : null;
+      setBasis(b);
+      const history = await historyP;
+      setBudgetHistory(history);
+      keepLoaded(keptKey, { accounts: a, entries: e, parties: p, docs: d, milestones: msList, projectPct: pct, schedSpan: span, basis: b, budgetHistory: history, view: a.length === 0 ? "budget" : "overview" });
     } catch (e) {
       setErr(sayError(e));
     } finally { setLoading(false); }
     onDataChanged?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId, projectId]);
+  }, [orgId, projectId, keptKey]);
   useEffect(() => { void refresh(); }, [refresh]);
 
   // Crew curve input: the awarded quote's stated labor hours.
