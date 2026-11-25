@@ -684,6 +684,13 @@ function ProjectDetail() {
     ...(planning && (noSchedule || (planning.next && planning.wos > 0 && !running && upcoming)) ? [{ label: "Planning", state: (planning.next ? "now" : "done") as "done" | "now" | "next", note: planning.next ? `Step ${planning.step} of 5: ${planning.next.name}` : "Done", short: planning.next ? planning.next.name : "Done" }] : []),
     ...bandSteps, { label: "Close-out", state: (project.status === "completed" ? "done" : workDone ? "now" : "next") as "done" | "now" | "next", note: closeNote, short: closeNote }] : null;
 
+  // Hick's law (docs/design-rules.md H5): in planning, with no schedule yet,
+  // the tabs for running the work aren't relevant: they wait under More (the
+  // one open stays in sight) until the schedule is in.
+  const notYet = new Set<Tab>(noSchedule ? ["today", "work", "reports", "closeout"] : []);
+  const mainShown = MAIN_TABS.filter((t) => !notYet.has(t.id) || t.id === tab);
+  const moreList = [...MAIN_TABS.filter((t) => notYet.has(t.id)), ...MORE_TABS];
+
   // The one orange action: what's next for the project, unless the tab
   // that does it is the one open (its own button is the orange one there).
   const next: { label: string; tab: Tab; run: () => void } | null =
@@ -857,7 +864,7 @@ function ProjectDetail() {
             cross-fades where the browser can. */}
         <div className="mt-5 sm:mt-6 flex items-end border-b border-[var(--color-border)]">
           <TabStrip>
-            {MAIN_TABS.map((t) => (
+            {mainShown.map((t) => (
               <TabButton key={t.id} active={tab === t.id} onClick={() => switchTab(t.id)}>{t.label}</TabButton>
             ))}
             <span aria-hidden className="shrink-0 self-center w-px h-5 bg-[var(--color-border-strong)]" />
@@ -866,13 +873,13 @@ function ProjectDetail() {
                 {t.label}{t.id === "documents" && checkouts.length > 0 && <span className="text-body font-normal tabular-nums text-[var(--color-text-muted)]">{checkouts.length}</span>}
               </TabButton>
             ))}
-            {MORE_TABS.filter((t) => t.id === tab).map((t) => (
+            {MORE_TABS.filter((t) => t.id === tab && !mainShown.some((m) => m.id === t.id)).map((t) => (
               <TabButton key={t.id} active onClick={() => switchTab(t.id)}>{t.label}</TabButton>
             ))}
           </TabStrip>
           <span className="shrink-0 self-center ml-3 sm:ml-5">
             <MoreMenu label="More" triggerClass="inline-flex items-center justify-center gap-1 h-10 pointer-coarse:h-11 px-2 -mx-2 rounded-lg text-reading font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
-              items={MORE_TABS.map((t) => ({ icon: <t.icon className="w-4 h-4" />, label: t.label, current: tab === t.id, onClick: () => switchTab(t.id) }))} />
+              items={moreList.map((t) => ({ icon: <t.icon className="w-4 h-4" />, label: t.label, current: tab === t.id, onClick: () => switchTab(t.id) }))} />
           </span>
           <div className="ml-auto pl-2 self-center shrink-0 max-sm:hidden">
               <HelpTooltip>

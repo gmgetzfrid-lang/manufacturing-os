@@ -1,12 +1,14 @@
 "use client";
 
-// Sign in. Two doors, one loud at a time: "Sign in with Microsoft" (company
-// accounts, most people at a site) is the filled button while the form is
-// empty; once an email and password are typed, the password "Sign in"
-// becomes the filled one and Microsoft steps back. Labels sit above the
-// fields; every press answers at once (a spinner in the button, then a
-// check). Who may sign in and why one is refused are decided by the
-// workspace's sign-in rules (lib/signinCheck), unchanged here.
+// Sign in. Two doors, one loud at a time (Hick's law, and reel DgI9usSyEJG):
+// "Sign in with Microsoft" (company accounts, most people at a site) leads;
+// the email form folds into one quiet "Continue with email" button until
+// it's wanted. The door this device used last leads instead, marked "Last
+// used". Once an email and password are typed, the password "Sign in"
+// becomes the filled one. Labels sit above the fields; every press answers
+// at once (a spinner in the button, then a check). Who may sign in and why
+// one is refused are decided by the workspace's sign-in rules
+// (lib/signinCheck), unchanged here.
 
 import { AuthCard, authField, authBtn } from "@/components/marketing/AuthCard";
 import { rememberWorkspaceName } from "@/lib/deviceWorkspace";
@@ -26,8 +28,13 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { label as fieldLabel, link } from '@/components/admin/kit';
 import { Button } from '@/components/ui/Button';
-import { AlertCircle, LogOut } from 'lucide-react';
+import { AlertCircle, LogOut, Mail } from 'lucide-react';
 import { SlowNotice, useElapsed, startOver } from '@/components/system/SlowNotice';
+
+/** The door this device signed in through last (shown as "Last used"). */
+const LAST_DOOR = "mfgos.signin.last";
+type Door = "microsoft" | "email";
+const rememberDoor = (d: Door) => { try { localStorage.setItem(LAST_DOOR, d); } catch { /* private mode */ } };
 
 /** Microsoft's four-square logo (lucide has no brand marks). */
 function MicrosoftLogo({ className }: { className?: string }) {
@@ -75,6 +82,16 @@ export default function LoginPage() {
   const deviceKeep = useSyncExternalStore(noStore, rememberDefault, () => true);
   const [keepChoice, setKeepChoice] = useState<boolean | null>(null);
   const [forgot, setForgot] = useState(false);
+  // The email form opens from its button (or already open when this device
+  // last signed in with email).
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [lastDoor, setLastDoor] = useState<Door | null>(null);
+  useEffect(() => {
+    try {
+      const d = localStorage.getItem(LAST_DOOR);
+      if (d === "microsoft" || d === "email") { setLastDoor(d); if (d === "email") setEmailOpen(true); }
+    } catch { /* private mode */ }
+  }, []);
   const keepSignedIn = keepChoice ?? deviceKeep;
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<View>("checking");
@@ -136,6 +153,7 @@ export default function LoginPage() {
     const providers = (meta.providers as string[] | undefined) ?? [];
     if (meta.provider === "azure" || providers.includes("azure")) {
       setPreferMicrosoft(true);
+      rememberDoor("microsoft");
     }
 
     const { data: { session } } = await supabase.auth.getSession();
@@ -349,8 +367,10 @@ export default function LoginPage() {
         setError(why);
         setLoading(false);
       } else if (verdict.action === "set_password") {
+        rememberDoor("email");
         router.push('/set-password');
       } else {
+        rememberDoor("email");
         await openWorkspace(signedIn.user ?? null, await workspaces);
       }
     } finally {
@@ -378,7 +398,11 @@ export default function LoginPage() {
   // in with; until then Microsoft leads, in its own neutral style.
   // After "your company account signs in with Microsoft", the password
   // button stays quiet: the message points up, at Microsoft.
-  const typed = !!email.trim() && !!password && error !== refusal({ action: "use_microsoft" });
+  const msRefused = error === refusal({ action: "use_microsoft" });
+  const typed = !!email.trim() && !!password && !msRefused;
+  // Which door leads: Microsoft, unless this device last came in by email
+  // (then the password "Sign in" is the filled one from the start).
+  const msLeads = lastDoor !== "email" || msRefused;
 
   // ─── Checking / OAuth redirect in progress ──────────────────────
   if (view === "checking") {
@@ -423,8 +447,7 @@ export default function LoginPage() {
           </p>
           <Link href="/about" className={link}>About Manufacturing OS</Link>
         </div>
-        <p className="text-body text-[var(--color-text-muted)]">Your workspace admin adds your account.</p>
-        <p className="text-body text-[var(--color-text-muted)]">Authorized use only.</p>
+        <p className="text-caption text-[var(--color-text-muted)]">No account? Your workspace admin adds you. Authorized use only.</p>
       </>}
     >
             {/* A problem sits where it happened: right above the doors it's about. */}
@@ -436,19 +459,31 @@ export default function LoginPage() {
             )}
 
             {/* Company accounts: Microsoft single sign-on, in Microsoft's
-                own neutral style (white, its four squares). */}
-            <Button variant="secondary" onClick={handleMicrosoft} disabled={loading} loading={oauthLoading} className={`${authBtn} gap-3`}>
-              {!oauthLoading && <MicrosoftLogo className="w-5 h-5" />}
-              {oauthLoading ? "Opening Microsoft" : "Sign in with Microsoft"}
-            </Button>
-
-            <div className="flex items-center gap-3 my-6" aria-hidden>
-              <div className="h-px bg-[var(--color-border)] flex-1" />
-              <span className="text-body text-[var(--color-text-muted)]">or with a password</span>
-              <div className="h-px bg-[var(--color-border)] flex-1" />
+                own neutral style (white, its four squares). It leads unless
+                this device last came in by email; never two doors equally
+                loud (Hick's law, docs/design-rules.md H4). */}
+            <div className="relative">
+              <Button variant="secondary" onClick={handleMicrosoft} disabled={loading} loading={oauthLoading}
+                className={`${authBtn} gap-3 ${msLeads ? "!border-[var(--color-border-control)] font-semibold shadow-[var(--shadow-action)]" : ""}`}>
+                {!oauthLoading && <MicrosoftLogo className="w-5 h-5" />}
+                {oauthLoading ? "Opening Microsoft" : "Sign in with Microsoft"}
+              </Button>
+              {lastDoor === "microsoft" && <LastUsed />}
             </div>
 
-            <form onSubmit={handleLogin}>
+            {/* The email form, folded into one quiet button until it's wanted. */}
+            {!emailOpen && (
+              <div className="relative mt-3">
+                <Button variant="ghost" onClick={() => { setEmailOpen(true); requestAnimationFrame(() => document.getElementById("si-email")?.focus()); }}
+                  aria-expanded={false} aria-controls="si-form" className={`${authBtn} gap-2 text-[var(--color-text-muted)]`}>
+                  <Mail aria-hidden className="w-4 h-4" /> Continue with email
+                </Button>
+              </div>
+            )}
+
+            {emailOpen && (
+            <form id="si-form" onSubmit={handleLogin} className="mt-6 relative">
+              {lastDoor === "email" && <span className="absolute -top-3 right-0 px-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text-muted)]">Last used</span>}
               <div>
                 <label htmlFor="si-email" className={fieldLabel}>Email</label>
                 <input
@@ -487,15 +522,16 @@ export default function LoginPage() {
                 )}
               </div>
 
-              <Button type="submit" variant={typed ? "primary" : "secondary"} disabled={oauthLoading} loading={loading} done={opened} doneLabel="Signed in"
+              <Button type="submit" variant={typed || !msLeads ? "primary" : "secondary"} disabled={oauthLoading} loading={loading} done={opened} doneLabel="Signed in"
                 className={`mt-6 ${authBtn}`}>
                 {loading ? "Signing in" : "Sign in"}
               </Button>
               {loading && <SlowNotice secs={slowSecs} onStartOver={() => startOver()} />}
             </form>
+            )}
 
             {/* For both doors: kept on this device only. */}
-            <label className="mt-5 pt-4 border-t border-[var(--color-border)] flex items-center gap-2.5 min-h-8 pointer-coarse:min-h-11 cursor-pointer select-none">
+            <label className="mt-5 flex items-center gap-2.5 min-h-8 pointer-coarse:min-h-11 cursor-pointer select-none">
               <input
                 type="checkbox"
                 checked={keepSignedIn}
@@ -506,4 +542,9 @@ export default function LoginPage() {
             </label>
     </AuthCard>
   );
+}
+
+/** A small "Last used" tag on the door this device signed in through last. */
+function LastUsed() {
+  return <span className="absolute -top-2.5 right-3 px-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-caption font-medium text-[var(--color-text-muted)]">Last used</span>;
 }

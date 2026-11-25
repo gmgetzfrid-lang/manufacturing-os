@@ -324,6 +324,20 @@ From two posts the owner sent: `DfW8B7oIFoJ` (a buy box rebuilt in four fixes: c
 
 **B10. Real pictures where the data has them** (equipment photos, document thumbnails), never stock art or decoration (C6). (Dft07xmDJkm)
 
+## 19. Fewer choices (Hick's law)
+
+From two reels the owner sent: `Derh6MRlvot` (Hick's law: the more choices, the longer people take to decide, and that's when they leave; five rules) and `DgI9usSyEJG` (a sign-in page cut down: no tabs, the single sign-on buttons first, the email form turned into a button, no filler text, real artwork, everything moved down within thumb reach, privacy and terms at the bottom, a "Last used" badge).
+
+**H1. Every screen has one obvious main action.** (Derh6MRlvot)
+
+**H2. The main button looks more important than everything around it.** (Derh6MRlvot; A1)
+
+**H3. Advanced options stay hidden until someone needs them** (behind More, a ⋯ menu or a "Show" fold). (Derh6MRlvot)
+
+**H4. Never two buttons that look equally important.** One leads; the others are quieter. On sign-in, Microsoft leads and "Continue with email" is a quiet button that opens the form; the door this device used last leads instead and says "Last used". (Derh6MRlvot, DgI9usSyEJG)
+
+**H5. An option that isn't relevant yet isn't shown yet.** A project with no schedule keeps Shift, Work, Reports and Close-out under More until the schedule is in. (Derh6MRlvot)
+
 ## Ideas (optional, use where they fit)
 
 Layout and hierarchy

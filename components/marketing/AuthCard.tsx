@@ -107,8 +107,7 @@ export function AuthCard({ title, sub, children, footer, wide = false, status, s
           </div>
 
           {/* The block's cells: what the sheet is, then the sign-in's
-              status and signature. On a phone the status row is the card's
-              top edge, where it can be seen while typing. */}
+              status and signature. */}
           <div className="order-2 relative text-[var(--color-text)]">
             <div aria-hidden className="tb-rule absolute inset-x-0 top-0 h-px bg-[var(--color-border-strong)]" />
             <div className="grid grid-cols-4 divide-x divide-[var(--color-border)]">
@@ -117,8 +116,10 @@ export function AuthCard({ title, sub, children, footer, wide = false, status, s
               <Cell label="Rev">{APP_VERSION}</Cell>
             </div>
           </div>
-          <div className="order-3 max-md:order-first relative text-[var(--color-text)]">
-            <div className="grid grid-cols-4 divide-x divide-[var(--color-border)] md:border-t max-md:border-b border-[var(--color-border)] max-md:bg-[var(--color-surface-2)]">
+          {/* The status row: under the doors, and on a phone only once there
+              is something to say (signing in, signed), not "Ready". */}
+          <div className={`order-3 relative text-[var(--color-text)] ${!signed && (!status || status === "Ready to sign in") ? "max-md:hidden" : ""}`}>
+            <div className="grid grid-cols-4 divide-x divide-[var(--color-border)] border-t border-[var(--color-border)]">
               <Cell label="Status" className="col-span-2"><span role="status">{status ?? "Ready to sign in"}</span></Cell>
               <Cell label="Signed" className="col-span-2">
                 {signed
