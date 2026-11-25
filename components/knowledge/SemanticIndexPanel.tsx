@@ -84,8 +84,8 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController }: {
     const prior = lastGood.current;
     // Look again later, backing off; false once the tries are used up.
     const recountLater = (): boolean => {
+      if (recounts.current >= RECOUNT_AFTER_MS.length) return false;
       const delay = RECOUNT_AFTER_MS[recounts.current];
-      if (delay === undefined) return false;
       recounts.current += 1;
       if (recountTimer.current) clearTimeout(recountTimer.current);
       recountTimer.current = setTimeout(() => setRecountTick((n) => n + 1), delay);

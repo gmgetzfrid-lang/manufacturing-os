@@ -1713,10 +1713,15 @@ async function runKnowledgeAsk(input: AskHandlerInput, trace: AskTrace): Promise
       // Diagnose WHY before shrugging: "your search terms missed" and "your
       // documents contain no machine-readable text at all" need completely
       // different advice.
-      const { count: anyChunks } = await supabaseAdmin
+      // Only "is anything indexed at all?": one row, scoped to the workspace
+      // so the (org_id, library_id) index answers it, not an exact count.
+      const { data: anyRows } = await supabaseAdmin
         .from("knowledge_chunks")
-        .select("id", { count: "exact", head: true })
-        .in("library_id", [libraryId, ...linkedLibraries.map((l) => l.id)]);
+        .select("id")
+        .eq("org_id", orgId)
+        .in("library_id", [libraryId, ...linkedLibraries.map((l) => l.id)])
+        .limit(1);
+      const anyChunks = (anyRows ?? []).length;
       const answer = (anyChunks ?? 0) === 0
         ? "**Answer:** Nothing is indexed from these documents yet - every page came back with **no " +
           "text layer**. That is normal for AutoCAD exports drawn with **SHX fonts** (the tags plot as " +

@@ -505,9 +505,9 @@ export default function KnowledgeLibraryPage() {
   const drawingKeyAt = useRef(0);
   useEffect(() => {
     if (loading || readyCount === drawingKey) return;
-    const settle = () => { drawingKeyAt.current = Date.now(); setDrawingKey(readyCount); };
-    if (drawingKey === null || docGroups.working === 0) { settle(); return; }
-    const t = setTimeout(settle, Math.max(0, drawingKeyAt.current + DRAWING_REFRESH_MS - Date.now()));
+    const wait = drawingKey === null || docGroups.working === 0
+      ? 0 : Math.max(0, drawingKeyAt.current + DRAWING_REFRESH_MS - Date.now());
+    const t = setTimeout(() => { drawingKeyAt.current = Date.now(); setDrawingKey(readyCount); }, wait);
     return () => clearTimeout(t);
   }, [loading, readyCount, drawingKey, docGroups.working]);
 

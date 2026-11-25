@@ -137,10 +137,12 @@ export async function knowledgeHealthReport(orgId: string, libraryId: string, bu
   // While the meaning index is being built the chunk table is busy; a count
   // that times out is reported as "not available right now", never as 0.
   const countFor = Math.max(1_000, Math.min(8_000, timeLeft() - 2_000));
+  // org_id + library_id: the (org_id, library_id) index answers these; on
+  // library_id alone no index matched and every count walked the table.
   const [chunks, embedded] = await Promise.all([
-    count(() => supabaseAdmin.from("knowledge_chunks").select("id", { count: "exact", head: true }).eq("library_id", libraryId)
+    count(() => supabaseAdmin.from("knowledge_chunks").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("library_id", libraryId)
       .abortSignal(AbortSignal.timeout(countFor))),
-    count(() => supabaseAdmin.from("knowledge_chunks").select("id", { count: "exact", head: true }).eq("library_id", libraryId).not("embedding", "is", null)
+    count(() => supabaseAdmin.from("knowledge_chunks").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("library_id", libraryId).not("embedding", "is", null)
       .abortSignal(AbortSignal.timeout(countFor))),
   ]);
 
@@ -176,9 +178,10 @@ export interface RepairResult {
 
 export async function repairKnowledgeLibrary(orgId: string, libraryId: string): Promise<RepairResult> {
   // 1. A complete sync (adds, refreshes, restores, retires — never deletes work).
-  const { count: sourceCount } = await supabaseAdmin.from("knowledge_sources")
-    .select("id", { count: "exact", head: true }).eq("library_id", libraryId);
-  const sync = (sourceCount ?? 0) > 0 ? await syncKnowledgeLibrarySources(libraryId) : null;
+  // Only "any source?" matters: one row, not a count.
+  const { data: anySource } = await supabaseAdmin.from("knowledge_sources")
+    .select("id").eq("org_id", orgId).eq("library_id", libraryId).limit(1);
+  const sync = (anySource ?? []).length > 0 ? await syncKnowledgeLibrarySources(libraryId) : null;
 
   // 2. Re-queue what's stuck, failed or partly read. Reading resumes from
   //    the last page done; pages already read are not paid for again.
