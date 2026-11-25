@@ -150,9 +150,9 @@ export default function ScopePage() {
         title={answer}
         sub={canEdit ? "Plants, units and systems that documents and equipment can belong to." : "Read only. Admin, Manager, Supervisor and Doc Control change the scope."}
         factsHero="none"
-        facts={tree.length > 0 ? [
+        facts={tree.length > 0 && unitTotal > 0 ? [
           { label: "Units", value: unitTotal },
-          { label: "Systems", value: systemTotal },
+          ...(systemTotal > 0 ? [{ label: "Systems", value: systemTotal }] : []),
         ] : undefined}
         tools={
           <label className="inline-flex items-center gap-2 h-10 pointer-coarse:h-11 px-1 text-body text-[var(--color-text-muted)] cursor-pointer">

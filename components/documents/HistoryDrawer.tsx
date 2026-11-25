@@ -1,13 +1,14 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { X, History, Shield, Eye, FileDiff, CheckCircle2, Lock, Clock, Users, ArrowRight } from "lucide-react";
+import { X, History, Shield, Eye, Lock, Clock } from "lucide-react";
 import type { DocumentRecord, DocumentVersion, CheckoutSession } from "@/types/schema";
 import { AuditEntry } from "@/lib/audit";
 import { supabase } from "@/lib/supabase";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
 import { shownRevision, uploadedName } from "@/lib/revisionShown";
 import TimelineFeed from "@/components/documents/TimelineFeed";
+import Timeline from "@/components/ui/Timeline";
 import RevisionChainStrip from "@/components/documents/RevisionChainStrip";
 import ReverseConfirmModal from "@/components/documents/lifecycle/ReverseConfirmModal";
 import HelpTooltip from "@/components/ui/HelpTooltip";
@@ -22,6 +23,9 @@ interface HistoryDrawerProps {
   onClose: () => void;
   docRecord: DocumentRecord;
 }
+
+/** A stored time as ms (or its string) for the timeline. */
+const atOf = (t: unknown): number | string => (t instanceof Date ? t.getTime() : typeof t === "number" || typeof t === "string" ? t : 0);
 
 function formatFirestoreTimestamp(value: unknown, withTime = false): string {
   if (!value) return "-";
@@ -332,66 +336,29 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
               <p className="text-body text-[var(--color-text-muted)] font-medium">No earlier revisions yet. Each revision issued shows here.</p>
             </div>
             ) : (
-            <div className="space-y-8 relative pb-12">
-              <div className="absolute left-[15px] top-0 bottom-0 w-0.5 bg-[var(--color-border)]" />
-
-              {versions.map((ver) => (
-                <div key={ver.id} className="flex items-start relative group">
-                  {/* Revision Bubble */}
-                  <div className="w-8 h-8 rounded-full bg-[var(--color-surface)] border-2 border-[var(--color-border-strong)] flex items-center justify-center shrink-0 z-10 mr-4 group-hover:border-[var(--color-border-strong)] group-hover:scale-110 transition-all shadow-sm ring-4 ring-[var(--color-surface)] text-body font-medium text-[var(--color-text-muted)]">
-                    {ver.revisionLabel}
-                  </div>
-
-                  <div className="flex-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-0 shadow-sm hover:shadow-md transition-all hover:border-[var(--color-border)] overflow-hidden">
-                    {/* Card Header */}
-                    <div className="px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]/50 flex justify-between items-center">
-                      <div className="flex items-center space-x-2">
-                        <span
-                          className={`text-body font-semibold px-2 py-0.5 rounded border ${
-                            ver.changeType === "Major"
-                              ? "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]"
-                              : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]"
-                          }`}
-                        >
-                          {ver.changeType || "Revision"}
-                        </span>
-                        <span className="text-body text-[var(--color-text-faint)] font-display tabular-nums">
-                          {formatFirestoreTimestamp(ver.createdAt)}
-                        </span>
-                      </div>
-                      <button
-                        onClick={() => setActiveSnapshot(ver)}
-                        className="flex items-center text-body font-medium text-[var(--color-text)] hover:text-[var(--color-text)] bg-[var(--color-surface-2)] hover:bg-[var(--color-surface-2)] px-2 py-1 rounded transition-colors"
-                        type="button"
-                      >
-                        <Eye className="w-3 h-3 mr-1" /> View Snapshot
-                      </button>
-                    </div>
-
-                    {/* Card Body */}
-                    <div className="p-4">
-                      <p className="text-body text-[var(--color-text)] font-medium mb-3">
-                        {ver.changeLog || "No description provided."}
-                      </p>
-
-                      {/* Asset Impact Analysis (Visual Diff) */}
-                      <div className="mt-3 p-3 bg-[var(--color-surface-2)] rounded-lg border border-[var(--color-border)] text-body">
-                        <div className="flex items-center text-[var(--color-text-faint)] font-medium text-body mb-2">
-                          <FileDiff className="w-3 h-3 mr-1" /> Automated Impact Analysis
-                        </div>
-                        <div className="flex gap-2">
-                          <span className="text-[var(--color-text)] font-medium">+ Updated file source</span>
-                          <span className="text-[var(--color-text-faint)]">|</span>
-                          <span className="text-[var(--color-text-muted)]">
-                            User: {ver.createdByName || "System"}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+            // Each revision as a history entry: by day, who as an avatar.
+            <Timeline items={versions.map((ver, n) => ({
+              id: ver.id ?? `rev-${n}`,
+              at: atOf(ver.createdAt),
+              kind: `Rev ${ver.revisionLabel || "-"}`,
+              tone: "muted" as const,
+              title: <span className="text-[var(--color-text-muted)]">{ver.changeType || "Revision"}</span>,
+              detail: (
+                <div className="grid gap-1">
+                  <span className="text-body text-[var(--color-text)]">{ver.changeLog || "No description provided."}</span>
+                  <span className="-ml-2">
+                    <button
+                      onClick={() => setActiveSnapshot(ver)}
+                      className="ui-hit inline-flex items-center gap-1.5 h-8 pointer-coarse:h-11 px-2 rounded-md text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+                      type="button"
+                    >
+                      <Eye className="w-3.5 h-3.5" /> View Snapshot
+                    </button>
+                  </span>
                 </div>
-              ))}
-            </div>
+              ),
+              who: { uid: ver.createdBy || null, name: ver.createdByName || "System" },
+            }))} />
             )
           ) : tab === 'checkouts' ? (
             // CHECKOUT LOGS
@@ -401,44 +368,22 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
                 <p className="text-body text-[var(--color-text-muted)] font-medium">Nobody has checked this out yet. Each checkout shows here.</p>
               </div>
             ) : (
-               <div className="space-y-4">
-                 {sessions.map(s => (
-                   <div key={s.id} className={`border rounded-xl p-4 bg-[var(--color-surface)] ${s.status === 'active' ? 'border-[var(--color-border)] ring-1 ring-[var(--color-border-strong)]' : 'border-[var(--color-border)]'}`}>
-                      {/* Session Details */}
-                      <div className="flex justify-between items-start mb-2">
-                         <div className="flex items-center gap-2">
-                           <div className={`p-1.5 rounded-full ${s.status === 'active' ? 'bg-[var(--color-surface-2)] text-[var(--color-text)]' : 'bg-[var(--color-surface-2)] text-[var(--color-text-faint)]'}`}>
-                             <Users className="w-3 h-3" />
-                           </div>
-                           <div>
-                             <p className="text-body font-medium text-[var(--color-text)] leading-none">{s.userName}</p>
-                             <p className="text-body text-[var(--color-text-faint)] mt-0.5">{s.mode}</p>
-                           </div>
-                         </div>
-                         <span className={`text-body font-medium px-2 py-0.5 rounded border ${s.status === 'active' ? 'bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)] border-[color-mix(in_srgb,var(--state-released)_35%,transparent)]' : 'bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]'}`}>
-                           {s.status === 'checked_in' ? 'Checked In' : s.status}
-                         </span>
-                      </div>
-                      <div className="text-body text-[var(--color-text-muted)] space-y-1 ml-9">
-                         <div className="flex items-center gap-2">
-                           <ArrowRight className="w-3 h-3 text-[var(--color-text-faint)]" />
-                           <span>Started: {formatFirestoreTimestamp(s.startedAt, true)}</span>
-                         </div>
-                         {s.endedAt && (
-                           <div className="flex items-center gap-2">
-                             <CheckCircle2 className="w-3 h-3 text-[var(--state-released)]" />
-                             <span>Ended: {formatFirestoreTimestamp(s.endedAt, true)}</span>
-                           </div>
-                         )}
-                         {s.note && (
-                           <div className="mt-2 p-2 bg-[var(--color-surface-2)] rounded text-[var(--color-text-muted)] italic border border-[var(--color-border)]">
-                             &ldquo;{s.note}&rdquo;
-                           </div>
-                         )}
-                      </div>
-                   </div>
-                 ))}
-               </div>
+              // Each checkout as a history entry, when it started; who as
+              // an avatar, how it ended and the note under it.
+              <Timeline items={sessions.map((s, n) => ({
+                id: s.id ?? `co-${n}`,
+                at: atOf(s.startedAt),
+                kind: s.status === 'active' ? "Checked out" : s.status === 'checked_in' ? "Checked in" : String(s.status),
+                tone: s.status === 'active' ? "warn" as const : "muted" as const,
+                title: <span className="text-[var(--color-text-muted)]">{s.mode}</span>,
+                detail: (s.endedAt || s.note) ? (
+                  <div className="grid gap-0.5">
+                    {s.endedAt && <span>Ended {formatFirestoreTimestamp(s.endedAt, true)}</span>}
+                    {s.note && <span className="text-body text-[var(--color-text)]">&ldquo;{s.note}&rdquo;</span>}
+                  </div>
+                ) : undefined,
+                who: { uid: s.userId || null, name: s.userName || null },
+              }))} />
             )
           ) : (
             // AUDIT LOG TAB
@@ -448,37 +393,22 @@ export default function HistoryDrawer({ isOpen, onClose, docRecord }: HistoryDra
                 <p className="text-body text-[var(--color-text-muted)] font-medium">Nothing logged yet. Views, checkouts and changes show here.</p>
               </div>
             ) : (
-              <div className="space-y-0 border rounded-xl overflow-hidden">
-                {auditLogs.map((log, i) => (
-                  <div key={i} className="p-4 border-b border-[var(--color-border)] bg-[var(--color-surface)] last:border-0 hover:bg-[var(--color-surface-2)] transition-colors">
-                    <div className="flex justify-between items-start mb-1">
-                      <span className={`text-body font-semibold px-2 py-0.5 rounded border 
-                        ${log.action === 'FORCE_RELEASE' ? 'bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)] border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)]' : 
-                          log.action === 'CHECK_OUT' ? 'bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]' :
-                          log.action === 'VIEW' ? 'bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]' :
-                          'bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]'
-                        }`}>
-                        {log.action.replace('_', ' ')}
-                      </span>
-                      <span className="text-body text-[var(--color-text-faint)] font-display tabular-nums">
-                        {formatFirestoreTimestamp(log.timestamp, true)}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2 mt-2">
-                      <div className="w-5 h-5 rounded-full bg-[var(--color-surface-2)] flex items-center justify-center text-body font-medium text-[var(--color-text-muted)]">
-                        {(log.userEmail || 'U')[0].toUpperCase()}
-                      </div>
-                      <span className="text-body font-medium text-[var(--color-text)]">{log.userEmail}</span>
-                      <span className="text-body text-[var(--color-text-faint)]">({log.userRole})</span>
-                    </div>
-                    {log.details && (
-                      <div className="mt-2 text-caption text-[var(--color-text-muted)] font-mono bg-[var(--color-surface-2)] p-2 rounded">
-                        {JSON.stringify(log.details)}
-                      </div>
-                    )}
+              // The audit log as a history: who as an avatar (not their
+              // email on every line), their role and the details under it.
+              <Timeline items={auditLogs.filter((log) => !!log.timestamp).map((log, i) => ({
+                id: `${i}:${log.timestamp}`,
+                at: log.timestamp!,
+                kind: log.action.replace('_', ' '),
+                tone: log.action === 'FORCE_RELEASE' ? "bad" as const : "muted" as const,
+                title: null,
+                detail: (log.userRole || log.details) ? (
+                  <div className="grid gap-1">
+                    {log.userRole && <span>{log.userRole}</span>}
+                    {log.details && <span className="font-mono break-all">{JSON.stringify(log.details)}</span>}
                   </div>
-                ))}
-              </div>
+                ) : undefined,
+                who: { uid: log.userId || null, email: log.userEmail ?? null },
+              }))} />
             )
           )}
         </div>

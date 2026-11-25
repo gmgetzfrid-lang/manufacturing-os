@@ -74,7 +74,8 @@ export default function ChangePassword() {
             {msg.ok && <Check aria-hidden className="w-4 h-4 text-[var(--state-released)]" />} {msg.text}
           </p>
         )}
-        <Button type="submit" loading={busy} disabled={!current || !pw || !!problem}>Change password</Button>
+        {/* Secondary: the profile's Save is the page's one accent button. */}
+        <Button type="submit" variant="secondary" loading={busy} disabled={!current || !pw || !!problem}>Change password</Button>
       </form>
     </Card>
   );

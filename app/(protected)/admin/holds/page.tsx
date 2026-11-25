@@ -22,6 +22,7 @@ import { said } from "@/components/admin/said";
 import { Button } from "@/components/ui/Button";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 import { ErrorNote } from "@/components/ui/ErrorNote";
+import UserAvatar from "@/components/ui/UserAvatar";
 import { plural } from "@/components/admin/band";
 import { useRole } from "@/components/providers/RoleContext";
 import {
@@ -133,8 +134,9 @@ export default function HoldsPage() {
         sub={metrics && metrics.avgClosedDurationDays > 0 ? `A hold is released in ${metrics.avgClosedDurationDays} ${metrics.avgClosedDurationDays === 1 ? "day" : "days"} on average.` : undefined}
         facts={metrics && (onHold > 0 || metrics.openedLast7Days > 0 || metrics.releasedLast7Days > 0) ? [
           { label: "Longest on hold", value: `${metrics.longestActiveDays} d`, tone: metrics.longestActiveDays > 14 ? "bad" : undefined },
-          { label: "Opened this week", value: metrics.openedLast7Days },
-          { label: "Released this week", value: metrics.releasedLast7Days },
+          // A quiet week stays out (zeros that aren't news).
+          ...(metrics.openedLast7Days > 0 ? [{ label: "Opened this week", value: metrics.openedLast7Days }] : []),
+          ...(metrics.releasedLast7Days > 0 ? [{ label: "Released this week", value: metrics.releasedLast7Days }] : []),
         ] : undefined}
       >
         <div className="[&>div]:mb-0">
@@ -198,7 +200,14 @@ export default function HoldsPage() {
                           <span className="font-medium tabular-nums" title={`Since ${shortDate(h.openedAt as string)}`}>{ageDays === 0 ? "Since today" : `${ageDays} d`}</span>
                           {lateDays > 0 && <span className="block text-body font-medium text-[var(--state-overdue-text)]">{lateDays} d past expected</span>}
                         </td>
-                        <td className={`${tbl.td} max-lg:hidden text-[var(--color-text-muted)]`}>{h.openedByName ?? ""}</td>
+                        {/* Who opened it: an avatar and a name, the email on hover. */}
+                        <td className={`${tbl.td} max-lg:hidden text-[var(--color-text-muted)]`}>
+                          {h.openedByName && (
+                            <span className="inline-flex items-center gap-1.5 whitespace-nowrap" title={h.openedByName}>
+                              <UserAvatar {...(h.openedByName.includes("@") ? { email: h.openedByName } : { name: h.openedByName })} size={20} />{h.openedByName.split("@")[0]}
+                            </span>
+                          )}
+                        </td>
                         <td className={`${tbl.td} max-xl:hidden text-body text-[var(--color-text-muted)] max-w-[32ch]`}><span className="line-clamp-2">{h.notes ?? ""}</span></td>
                         {canRelease && (
                           <td className={`${tbl.td} max-sm:col-start-2 max-sm:row-start-1 text-right`}>
@@ -243,7 +252,8 @@ export default function HoldsPage() {
       {/* By reason */}
       {totalByReason.length > 0 && (
         <Section label="By reason">
-          <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
+          {/* A short list: space between the bars, no line under each. */}
+          <div className={`${sheet} py-1.5`}>
             {totalByReason.map((r, i) => (
               <div key={r.reason} className="flex items-center gap-4 px-4 py-2.5">
                 <div className="w-48 max-sm:w-32 shrink-0 truncate text-body text-[var(--color-text)]">{r.reason}</div>

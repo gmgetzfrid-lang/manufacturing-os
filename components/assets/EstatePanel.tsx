@@ -38,7 +38,7 @@ export default function EstatePanel({ orgId, assetId, tag }: { orgId: string; as
         <span className="flex-1" />
         <Link href={`/documents/graph?q=${encodeURIComponent(tag)}`} className="text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Explore on the map</Link>
       </div>
-      <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-4 space-y-4">
+      <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] p-4 space-y-6">
         {!!error && <ErrorNote compact error={error} title="Couldn't look across the estate." onRetry={() => setAttempt((n) => n + 1)} />}
         {!res && !error && <SkeletonText lines={4} />}
         {res && (
@@ -47,11 +47,12 @@ export default function EstatePanel({ orgId, assetId, tag }: { orgId: string; as
             {res.groups.map((g) => (
               <div key={g.key}>
                 <div className="text-body font-medium text-[var(--color-text)] mb-1.5 flex items-center gap-2">{g.label} <span className="ui-count">{g.ids.length}</span></div>
-                <ul className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
+                {/* Up to 8 rows: space between them, no ruled lines. */}
+                <ul className="grid gap-3">
                   {g.ids.slice(0, 8).map((id) => {
                     const r = res.results.find((x) => x.id === id)!;
                     return (
-                      <li key={id} className="py-2">
+                      <li key={id}>
                         <Link href={r.href} className="flex items-center gap-2 hover:underline">
                           <FileTypeIcon type={fileTypeOf(r.name)} className="w-4 h-4 shrink-0" />
                           <span className="text-body font-medium text-[var(--color-accent-text)] truncate">{r.name}</span>

@@ -179,8 +179,9 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
   const started = done || m.status === "in_progress" || held || Number.isFinite(as);
   const allotted = Math.round((m.durationHours != null && m.durationHours > 0 ? m.durationHours : workHours(m, tz)) * 10) / 10;
   // One tag: how it stands against the plan (a soft pill in its status color).
-  const GOOD = "bg-[color-mix(in_srgb,var(--state-released)_14%,transparent)] text-[var(--state-released-text)]";
-  const BAD = "bg-[color-mix(in_srgb,var(--state-overdue)_14%,transparent)] text-[var(--state-overdue-text)]";
+  // How it stands against plan: a dot and the words in text color (S1).
+  const GOOD = "bg-[var(--state-released)]";
+  const BAD = "bg-[var(--state-overdue)]";
   const tag = (() => {
     const d = done && Number.isFinite(af) ? af - pf : Number.isFinite(as) ? as - ps : Number.isFinite(ps) && now > ps ? now - ps : NaN;
     if (!Number.isFinite(d)) return null;
@@ -723,7 +724,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
           <tr className="font-medium"><td className={`${cell} text-body font-normal text-[var(--color-text-muted)]`}>Actual</td><td className={cell}>{Number.isFinite(as) ? when(as) : "-"}</td><td className={cell}>{Number.isFinite(af) ? when(af) : held ? (m.status === "blocked" ? "blocked" : "on hold") : started ? `${pct}%` : "-"}</td></tr>
         </tbody>
       </table>
-      {tag && <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-body font-medium ${tag.tone}`}>{tag.t}</span>}
+      {tag && <span className="inline-flex items-center gap-1.5 font-medium text-[var(--color-text)]"><span aria-hidden className={`w-2 h-2 shrink-0 rounded-full ${tag.tone}`} />{tag.t}</span>}
       {held && m.statusReason && <div className="border-l-[3px] border-[var(--state-held)] pl-2.5 text-[var(--color-text)]">“{m.statusReason}”</div>}
       {saved && <div role="status" className="inline-flex items-center gap-1.5 font-medium text-[var(--state-released-text)]"><Check className="w-4 h-4" /> {saved}</div>}
 
@@ -842,7 +843,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
           <span className="text-body font-medium text-[var(--color-text-muted)]">History</span>
           {toSet > 0 && <span className="text-body font-medium text-[var(--state-held-text)]">{toSet === 1 ? "1 time" : `${toSet} times`} to set</span>}
           {canEdit && onUpdate && (started || history.length > 0) && (
-            <button type="button" onClick={() => void startOver()} disabled={busy} title="Back to not started: every time, %, hold and comment removed" className={`ml-auto ${SEC.replace("h-8", "h-7").replace("text-[var(--color-text)]", "text-[var(--state-overdue-text)]")}`}>Start over</button>
+            <button type="button" onClick={() => void startOver()} disabled={busy} title="Back to not started: every time, %, hold and comment removed" className={`ml-auto ${SEC.replace("h-8", "h-7")}`}>Start over</button>
           )}
         </div>
         {resetMsg && <div role="alert" className="mb-1 font-medium text-[var(--state-overdue-text)]">{resetMsg}</div>}
@@ -889,7 +890,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
                           <button type="button" onClick={() => void saveFix(x)} disabled={fixBusy} className={action ? SEC : PRI}>{fixBusy ? "Saving…" : "Save"}</button>
                           <button type="button" onClick={() => setFixing(null)} className={SEC}>Cancel</button>
                           {removable(x) ? (
-                            <button type="button" onClick={() => void removeEntry(x)} disabled={fixBusy} className={`ml-auto ${SEC.replace("text-[var(--color-text)]", "text-[var(--state-overdue-text)]")}`}>
+                            <button type="button" onClick={() => void removeEntry(x)} disabled={fixBusy} className={`ml-auto ${SEC}`}>
                               {removable(x) === "change" ? "Take back" : "Remove"}
                             </button>
                           ) : x.logId != null && (

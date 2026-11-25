@@ -182,7 +182,7 @@ export default function WorkspaceSettingsPage() {
 
           {/* Request numbering */}
           <Section label="Request numbering">
-            <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
+            <div className={`${sheet} py-1`}>
               <FormRow label="Workspace code" htmlFor="num-prefix">
                 <input id="num-prefix" value={numbering.prefix}
                   onChange={(e) => setNumbering((n) => ({ ...n, prefix: e.target.value.toUpperCase() }))}
@@ -216,7 +216,7 @@ export default function WorkspaceSettingsPage() {
 
           {/* Identity */}
           <Section label="Workspace">
-            <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
+            <div className={`${sheet} py-1`}>
               <FormRow label="Name"><div className="@xl:pt-2 text-reading text-[var(--color-text)]">{org?.name ?? <span className="text-[var(--color-text-faint)]">Not loaded</span>}</div></FormRow>
               {org?.subscribed_plan && <FormRow label="Plan"><div className="@xl:pt-2 text-reading text-[var(--color-text)] capitalize">{org.subscribed_plan}</div></FormRow>}
               {org?.subscription_status && <FormRow label="Subscription"><div className="@xl:pt-2 text-reading text-[var(--color-text)] capitalize">{org.subscription_status}</div></FormRow>}
@@ -230,7 +230,7 @@ export default function WorkspaceSettingsPage() {
 
         {/* Email delivery */}
         <Section label="Email" action={<Link href="/settings/notifications" className={`text-body ${link}`}>Your own email settings</Link>}>
-          <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
+          <div className={`${sheet} py-1`}>
             <FormRow label="Outbound email" hint="Sent through Resend. Each person picks what they get.">
               <div className="@xl:pt-2">
                 {emailQueueStatus === "ok" && <StatusTag tone="good" colored={false}>Set up</StatusTag>}

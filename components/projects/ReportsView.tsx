@@ -674,11 +674,12 @@ export default function ReportsView(p: Props) {
             {madeHere.length > 0 && (
               <div>
                 <div className="text-body font-medium text-[var(--color-text-muted)] mb-1">Made lately</div>
-                <ul className="divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
+                {/* Up to four: space between them, no rule under each; the report's name is the title above. */}
+                <ul className="grid gap-1">
                   {madeHere.map((m) => (
                     <li key={`${m.label}:${m.at}`}>
-                      <button type="button" onClick={() => again(m)} className="w-full text-left py-1.5 text-caption text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
-                        {meta.name} · {m.label} <span className="text-[var(--color-text-muted)]">· {fmtInTz(m.at, tz, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}</span>
+                      <button type="button" onClick={() => again(m)} className="w-full text-left py-1 -mx-1 px-1 rounded-md text-body text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+                        {m.label} <span className="text-caption text-[var(--color-text-muted)]">· {fmtInTz(m.at, tz, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })}</span>
                       </button>
                     </li>
                   ))}

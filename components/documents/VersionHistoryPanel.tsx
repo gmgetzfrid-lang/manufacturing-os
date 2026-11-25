@@ -10,9 +10,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import {
-  Clock, ShieldAlert, FileText, Eye, Download as DownloadIcon,
-  Hash, Loader2, Layers, MessageSquare, User, CheckSquare, Stamp,
-  Link as LinkIcon, History as HistoryIcon, RotateCcw, GitCompare,
+  FileText, Eye, Download as DownloadIcon, Loader2,
+  History as HistoryIcon, RotateCcw, GitCompare,
   ArrowUpFromLine, Pencil,
 } from "lucide-react";
 import { listVersions, correctRevisionLabel } from "@/lib/revisions";
@@ -23,6 +22,8 @@ import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import CompareRevisionsModal from "@/components/documents/CompareRevisionsModal";
 import BackfillVersionModal from "@/components/documents/BackfillVersionModal";
 import HelpTooltip from "@/components/ui/HelpTooltip";
+import MoreMenu, { type MoreItem } from "@/components/ui/MoreMenu";
+import Timeline, { type TimelineItem } from "@/components/ui/Timeline";
 
 import { friendlyError } from "@/lib/friendlyError";
 import { FieldError } from "@/components/ui/Field";
@@ -215,26 +216,122 @@ export default function VersionHistoryPanel({
     );
   }
 
+  // Each revision as a history entry: newest first, by day, a dot and the
+  // rev for what it is, who as an avatar. Its five small actions sit in
+  // one menu beside Open (B6, B8).
+  const atOf = (t: DocumentVersion["createdAt"]) => (t instanceof Date ? t.getTime() : t ?? 0);
+  const items: TimelineItem[] = versions.map((v, n): TimelineItem => {
+    const isCurrent = v.id === doc.currentVersionId;
+    const label = v.revisionLabel || "-";
+    const more: MoreItem[] = [];
+    if (!isCurrent && currentVersion && currentVersion.id !== v.id) {
+      more.push({ icon: <GitCompare className="w-4 h-4" />, label: "Compare with current", onClick: () => setDiffBaseVersion(v) });
+    }
+    if (currentUserId && v.id) {
+      more.push({
+        icon: downloadingId === v.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <DownloadIcon className="w-4 h-4" />,
+        label: downloadingId === v.id ? "Downloading…" : "Download (uncontrolled stamp)",
+        onClick: () => { if (downloadingId !== v.id) void handleDownload(v); },
+      });
+    }
+    // Correct label: controllers only; drafts' labels belong to the review flow.
+    if (canRevert && currentUserId && doc.orgId && doc.libraryId && v.reviewState !== "in_review") {
+      more.push({ icon: <Pencil className="w-4 h-4" />, label: "Correct the label", onClick: () => openCorrect(v) });
+    }
+    // Revert: superseded versions only, admin/DocCtrl only.
+    if (canRevert && !isCurrent && onRevertVersion) {
+      more.push({ icon: <RotateCcw className="w-4 h-4" />, label: `Revert to Rev ${label}`, onClick: () => onRevertVersion(v) });
+    }
+    // What the rev is, in words (each with its reason on hover).
+    const words: Array<{ text: string; tip?: string; warn?: boolean }> = [
+      isCurrent ? { text: "Current" }
+        : v.isBranch ? { text: "Branch", tip: "Saved as a branch from an old base. Never made current. See the open items for where it stands.", warn: true }
+        : { text: "Superseded" },
+      ...(v.issueType ? [{ text: v.issueType }] : []),
+      ...(v.changeType ? [{ text: v.changeType }] : []),
+      ...(v.revertedFromVersionId ? [{ text: "Revert" }] : []),
+      ...(v.provenance === "unverified" ? [{ text: "Unverified provenance", tip: "Published with no recorded checkout/download trail and no verified base declaration. Document Control reviews these, like QA receiving inspection.", warn: true }] : []),
+      ...(v.provenance === "session" ? [{ text: "From a checkout", tip: "Published from a checkout: full record of where it came from." }] : []),
+      ...(v.provenance === "external" ? [{ text: `External${v.createdByName ? `: ${v.createdByName}` : ""}`, tip: "Submitted by an outside company through a project intake link. External work enters through review (or a trusted link's own documents). The submitting company is on the record." }] : []),
+      ...(v.sourceFileKey ? [{ text: "CAD source", tip: "The native CAD source file is stored with this revision." }] : []),
+    ];
+    const signoffs = [
+      v.drawnByName ? `Drawn ${v.drawnByName}` : null,
+      v.checkedByName ? `Checked ${v.checkedByName}` : null,
+      v.approvedByName ? `Approved ${v.approvedByName}` : null,
+    ].filter(Boolean).join(" · ");
+    return {
+      id: v.id ?? `rev-${n}`,
+      at: atOf(v.createdAt),
+      kind: `Rev ${label}`,
+      tone: v.provenance === "unverified" ? "bad" : v.isBranch ? "warn" : isCurrent ? "good" : "muted",
+      title: (
+        <span className="text-[var(--color-text-muted)]">
+          {words.map((w, i) => (
+            <React.Fragment key={i}>
+              {i > 0 && " · "}
+              <span title={w.tip} className={w.warn ? "text-[var(--state-overdue-text)]" : i === 0 && isCurrent ? "text-[var(--color-text)]" : undefined}>{w.text}</span>
+            </React.Fragment>
+          ))}
+        </span>
+      ),
+      detail: (
+        <div className="mt-0.5 grid gap-1">
+          {v.changeLog && <span className="text-body text-[var(--color-text)] whitespace-pre-wrap">{v.changeLog}</span>}
+          {signoffs && <span>{signoffs}</span>}
+          {(v.mocReference || v.sourceFileName) && (
+            <span className="flex flex-wrap gap-x-3 gap-y-1">
+              {v.mocReference && <span>MOC <b className="ui-id">{v.mocReference}</b></span>}
+              {v.sourceFileName && <span className="inline-flex items-center gap-1 min-w-0"><FileText aria-hidden className="w-3 h-3 shrink-0" /> <span className="truncate">{v.sourceFileName}</span></span>}
+            </span>
+          )}
+          {(typeof v.size === "number" || v.fileHash) && (
+            <span className="flex items-center gap-3 tabular-nums text-[var(--color-text-faint)]">
+              {typeof v.size === "number" && <span>{(v.size / 1024).toFixed(0)} KB</span>}
+              {v.fileHash && <span title={`SHA-256: ${v.fileHash}`}>SHA-256 {v.fileHash.slice(0, 10)}…</span>}
+            </span>
+          )}
+          <span className="flex items-center gap-1 -ml-2">
+            <button
+              type="button"
+              onClick={() => onOpenVersion(v)}
+              title="Open this revision in the viewer" aria-label={`Open Rev ${v.revisionLabel || ""}`}
+              className="ui-hit inline-flex items-center gap-1.5 h-8 pointer-coarse:h-11 px-2 rounded-md text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+            >
+              <Eye className="w-3.5 h-3.5" /> Open
+            </button>
+            {more.length > 0 && (
+              <MoreMenu items={more} iconOnly label={`More for Rev ${label}`}
+                triggerClass="ui-hit inline-flex items-center justify-center w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]" />
+            )}
+          </span>
+        </div>
+      ),
+      who: v.createdByName ? { uid: v.createdBy || null, name: v.createdByName } : null,
+    };
+  });
+
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between px-1">
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-2">
         <div className="font-display text-reading font-semibold text-[var(--color-heading)] flex items-center gap-2">
-          <span className="ui-icon-tile is-sm" aria-hidden><Layers className="w-4 h-4" /></span> Version history
+          Version history
           <span className="ui-count font-sans" title={`${versions.length} revision${versions.length === 1 ? "" : "s"}`}>{versions.length}</span>
           <HelpTooltip>
-            Every revision of this document, newest first. Each row links to its file, SHA-256 hash,
+            Every revision of this document, newest first, with its file, SHA-256 hash
             and the engineering signoffs (Drawn / Checked / Approved) captured at release.
+            Its menu holds the rest:
             <b className="block mt-1">Compare</b> diffs an older rev against the current one.
-            <b className="block mt-1">Pencil</b> corrects a mislabeled rev after the fact (e.g. uploaded as Rev 0 but the stamp reads 38) - the old and new label are audited.
-            <b className="block mt-1">Revert</b> creates a new revision that copies the older file forward - no history is rewritten.
-            <b className="block mt-1">Backfill older</b> adds a historical revision without changing the current - for when you uploaded the current rev first and need to populate older ones.
+            <b className="block mt-1">Correct the label</b> fixes a mislabeled rev after the fact (e.g. uploaded as Rev 0 but the stamp reads 38). The old and new label are audited.
+            <b className="block mt-1">Revert</b> creates a new revision that copies the older file forward. No history is rewritten.
+            <b className="block mt-1">Backfill older</b> adds a historical revision without changing the current, for when you uploaded the current rev first and need to populate older ones.
           </HelpTooltip>
         </div>
         <div className="flex items-center gap-2">
           {canRevert && currentUserId && doc.orgId && (
             <button
               onClick={() => setBackfillOpen(true)}
-              className="inline-flex items-center gap-1 h-8 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
+              className="inline-flex items-center gap-1 h-8 pointer-coarse:h-11 px-2.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"
               title="Add a historical revision (does not change current)"
             >
               <ArrowUpFromLine className="w-3 h-3" /> Backfill older
@@ -243,182 +340,7 @@ export default function VersionHistoryPanel({
         </div>
       </div>
 
-      <div className="space-y-2">
-        {versions.map((v) => {
-          const isCurrent = v.id === doc.currentVersionId;
-          return (
-            <div
-              key={v.id}
-              className={`relative rounded-md border p-3 overflow-hidden ${
-                isCurrent
-                  ? "border-[color-mix(in_srgb,var(--color-main)_30%,transparent)] bg-[var(--color-accent-soft)]"
-                  : "border-[var(--color-border)] bg-[var(--color-surface)]"
-              }`}
-            >
-              {isCurrent && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--color-main)]" />}
-              {/* Top row: rev label + status badges + actions */}
-              <div className="flex items-start gap-3">
-                <div className={`shrink-0 ui-id text-section leading-6 ${isCurrent ? "!text-[var(--color-main)]" : ""}`}>
-                  <span className="font-sans text-body font-normal text-[var(--color-text-muted)] mr-1">Rev</span>{v.revisionLabel || "-"}
-                </div>
-
-                <div className="flex-1 min-w-0">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {isCurrent ? (
-                      <span className="ui-pill is-solid">Current</span>
-                    ) : v.isBranch ? (
-                      <span
-                        className="ui-pill is-warn"
-                        title="Saved as a branch from an old base. Never made current. See the open items for where it stands."
-                      >
-                        <ShieldAlert className="w-3 h-3" /> Branch
-                      </span>
-                    ) : (
-                      <span className="ui-pill is-muted">Superseded</span>
-                    )}
-                    {v.issueType && (
-                      <span className="ui-tag !h-6 !font-sans !text-body">{v.issueType}</span>
-                    )}
-                    {v.changeType && (
-                      <span className="ui-tag !h-6 !font-sans !text-body">{v.changeType}</span>
-                    )}
-                    {v.revertedFromVersionId && (
-                      <span className="ui-pill is-muted"><RotateCcw className="w-3 h-3" /> Revert</span>
-                    )}
-                    {v.provenance === "unverified" && (
-                      <span
-                        className="ui-pill is-bad"
-                        title="Published with no recorded checkout/download trail and no verified base declaration. Document Control reviews these, like QA receiving inspection."
-                      >
-                        <ShieldAlert className="w-3 h-3" /> Unverified provenance
-                      </span>
-                    )}
-                    {v.provenance === "session" && (
-                      <span
-                        className="ui-pill is-good"
-                        title="Published from a checkout: full record of where it came from."
-                      >
-                        From a checkout
-                      </span>
-                    )}
-                    {v.provenance === "external" && (
-                      <span
-                        className="ui-pill"
-                        title="Submitted by an outside company through a project intake link. External work enters through review (or a trusted link's own documents). The submitting company is on the record."
-                      >
-                        External{v.createdByName ? `: ${v.createdByName}` : ""}
-                      </span>
-                    )}
-                    {v.sourceFileKey && (
-                      <span
-                        className="ui-tag !h-6 !font-sans !text-body"
-                        title="The native CAD source file is stored with this revision."
-                      >
-                        <FileText className="w-3 h-3" /> CAD source
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="mt-1 text-body text-[var(--color-text-muted)] flex flex-wrap items-center gap-x-2 gap-y-0.5 min-w-0">
-                    <span className="inline-flex items-center gap-1 whitespace-nowrap"><Clock className="w-3 h-3" />{formatDate(v.createdAt)}</span>
-                    {v.createdByName && <span className="min-w-0 truncate">by <span className="font-medium text-[var(--color-text)]">{v.createdByName}</span></span>}
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1 shrink-0">
-                  <button
-                    onClick={() => onOpenVersion(v)}
-                    title="Open this revision in the viewer" aria-label={`Open Rev ${v.revisionLabel || ""}`}
-                    className="inline-flex items-center justify-center pointer-coarse:size-11 p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-main)] hover:bg-[var(--color-surface)]"
-                  >
-                    <Eye className="w-3.5 h-3.5" />
-                  </button>
-                  {!isCurrent && currentVersion && currentVersion.id !== v.id && (
-                    <button
-                      onClick={() => setDiffBaseVersion(v)}
-                      title={`Compare Rev ${v.revisionLabel} with current revision`} aria-label={`Compare Rev ${v.revisionLabel} with current`}
-                      className="inline-flex items-center justify-center pointer-coarse:size-11 p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-main)] hover:bg-[var(--color-surface)]"
-                    >
-                      <GitCompare className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                  <button
-                    onClick={() => void handleDownload(v)}
-                    disabled={downloadingId === v.id || !currentUserId}
-                    title="Download this revision (uncontrolled stamp)" aria-label={`Download Rev ${v.revisionLabel || ""}`}
-                    className="inline-flex items-center justify-center pointer-coarse:size-11 p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-main)] hover:bg-[var(--color-surface)] disabled:opacity-40"
-                  >
-                    {downloadingId === v.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <DownloadIcon className="w-3.5 h-3.5" />}
-                  </button>
-                  {/* Correct label — controllers only; drafts' labels belong to the review flow */}
-                  {canRevert && currentUserId && doc.orgId && doc.libraryId && v.reviewState !== "in_review" && (
-                    <button
-                      onClick={() => openCorrect(v)}
-                      title={`Correct the revision label (currently "${v.revisionLabel || "-"}"): audited`} aria-label={`Correct the label of Rev ${v.revisionLabel || ""}`}
-                      className="inline-flex items-center justify-center pointer-coarse:size-11 p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-main)] hover:bg-[var(--color-surface)]"
-                    >
-                      <Pencil className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                  {/* Revert button — superseded versions only, admin/DocCtrl only */}
-                  {canRevert && !isCurrent && onRevertVersion && (
-                    <button
-                      onClick={() => onRevertVersion(v)}
-                      title="Revert document to this revision" aria-label={`Revert to Rev ${v.revisionLabel || ""}`}
-                      className="inline-flex items-center justify-center pointer-coarse:size-11 p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-main)] hover:bg-[var(--color-surface)]"
-                    >
-                      <RotateCcw className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* Narrative */}
-              {v.changeLog && (
-                <div className="mt-2 pl-1 text-body text-[var(--color-text)] flex items-start gap-1.5">
-                  <MessageSquare className="w-3 h-3 mt-0.5 shrink-0 text-[var(--color-text-faint)]" />
-                  <span className="whitespace-pre-wrap">{v.changeLog}</span>
-                </div>
-              )}
-
-              {/* Signoff chain */}
-              {(v.drawnByName || v.checkedByName || v.approvedByName) && (
-                <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 pl-1">
-                  {v.drawnByName && <SignoffBit icon={<User className="w-3 h-3" />} label="Drawn" name={v.drawnByName} />}
-                  {v.checkedByName && <SignoffBit icon={<CheckSquare className="w-3 h-3" />} label="Checked" name={v.checkedByName} />}
-                  {v.approvedByName && <SignoffBit icon={<Stamp className="w-3 h-3" />} label="Approved" name={v.approvedByName} />}
-                </div>
-              )}
-
-              {/* Cross-references */}
-              {(v.mocReference || v.sourceFileName) && (
-                <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 pl-1 text-body text-[var(--color-text-muted)]">
-                  {v.mocReference && (
-                    <span className="inline-flex items-center gap-1">
-                      <LinkIcon className="w-3 h-3" /> MOC <b className="ui-id">{v.mocReference}</b>
-                    </span>
-                  )}
-                  {v.sourceFileName && (
-                    <span className="inline-flex items-center gap-1">
-                      <FileText className="w-3 h-3" /> <b className="text-[var(--color-text)] font-medium">{v.sourceFileName}</b>
-                    </span>
-                  )}
-                </div>
-              )}
-
-              {/* Footer: size + hash */}
-              <div className="mt-2 pl-1 flex items-center gap-3 text-body text-[var(--color-text-faint)] font-display tabular-nums">
-                {typeof v.size === "number" && <span>{(v.size / 1024).toFixed(0)} KB</span>}
-                {v.fileHash && (
-                  <span title={`SHA-256: ${v.fileHash}`} className="inline-flex items-center gap-1">
-                    <Hash className="w-3 h-3" /> {v.fileHash.slice(0, 10)}…
-                  </span>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      <Timeline items={items} />
 
       {diffBaseVersion && currentVersion && (
         <CompareRevisionsModal
@@ -509,24 +431,4 @@ export default function VersionHistoryPanel({
       {archivedModal}
     </div>
   );
-}
-
-function SignoffBit({ icon, label, name }: { icon: React.ReactNode; label: string; name: string }) {
-  return (
-    <span className="inline-flex items-center gap-1 text-body text-[var(--color-text-muted)]">
-      <span className="text-[var(--color-text-faint)]">{icon}</span>
-      <span className="font-medium text-body">{label}</span>
-      <span className="text-[var(--color-text)] font-medium">{name}</span>
-    </span>
-  );
-}
-
-function formatDate(ts: unknown): string {
-  if (!ts) return "";
-  try {
-    const d = new Date(ts as string);
-    if (Number.isNaN(d.getTime())) return String(ts);
-    const sameYear = d.getFullYear() === new Date().getFullYear();
-    return d.toLocaleString("en-US", { month: "short", day: "numeric", ...(sameYear ? {} : { year: "numeric" }), hour: "numeric", minute: "2-digit" });
-  } catch { return String(ts); }
 }

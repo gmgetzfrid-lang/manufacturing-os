@@ -180,11 +180,13 @@ export default function CheckoutsPage() {
     : rows.length === 0 ? "Nothing checked out."
     : `${rows.length.toLocaleString()} checked out.`;
   const ready = !loading && !error && rows.length > 0;
-  // The numbers that back it up, in ruled cells.
+  // The numbers that back it up, all small: the title is the one big thing
+  // (B1), and the late ones have their own box right below. A zero is not
+  // a cell (B7).
   const answerFacts = ready ? [
-    { label: "Past their release date", value: stale.toLocaleString(), tone: stale > 0 ? "bad" as const : undefined, hero: stale > 0 },
-    { label: "By you", value: mine.toLocaleString() },
-    { label: "Overlapping", value: overlaps.length.toLocaleString(), tone: overlaps.length > 0 ? "warn" as const : undefined },
+    ...(stale > 0 ? [{ label: "Past their release date", value: stale.toLocaleString(), tone: "bad" as const }] : []),
+    ...(mine > 0 ? [{ label: "By you", value: mine.toLocaleString() }] : []),
+    ...(overlaps.length > 0 ? [{ label: "Overlapping", value: overlaps.length.toLocaleString(), tone: "warn" as const }] : []),
   ] : undefined;
 
   return (
@@ -204,7 +206,7 @@ export default function CheckoutsPage() {
           </>
         }
         facts={answerFacts}
-        factsHero={stale > 0 ? "auto" : "none"}
+        factsHero="none"
         tools={
           <div className={bandSeg} role="group" aria-label="Group the list">
             <button type="button" onClick={() => setView("grouped")} aria-pressed={view === "grouped"} className={bandSegItem(view === "grouped")}>
@@ -428,7 +430,7 @@ function CheckoutRow({ row, showProject }: { row: CheckoutWithContext; showProje
       </td>
       <td className="px-4 py-3 hidden lg:table-cell">
         {row.libraryName
-          ? <Link href={`/documents/${row.libraryId}`} className="ui-tag !font-sans" title={`Open ${row.libraryName}`}>{row.libraryName}</Link>
+          ? <Link href={`/documents/${row.libraryId}`} className="text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2" title={`Open ${row.libraryName}`}>{row.libraryName}</Link>
           : <span className="text-[var(--color-text-muted)]">-</span>}
       </td>
       <td className="px-4 py-3 font-medium text-[var(--color-text)] max-sm:hidden whitespace-nowrap">{row.userName}</td>

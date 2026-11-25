@@ -17,7 +17,8 @@ import { Skeleton, SkeletonRows } from "@/components/ui/Skeleton";
 import ErrorNote from "@/components/ui/ErrorNote";
 import MoreMenu from "@/components/ui/MoreMenu";
 import { friendlyError } from "@/lib/friendlyError";
-import { fmtWhen, relTime } from "@/components/requests/RequestBits";
+import { relTime } from "@/components/requests/RequestBits";
+import Timeline, { type TimelineItem } from "@/components/ui/Timeline";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import TemplateEditor from "@/components/templates/TemplateEditor";
 import GenerateModal from "@/components/templates/GenerateModal";
@@ -79,11 +80,14 @@ export default function OutputTemplatesPage() {
       : templates.length === 0 ? "No output templates yet."
         : needFile > 0 ? `${needFile} ${needFile === 1 ? "template needs its" : "templates need their"} file.`
           : `${templates.length} ${templates.length === 1 ? "template" : "templates"} ready.`;
-  const facts: HeroFact[] | undefined = !loading && templates.length > 0 ? [
-    { label: "Templates", value: templates.length },
-    { label: "Need a file", value: needFile, tone: needFile > 0 ? "warn" : undefined },
-    { label: "Documents in recent runs", value: madeDocs },
-  ] : undefined;
+  // The title already says how many are ready or need a file: the facts add
+  // only what it doesn't (the total beside a "need a file" title, and what
+  // the recent runs made), and a zero stays out.
+  const factList: HeroFact[] = !loading && templates.length > 0 ? [
+    ...(needFile > 0 ? [{ label: "Templates", value: templates.length }] : []),
+    ...(madeDocs > 0 ? [{ label: "Documents in recent runs", value: madeDocs }] : []),
+  ] : [];
+  const facts: HeroFact[] | undefined = factList.length > 0 ? factList : undefined;
   const last = generations[0];
 
   return (
@@ -185,44 +189,19 @@ export default function OutputTemplatesPage() {
       )}
 
       {generations.length > 0 && (
+        // A history: newest first, by day, who as an avatar.
         <section aria-labelledby="ot-runs">
           <h2 id="ot-runs" className="font-display text-section leading-tight font-semibold text-[var(--color-text)] mb-3">Recent runs <span className="ui-count">{generations.length}</span></h2>
-          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
-            <table className="w-full text-body">
-              <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left max-md:hidden">
-                <tr>
-                  <th className="font-medium px-4 h-10">Template</th>
-                  <th className="font-medium px-4 text-right w-28">Documents</th>
-                  <th className="font-medium px-4 hidden lg:table-cell">From</th>
-                  <th className="font-medium px-4 hidden lg:table-cell">By</th>
-                  <th className="font-medium px-4 w-28">Filed</th>
-                  <th className="font-medium px-4 w-44">When</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--color-border)]">
-              {generations.map((g) => (
-                <tr key={g.id} className="max-md:block max-md:px-4 max-md:py-2.5">
-                  <td className="md:px-4 md:py-2.5 font-medium text-[var(--color-text)] max-md:block">
-                    {g.templateName ?? "Template"}
-                    <span className="md:hidden block font-normal text-body text-[var(--color-text-muted)]">
-                      {g.documentCount} document{g.documentCount === 1 ? "" : "s"}{g.filedCount > 0 ? `, ${g.filedCount} filed` : ""}, {fmtWhen(g.createdAt)}{g.createdBy ? ` by ${g.createdBy}` : ""}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5 text-right tabular-nums max-md:hidden">{g.documentCount}</td>
-                  <td className="px-4 py-2.5 text-[var(--color-text-muted)] hidden lg:table-cell truncate max-w-0">{g.sourceName ?? <span className="text-[var(--color-text-faint)]">None</span>}</td>
-                  <td className="px-4 py-2.5 hidden lg:table-cell">{g.createdBy ?? <span className="text-[var(--color-text-faint)]">Unknown</span>}</td>
-                  <td className="px-4 py-2.5 max-md:hidden">
-                    {g.filedCount > 0
-                      ? <span className="ui-pill is-good">{g.filedCount} filed</span>
-                      : <span className="text-[var(--color-text-faint)]">Not filed</span>}
-                  </td>
-                  <td className="px-4 py-2.5 text-[var(--color-text-muted)] whitespace-nowrap tabular-nums max-md:hidden">
-                    {fmtWhen(g.createdAt)}
-                  </td>
-                </tr>
-              ))}
-              </tbody>
-            </table>
+          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 sm:px-5 py-4">
+            <Timeline items={generations.map((g): TimelineItem => ({
+              id: g.id,
+              at: g.createdAt,
+              kind: "Made",
+              tone: g.filedCount > 0 ? "good" : "muted",
+              title: <>{g.documentCount} document{g.documentCount === 1 ? "" : "s"} from {g.templateName ?? "a template"}</>,
+              detail: [g.sourceName ? `From ${g.sourceName}` : null, g.filedCount > 0 ? `${g.filedCount} filed` : "Not filed"].filter(Boolean).join(" · "),
+              who: g.createdBy ? { name: g.createdBy } : null,
+            }))} />
           </div>
         </section>
       )}

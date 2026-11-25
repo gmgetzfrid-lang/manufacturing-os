@@ -37,7 +37,9 @@ interface Facts {
 
 type Filter = Record<string, unknown>;
 
-interface StageCheck { label: string; ok: boolean }
+/** `none`: the check is a plain zero (nothing there yet), so a stage that
+ *  isn't next can say it once in words instead of a row of zeros. */
+interface StageCheck { label: string; ok: boolean; none?: boolean }
 interface Stage {
   key: string; title: string; blurb: string;
   icon: typeof BookMarked;
@@ -119,8 +121,8 @@ export default function SetupPage() {
         blurb: "Units, equipment prefixes, and your drawing-number format live in the Site Codebook, imported from your own documents or entered by hand. Everything downstream decodes through it.",
         icon: BookMarked,
         checks: [
-          { label: `${f.units} operating unit${f.units === 1 ? "" : "s"} defined`, ok: f.units > 0 },
-          { label: `${f.equipTypes} equipment type${f.equipTypes === 1 ? "" : "s"} with prefixes`, ok: f.equipTypes > 0 },
+          { label: `${f.units} operating unit${f.units === 1 ? "" : "s"} defined`, ok: f.units > 0, none: f.units === 0 },
+          { label: `${f.equipTypes} equipment type${f.equipTypes === 1 ? "" : "s"} with prefixes`, ok: f.equipTypes > 0, none: f.equipTypes === 0 },
         ],
         href: "/admin/codebook", cta: "Open the Site Codebook",
       },
@@ -129,9 +131,9 @@ export default function SetupPage() {
         blurb: "Every physical thing gets one canonical record. The codebook auto-categorizes tags it recognizes; what it can't decode is reported so you can teach it the prefix.",
         icon: Tag,
         checks: [
-          { label: `${f.assets} asset${f.assets === 1 ? "" : "s"} registered`, ok: f.assets > 0 },
-          { label: f.assets === 0 ? "Nothing to categorize yet" : f.uncategorized === 0 ? "All categorized" : `${f.uncategorized} uncategorized (auto-categorize in Operating areas)`, ok: f.assets > 0 && f.uncategorized === 0 },
-          { label: f.assets === 0 ? "Nothing to file to a unit yet" : f.unitless === 0 ? "All filed to a unit" : `${f.unitless} not filed to a unit`, ok: f.assets > 0 && f.unitless === 0 },
+          { label: `${f.assets} asset${f.assets === 1 ? "" : "s"} registered`, ok: f.assets > 0, none: f.assets === 0 },
+          { label: f.assets === 0 ? "Nothing to categorize yet" : f.uncategorized === 0 ? "All categorized" : `${f.uncategorized} uncategorized (auto-categorize in Operating areas)`, ok: f.assets > 0 && f.uncategorized === 0, none: f.assets === 0 },
+          { label: f.assets === 0 ? "Nothing to file to a unit yet" : f.unitless === 0 ? "All filed to a unit" : `${f.unitless} not filed to a unit`, ok: f.assets > 0 && f.unitless === 0, none: f.assets === 0 },
         ],
         href: "/admin/assets", cta: "Open Operating areas",
       },
@@ -140,8 +142,8 @@ export default function SetupPage() {
         blurb: "Libraries, revisions, locks, distribution. The title-block ingest wizard reads numbers and titles off the drawings themselves during mass transition.",
         icon: FileStack,
         checks: [
-          { label: `${f.libraries} librar${f.libraries === 1 ? "y" : "ies"}, ${f.documents} document${f.documents === 1 ? "" : "s"}`, ok: f.documents > 0 },
-          { label: `${f.numbered} carry document numbers`, ok: f.numbered > 0 },
+          { label: `${f.libraries} librar${f.libraries === 1 ? "y" : "ies"}, ${f.documents} document${f.documents === 1 ? "" : "s"}`, ok: f.documents > 0, none: f.libraries === 0 && f.documents === 0 },
+          { label: `${f.numbered} carry document numbers`, ok: f.numbered > 0, none: f.numbered === 0 },
         ],
         href: "/documents", cta: "Open Documents",
       },
@@ -150,8 +152,8 @@ export default function SetupPage() {
         blurb: "Link documents to the equipment they govern. The Equipment sweep reads tags off each library, and every link becomes a graph edge and an answer source.",
         icon: Link2,
         checks: [
-          { label: `${f.docAssetLinks} document-to-equipment link${f.docAssetLinks === 1 ? "" : "s"}`, ok: f.docAssetLinks > 0 },
-          { label: `${f.mentions} text mention${f.mentions === 1 ? "" : "s"} indexed`, ok: f.mentions > 0 },
+          { label: `${f.docAssetLinks} document-to-equipment link${f.docAssetLinks === 1 ? "" : "s"}`, ok: f.docAssetLinks > 0, none: f.docAssetLinks === 0 },
+          { label: `${f.mentions} text mention${f.mentions === 1 ? "" : "s"} indexed`, ok: f.mentions > 0, none: f.mentions === 0 },
         ],
         href: "/documents", cta: "Run an Equipment sweep",
       },
@@ -160,8 +162,8 @@ export default function SetupPage() {
         blurb: "Knowledge libraries make documents askable. Link your document-control libraries as sources so answers cite the real controlled files, on your own AI key.",
         icon: Bot,
         checks: [
-          { label: `${f.kdocs} document${f.kdocs === 1 ? "" : "s"} indexed (${f.mirrored} mirroring controlled files)`, ok: f.kdocs > 0 },
-          { label: f.hasAiKey ? "Your AI key is set" : "Add your AI key in AI settings", ok: f.hasAiKey },
+          { label: `${f.kdocs} document${f.kdocs === 1 ? "" : "s"} indexed (${f.mirrored} mirroring controlled files)`, ok: f.kdocs > 0, none: f.kdocs === 0 },
+          { label: f.hasAiKey ? "Your AI key is set" : "Add your AI key in AI settings", ok: f.hasAiKey, none: !f.hasAiKey },
         ],
         href: "/knowledge", cta: "Open Knowledge",
         extraHref: "/intelligence/setup", extraCta: "AI settings",
@@ -171,8 +173,8 @@ export default function SetupPage() {
         blurb: "Connection Skills discover links; Reasoning Skills shape answers; the review queue keeps a human on every uncertain edge.",
         icon: Waypoints,
         checks: [
-          { label: `${f.skillsEnabled} connection skill${f.skillsEnabled === 1 ? "" : "s"} + ${f.reasoningSkills} reasoning skill${f.reasoningSkills === 1 ? "" : "s"} enabled`, ok: f.skillsEnabled > 0 },
-          { label: `${f.curatedLinks} curated link${f.curatedLinks === 1 ? "" : "s"}${f.pendingProposals > 0 ? `, ${f.pendingProposals} proposal${f.pendingProposals === 1 ? "" : "s"} awaiting review` : ""}`, ok: f.curatedLinks > 0 },
+          { label: `${f.skillsEnabled} connection skill${f.skillsEnabled === 1 ? "" : "s"} + ${f.reasoningSkills} reasoning skill${f.reasoningSkills === 1 ? "" : "s"} enabled`, ok: f.skillsEnabled > 0, none: f.skillsEnabled === 0 && f.reasoningSkills === 0 },
+          { label: `${f.curatedLinks} curated link${f.curatedLinks === 1 ? "" : "s"}${f.pendingProposals > 0 ? `, ${f.pendingProposals} proposal${f.pendingProposals === 1 ? "" : "s"} awaiting review` : ""}`, ok: f.curatedLinks > 0, none: f.curatedLinks === 0 && f.pendingProposals === 0 },
         ],
         href: "/intelligence/skills", cta: "Open the Skill library",
         extraHref: "/admin/proposed-links", extraCta: "Review queue",
@@ -182,8 +184,8 @@ export default function SetupPage() {
         blurb: "Flows turn the graph into the plant: draw them on the Process lens, or point the reader at a PFD and confirm what it finds. Plot plans add the spatial picture.",
         icon: Compass,
         checks: [
-          { label: `${f.flows} confirmed flow${f.flows === 1 ? "" : "s"}`, ok: f.flows > 0 },
-          { label: `${f.plotPlans} plot plan${f.plotPlans === 1 ? "" : "s"}`, ok: f.plotPlans > 0 },
+          { label: `${f.flows} confirmed flow${f.flows === 1 ? "" : "s"}`, ok: f.flows > 0, none: f.flows === 0 },
+          { label: `${f.plotPlans} plot plan${f.plotPlans === 1 ? "" : "s"}`, ok: f.plotPlans > 0, none: f.plotPlans === 0 },
         ],
         href: "/graph", cta: "Open the graph",
         extraHref: "/plot-plans", extraCta: "Plot plans",
@@ -202,12 +204,8 @@ export default function SetupPage() {
         kicker="Facility setup"
         title={facts === null ? "Setup navigator" : !next ? "Every stage reads healthy." : `${doneCount} of ${stages.length} stages done.`}
         sub={facts === null ? "Reading where your workspace is…" : next ? `Next: ${next.title}. Counts are live, so this picks up where you left off.` : "Nothing is waiting on you."}
-        // The title says the count: the facts stay small.
-        facts={facts === null ? undefined : [
-          { label: "Done", value: doneCount, tone: doneCount === stages.length ? "good" : undefined },
-          { label: "To go", value: stages.length - doneCount },
-        ]}
-        factsHero="none"
+        // The title says the count and the path shows it: no facts that
+        // repeat them.
         primary={next ? <Link href={next.href} className={heroPrimary}>{next.cta} <ArrowRight className="w-4 h-4" /></Link> : undefined}
       >
         {facts !== null && (
@@ -235,7 +233,8 @@ export default function SetupPage() {
                 <th className="font-medium px-4 h-10 text-right">Go to</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[var(--color-border)]">
+            {/* Seven stages: space between them, no line under each. */}
+            <tbody>
               {stages.map((s, i) => {
                 const done = s.checks.every((c) => c.ok);
                 const active = i === firstIncomplete;
@@ -258,6 +257,11 @@ export default function SetupPage() {
                       {done ? <Pill tone="good">Done</Pill> : active ? <Pill tone="brand">Next</Pill> : <Pill>To do</Pill>}
                     </td>
                     <td className="md:px-4 md:py-3 align-top">
+                      {/* A later stage with nothing there yet says so once,
+                          not as a row of zeros. */}
+                      {!active && !done && s.checks.every((c) => c.none) ? (
+                        <p className="text-body text-[var(--color-text-muted)]">Nothing yet.</p>
+                      ) : (
                       <ul className="space-y-0.5">
                         {s.checks.map((c) => (
                           <li key={c.label} className={`flex items-start gap-2 text-body ${c.ok ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>
@@ -268,6 +272,7 @@ export default function SetupPage() {
                           </li>
                         ))}
                       </ul>
+                      )}
                     </td>
                     <td className="md:px-4 md:py-3 align-top md:text-right">
                       <div className="flex flex-wrap md:flex-col md:items-end gap-x-4 gap-y-0.5 text-body">

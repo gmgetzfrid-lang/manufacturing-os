@@ -162,7 +162,7 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
             <span className="absolute inset-y-0 left-0 rounded-full bg-[var(--color-main)]" style={{ width: `${Math.min(100, taskPct)}%` }} />
             {taskPlan != null && <span className="absolute -top-[3px] w-0.5 h-3 bg-[var(--state-overdue)]" style={{ left: `calc(${Math.min(100, taskPlan)}% - 1px)` }} />}
           </span>
-          {Math.abs(taskHours) >= 0.1 && <b className={`font-display tabular-nums whitespace-nowrap ${taskHours < 0 ? "text-[var(--state-overdue-text)]" : "text-[var(--state-released-text)]"}`}>{taskHours > 0 ? "+" : "−"}{Math.abs(taskHours)} h</b>}
+          {Math.abs(taskHours) >= 0.1 && <b className={`font-display tabular-nums whitespace-nowrap ${taskHours < 0 ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]"}`}>{taskHours > 0 ? "+" : "−"}{Math.abs(taskHours)} h</b>}
         </div>
       )}
     </div>
@@ -216,8 +216,9 @@ export default function CalendarQuickView({ task, onDay, others, dayKey, band, d
             {info.why && h < 0 && <span className="block text-body italic font-medium text-[var(--state-held-text)] break-words">Why behind: {info.why.body}</span>}</>}
           </span>
           <span className="shrink-0 flex flex-col items-end gap-0.5">
-            <span className={`rounded-full px-2 py-px font-display text-body font-semibold tabular-nums ${pct >= 100 ? "bg-[color-mix(in_srgb,var(--state-released)_14%,transparent)] text-[var(--state-released-text)]" : "bg-[var(--color-surface-2)] text-[var(--color-text)] ring-1 ring-inset ring-[var(--color-border)]"}`}>{pct}%</span>
-            {Math.abs(h) >= 0.1 && m.status !== "completed" && <span className={`font-display tabular-nums text-body font-semibold ${h < 0 ? "text-[var(--state-overdue-text)]" : "text-[var(--state-released-text)]"}`}>{h > 0 ? "+" : "−"}{Math.abs(h)} h</span>}
+            {/* Plain figures in a list (no filled pill); colour only on hours behind. */}
+            <span className={`font-display text-body font-semibold tabular-nums ${pct >= 100 ? "text-[var(--color-text-muted)]" : "text-[var(--color-text)]"}`}>{pct}%</span>
+            {Math.abs(h) >= 0.1 && m.status !== "completed" && <span className={`font-display tabular-nums text-body font-semibold ${h < 0 ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]"}`}>{h > 0 ? "+" : "−"}{Math.abs(h)} h</span>}
           </span>
           {/* A step opens to its card: start, %, finish, history. */}
           <ChevronRight className={`w-3.5 h-3.5 mt-1 shrink-0 text-[var(--color-text-faint)] transition-transform ${isOpen ? "rotate-90" : ""}`} aria-hidden />

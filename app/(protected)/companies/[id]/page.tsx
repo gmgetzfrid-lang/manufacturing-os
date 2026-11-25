@@ -28,7 +28,7 @@ import {
   type Company, type CompanyEvent, type CompanyProfileData,
 } from "@/lib/companies";
 import { scoreBand } from "@/lib/companyScore";
-import { ScoreBadge, ScoreFigure } from "../score";
+import { ScoreFigure } from "../score";
 import { QUALITY_MANUAL_RUBRIC, type RubricFinding } from "@/lib/checklistEngine";
 import { CO_REASON_LABEL, type CoReason } from "@/lib/changeOrders";
 import { fmtMoney } from "@/lib/costs";
@@ -189,7 +189,6 @@ export default function CompanyProfilePage() {
 
       <Card pad={false} className="overflow-hidden" label={
         <span className="inline-flex items-center gap-2">Score
-          {sc && <span className="font-sans"><ScoreBadge score={sc.composite} size="sm" /></span>}
           <HelpTooltip>Scored from recorded work only, never from typed-in ratings. A part with no evidence stays unrated and doesn&apos;t count.</HelpTooltip>
         </span>
       }>
@@ -207,11 +206,12 @@ export default function CompanyProfilePage() {
                 <th className="font-medium px-4 h-10 w-full">How it&apos;s worked out</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[var(--color-border)]">
+            {/* Five parts: space between the rows, no line under each. */}
+            <tbody>
               {(sc?.dimensions ?? []).map((d) => (
                 <tr key={d.key}>
                   <td className="px-4 py-2.5 font-medium text-[var(--color-text)] whitespace-nowrap">{d.label}</td>
-                  <td className="px-4 py-2.5 text-right">{d.score != null ? <ScoreFigure score={d.score} className="text-section" /> : <Faint>None</Faint>}</td>
+                  <td className="px-4 py-2.5 text-right">{d.score != null ? <ScoreFigure score={d.score} className="text-reading" /> : <Faint>None</Faint>}</td>
                   <td className="px-4 py-2.5 hidden sm:table-cell">
                     {d.score != null && (
                       <span className="block h-1.5 w-32 rounded-full bg-[var(--color-surface-2)] overflow-hidden" aria-hidden>
@@ -325,7 +325,7 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
       action={company.qualityManualReviewedAt ? <span className="text-body text-[var(--color-text-muted)]">Confirmed {fmtDay(company.qualityManualReviewedAt)}</span> : undefined}>
       <div className="px-4 py-3 flex items-baseline gap-2">
         {company.qualityManualScore != null ? (
-          <><span className="text-section"><ScoreFigure score={company.qualityManualScore} />%</span><span className="text-reading text-[var(--color-text-muted)]">covered</span></>
+          <><span className="text-reading font-semibold"><ScoreFigure score={company.qualityManualScore} />%</span><span className="text-reading text-[var(--color-text-muted)]">covered</span></>
         ) : (
           <span className="text-reading text-[var(--color-text-muted)]">Not checked yet.</span>
         )}
@@ -336,7 +336,7 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
           <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left">
             <tr><th className={TH}>Gap</th><th className={`${TH} w-full`}>Finding</th></tr>
           </thead>
-          <tbody className="divide-y divide-[var(--color-border)]">
+          <tbody>
             {company.qualityManualGaps!.map((g, i) => (
               <tr key={i}>
                 <td className="px-4 py-2.5 align-top whitespace-nowrap"><StatusTag tone="warn">{areaLabel.get(g.area) ?? g.area}</StatusTag></td>
@@ -371,10 +371,10 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
                 </Button>
               </div>
               {results.length > 0 && !doc && (
-                <ul className="rounded-md border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden">
+                <ul>
                   {results.map((d) => (
                     <li key={d.id}>
-                      <button type="button" onClick={() => setDoc(d)} className="w-full px-3 h-10 pointer-coarse:h-11 text-left text-reading text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2">
+                      <button type="button" onClick={() => setDoc(d)} className="w-full px-3 h-10 pointer-coarse:h-11 rounded-lg text-left text-reading text-[var(--color-text)] hover:bg-[var(--color-surface-2)] flex items-center gap-2">
                         <FileText className="w-4 h-4 text-[var(--color-text-faint)]" /> {d.label}
                       </button>
                     </li>
@@ -394,8 +394,8 @@ function QualityManualPanel({ orgId, company, canManage, actorId, onChanged, set
                   </Button>
                 </span>
               </div>
-              <table className="w-full text-body rounded-md border border-[var(--color-border)]">
-                <tbody className="divide-y divide-[var(--color-border)]">
+              <table className="w-full text-body">
+                <tbody>
                   {proposal.findings.map((f) => (
                     <tr key={f.area}>
                       <td className="px-3 py-2 align-top whitespace-nowrap"><StatusTag tone={f.covered ? "good" : "bad"}>{areaLabel.get(f.area) ?? f.area}</StatusTag></td>

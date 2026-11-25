@@ -158,7 +158,7 @@ export default function SlideTemplateSetup({ bare = false }: { bare?: boolean } 
     <>
       <div className="flex flex-col sm:flex-row gap-5">
         <div className="min-w-0 flex-1">
-          <div className="text-section font-semibold text-[var(--color-text)] break-words">{ref.name}</div>
+          <div className="text-reading font-semibold text-[var(--color-text)] break-words">{ref.name}</div>
           <div className="mt-0.5 text-body text-[var(--color-text-muted)]">{ref.layouts.length} layouts · {mb(ref.size)} · Saved {day(ref.savedAt)}</div>
           <div className="mt-3 flex items-center gap-1.5" aria-label="Template colors">
             {ref.colors.swatches.map((c) => (
@@ -192,14 +192,16 @@ export default function SlideTemplateSetup({ bare = false }: { bare?: boolean } 
         )}
       </div>
 
-      <div className="mt-5 rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
-        <div className="px-4 py-2.5 text-body font-medium text-[var(--color-text-muted)]">Which layout each slide goes on</div>
+      {/* Inside the card: a labeled group with space between its rows, not
+          a second box with a line under each row. */}
+      <div className="mt-6">
+        <div className="mb-2 text-body font-medium text-[var(--color-text-muted)]">Which layout each slide goes on</div>
         {roleRows.map((role) => {
           const auto = ref.roles[role];
           const value = ref.pick?.[role] ?? auto ?? "none";
           const optional = role === "agenda" || role === "section";
           return (
-            <div key={role} className="px-4 py-2.5 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+            <div key={role} className="py-1.5 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
               <label htmlFor={`lay-${role}`} className="sm:w-48 shrink-0 text-reading font-medium text-[var(--color-text)]">{ROLE_WORD[role]}</label>
               <select id={`lay-${role}`} value={value} disabled={!canEdit || !!busy} onChange={(e) => void pickLayout(role, e.target.value)}
                 className={`${fieldBox} h-10 pointer-coarse:h-11 text-reading w-full sm:w-72`}>

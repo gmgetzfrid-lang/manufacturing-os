@@ -1265,7 +1265,7 @@ function Chip({
                 <span title="Critical-path work on this shift: it sets the finish date" className="shrink-0 rounded px-1 text-caption font-medium leading-[14px] bg-[color-mix(in_srgb,var(--state-overdue)_14%,transparent)] text-[var(--state-overdue-text)]">Crit</span>
               )}
               {aheadOf && (
-                <span title={`Worked ahead of plan: planned to start ${aheadOf}`} className="shrink-0 rounded px-1 text-caption font-medium leading-[14px] bg-transparent text-[var(--state-released-text)]">Ahead</span>
+                <span title={`Worked ahead of plan: planned to start ${aheadOf}`} className="shrink-0 rounded px-1 text-caption font-medium leading-[14px] bg-transparent text-[var(--color-text-muted)]">Ahead</span>
               )}
               {crew === "both" && <ShiftMark work="both" />}
               {crew === "mixed" && (

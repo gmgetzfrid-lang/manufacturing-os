@@ -45,6 +45,7 @@ import { logAuditAction } from '@/lib/audit';
 // of which the request-detail page needs until the user actually opens markup.
 const AdvancedRedlineEditor = dynamic(() => import('@/components/drafting/AdvancedRedlineEditor'), { ssr: false });
 import UserAvatar from '@/components/ui/UserAvatar';
+import Timeline, { type TimelineItem } from '@/components/ui/Timeline';
 import HelpTooltip from '@/components/ui/HelpTooltip';
 import {
   CheckCircle2,
@@ -1569,20 +1570,20 @@ export default function TicketDetailView() {
     </label>
   ) : null;
 
-  // The history, newest first, in days.
-  const historyDays = (() => {
-    const rows = [...(ticket.history ?? [])].reverse();
-    const out: Array<{ day: string; items: typeof rows }> = [];
-    for (const ev of rows) {
-      const d = toDate(ev.date);
-      const today = new Date(); today.setHours(0, 0, 0, 0);
-      const diff = Math.round((today.getTime() - new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()) / 86_400_000);
-      const day = diff === 0 ? 'Today' : diff === 1 ? 'Yesterday' : fmtDay(d);
-      const last = out[out.length - 1];
-      if (last && last.day === day) last.items.push(ev); else out.push({ day, items: [ev] });
-    }
-    return out;
-  })();
+  // The history as a timeline: newest first, by day, who as an avatar, the
+  // reason they gave under it (B8).
+  const historyItems: TimelineItem[] = (ticket.history ?? []).map((event, idx) => {
+    const note = event.details && !/^ticket created via portal$/i.test(event.details) && !/^uploaded \w+ file:/i.test(event.details) && !/^assigned to /i.test(event.details) ? event.details : null;
+    const reason = /\[reason: (.+)\]\s*$/i.exec(event.details || '')?.[1];
+    return {
+      id: `h-${idx}`,
+      at: toDate(event.date).getTime(),
+      kind: historyWords(event.action, event.details),
+      title: null,
+      detail: (note || reason) ? <span className="block text-body text-[var(--color-text)] whitespace-pre-wrap line-clamp-3">{reason ?? note}</span> : undefined,
+      who: event.user ? { email: event.user, name: shortName(event.user) } : null,
+    };
+  });
 
   return (
     <PageShell width="full">
@@ -2083,39 +2084,9 @@ export default function TicketDetailView() {
               </>
             )}
             {activeTab === 'audit' && (
-              historyDays.length === 0
+              historyItems.length === 0
                 ? <p className="px-4 py-10 text-center text-reading text-[var(--color-text-muted)]">Nothing has happened yet.</p>
-                : (
-                  // Newest first, by day: what happened, who did it, when; the
-                  // reason they gave under it.
-                  <div className="px-4 py-3">
-                    {historyDays.map((g) => (
-                      <section key={g.day} className="mb-3 last:mb-0">
-                        <h3 className="text-body font-medium text-[var(--color-text-muted)] py-1.5">{g.day}</h3>
-                        <ol className="relative ml-1 border-l border-[var(--color-border-strong)]">
-                          {g.items.map((event, idx) => {
-                            const what = historyWords(event.action, event.details);
-                            const note = event.details && !/^ticket created via portal$/i.test(event.details) && !/^uploaded \w+ file:/i.test(event.details) && !/^assigned to /i.test(event.details) ? event.details : null;
-                            const reason = /\[reason: (.+)\]\s*$/i.exec(event.details || '')?.[1];
-                            return (
-                              <li key={`${g.day}-${idx}`} className="relative pl-4 py-2">
-                                <span aria-hidden className="absolute -left-[4.5px] top-[15px] w-2 h-2 rounded-full bg-[var(--color-surface)] border-2 border-[var(--color-border-control)]" />
-                                <div className="flex items-baseline justify-between gap-3">
-                                  <span className="text-reading font-medium text-[var(--color-text)] min-w-0">{what}</span>
-                                  <span className="shrink-0 text-body text-[var(--color-text-muted)] tabular-nums">{toDate(event.date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</span>
-                                </div>
-                                <p className="text-body text-[var(--color-text-muted)]">
-                                  by {event.user ? shortName(event.user) : 'someone'}
-                                  {(note || reason) && <span className="block mt-0.5 text-body text-[var(--color-text)] whitespace-pre-wrap line-clamp-3">{reason ?? note}</span>}
-                                </p>
-                              </li>
-                            );
-                          })}
-                        </ol>
-                      </section>
-                    ))}
-                  </div>
-                )
+                : <Timeline items={historyItems} className="px-4 py-3" />
             )}
           </div>
           {activeTab === 'discussion' && (

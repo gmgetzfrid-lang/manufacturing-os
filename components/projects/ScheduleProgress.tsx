@@ -123,7 +123,8 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
   const held = r.onHold + r.blocked;
   const heldWord = [r.onHold ? `${r.onHold} on hold` : null, r.blocked ? `${r.blocked} blocked` : null].filter(Boolean).join(", ");
 
-  const verdictTone = verdict === "behind" ? "text-[var(--state-overdue-text)]" : verdict === "ahead" ? "text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]";
+  // Colour only where it's off: ahead and on plan read in quiet text.
+  const verdictTone = verdict === "behind" ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text-muted)]";
 
   return (
     <div className={`grid grid-cols-1 lg:grid-cols-3 ${bare ? "gap-x-6 gap-y-4" : "gap-4"}`}>
@@ -156,13 +157,14 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
         {/* Stacked progress bar — leaves-only counts, matching the metrics. */}
         <StackedBar counts={metrics.byStatus} />
 
-        {/* The counts in one row: zero is faint, colour only where it's off. */}
+        {/* The counts in one row: only the ones there are (a zero isn't news),
+            colour only where it's off. */}
         <ul className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-caption" aria-label="Steps by status">
-          {(Object.keys(STATUS_META) as MilestoneStatus[]).map((s) => {
+          {(Object.keys(STATUS_META) as MilestoneStatus[]).filter((s) => (metrics.byStatus[s] ?? 0) > 0).map((s) => {
             const meta = STATUS_META[s];
             const n = metrics.byStatus[s] ?? 0;
             return (
-              <li key={s} className={`inline-flex items-center gap-1.5 ${n > 0 ? "" : "opacity-50"}`}>
+              <li key={s} className="inline-flex items-center gap-1.5">
                 <span aria-hidden className={`w-2 h-2 rounded-full ${meta.bar}`} />
                 <b className={`tabular-nums ${n > 0 && s !== "planned" && s !== "in_progress" ? meta.tone : "text-[var(--color-text)]"}`}>{n}</b>
                 <span className="text-[var(--color-text-muted)]">{meta.label.toLowerCase()}</span>
@@ -179,7 +181,7 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
           ) : finished ? (
             <>
               <div className="text-body font-medium text-[var(--color-text)]">{r.finishedAt ? humanDateTime(r.finishedAt, tz) : "-"}</div>
-              <div className={`text-caption mt-0.5 inline-flex items-center gap-1 ${finIsLate ? "text-[var(--state-overdue-text)] font-medium" : "text-[var(--state-released-text)]"}`}>
+              <div className={`text-caption mt-0.5 inline-flex items-center gap-1 ${finIsLate ? "text-[var(--state-overdue-text)] font-medium" : "text-[var(--color-text-muted)]"}`}>
                 {finIsLate ? <AlertTriangle className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
                 {[finWords, plannedEndAt ? `planned ${humanDateTime(plannedEndAt, tz)}` : null].filter(Boolean).join(" · ")}
               </div>
@@ -189,7 +191,7 @@ export default function ScheduleProgress({ milestones, metrics, projectId, onSho
           <div className="text-body font-medium text-[var(--color-text)]">
             {forecastEndAt ? (linked ? humanDateTime(forecastEndAt, tz) : humanDate(forecastEndAt, tz)) : plannedEndAt ? humanDate(plannedEndAt, tz) : "-"}
           </div>
-          <div className={`text-caption mt-0.5 inline-flex items-center gap-1 ${late ? "text-[var(--state-overdue-text)] font-medium" : "text-[var(--state-released-text)]"}`}>
+          <div className={`text-caption mt-0.5 inline-flex items-center gap-1 ${late ? "text-[var(--state-overdue-text)] font-medium" : "text-[var(--color-text-muted)]"}`}>
             {linked
               ? (slipH >= 0.5 ? <><AlertTriangle className="w-3.5 h-3.5" /> {lateWords(slipH)}</> : slipH <= -0.5 ? <><CheckCircle2 className="w-3.5 h-3.5" /> {lateWords(slipH)}</> : <><CheckCircle2 className="w-3.5 h-3.5" /> On plan</>)
               : late

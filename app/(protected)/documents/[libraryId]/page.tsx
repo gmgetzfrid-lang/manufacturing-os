@@ -3974,7 +3974,8 @@ export default function LibraryExplorerPage() {
       const tone = docStatusTone(st);
       facts.push({ label: st, value: n.toLocaleString(), tone: tone === "warn" || tone === "bad" ? tone : undefined });
     }
-    facts.push({ label: "Checked out", value: answerStats.out.toLocaleString(), tone: answerStats.out > 0 ? "warn" : undefined });
+    // None checked out is not news: no "0" cell (B7).
+    if (answerStats.out > 0) facts.push({ label: "Checked out", value: answerStats.out.toLocaleString(), tone: "warn" });
     return facts;
   })();
   const libMenuItem = "w-full px-3 min-h-10 pointer-coarse:min-h-11 py-2 text-left text-body text-[var(--color-text)] hover:bg-[var(--color-surface-2)] focus-visible:bg-[var(--color-surface-2)] flex items-center gap-2.5";

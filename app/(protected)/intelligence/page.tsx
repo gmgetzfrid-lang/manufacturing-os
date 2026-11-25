@@ -12,12 +12,11 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useRole } from "@/components/providers/RoleContext";
 import { badgeText } from "@/lib/badge";
 import { Skeleton, SkeletonRows } from "@/components/ui/Skeleton";
 import { ErrorNote } from "@/components/ui/ErrorNote";
-import { transitionPush } from "@/lib/viewTransition";
+import Timeline, { type TimelineItem } from "@/components/ui/Timeline";
 import { supabase } from "@/lib/supabase";
 import { getAiConnections } from "@/lib/knowledge";
 import { countPendingProposals } from "@/lib/linkProposals";
@@ -54,7 +53,6 @@ const EMPTY_STATUS: Status = {
 
 export default function IntelligencePage() {
   const { activeOrgId, activeRole } = useRole();
-  const router = useRouter();
   const isAdmin = activeRole === "Admin";
   const [status, setStatus] = useState<Status | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -191,14 +189,7 @@ export default function IntelligencePage() {
       : s.pendingProposals > 0 ? { text: `${s.pendingProposals} proposed connection${s.pendingProposals === 1 ? "" : "s"} wait for you.`, href: "/admin/proposed-links", cta: "Review them" }
       : { text: "AI is set up and reading your documents.", href: "/assistant", cta: "Ask a question" };
 
-  const when = (iso: string) => {
-    const d = new Date(iso);
-    const day = d.toDateString() === new Date().toDateString()
-      ? "Today"
-      : d.toLocaleDateString(undefined, { month: "short", day: "numeric", ...(d.getFullYear() !== new Date().getFullYear() ? { year: "numeric" } : {}) });
-    return `${day}, ${d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
-  };
-  // The four checks, one ruled row each.
+  // The four checks, one row each.
   const checks: CheckRow[] = [
     { pending: !s.keysKnown, ok: !!s.chatKey, title: "Chat key",
       okText: `Claude or OpenAI key active, ending ${s.chatKey}`, fixText: "No key saved, so questions can't run",
@@ -220,7 +211,7 @@ export default function IntelligencePage() {
   const known = checks.filter((c) => !c.pending);
   const ready = known.filter((c) => c.ok && !c.unknown).length;
   const facts = s.countsKnown ? [
-    { label: "Waiting on you", value: s.pendingProposals.toLocaleString(), tone: s.pendingProposals > 0 ? "warn" as const : undefined, hero: s.pendingProposals > 0 },
+    ...(s.pendingProposals > 0 ? [{ label: "Waiting on you", value: s.pendingProposals.toLocaleString(), tone: "warn" as const, hero: true }] : []),
     { label: "Documents", value: s.docs.toLocaleString() },
     { label: "Libraries", value: s.libraries.toLocaleString() },
     ...(s.chunksTotal > 0 ? [{ label: "Indexed", value: `${coveragePct}%` }] : []),
@@ -254,7 +245,8 @@ export default function IntelligencePage() {
                   <th className="font-medium px-4 hidden sm:table-cell text-right">Fix</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[var(--color-border)]">
+              {/* Four checks: space between them, no line under each. */}
+              <tbody>
                 {checks.map((c) => <CheckLine key={c.title} c={c} />)}
               </tbody>
             </table>
@@ -265,7 +257,7 @@ export default function IntelligencePage() {
             {!s.countsKnown ? (
               <SkeletonRows rows={1} cols={0} sheet={false} what="what waits on you" />
             ) : (
-              <ul className="divide-y divide-[var(--color-border)]">
+              <ul className="py-1">
                 {s.pendingProposals > 0 ? (
                   <li>
                     <Link href="/admin/proposed-links" className="flex items-center gap-4 px-4 py-3 hover:bg-[var(--color-surface-2)] transition-colors">
@@ -309,31 +301,18 @@ export default function IntelligencePage() {
                 </Link>
               </div>
             ) : (
-              <table className="w-full text-body">
-                <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left">
-                  <tr>
-                    <th className="font-medium px-4 h-10">Question</th>
-                    <th className="font-medium px-4 hidden sm:table-cell">Asked by</th>
-                    <th className="font-medium px-4 hidden sm:table-cell whitespace-nowrap">When</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--color-border)]">
-                  {s.recentAsks.map((a) => (
-                    // The conversation itself: new asks carry the chat thread id;
-                    // older rows were backfilled as one-turn threads under their own id.
-                    <tr key={a.id} className="hover:bg-[var(--color-surface-2)] cursor-pointer" onClick={() => transitionPush(router, `/assistant?thread=${a.threadId ?? a.id}`)}>
-                      <td className="px-4 py-3 max-w-0 w-full">
-                        <div className="min-w-0">
-                          <Link href={`/assistant?thread=${a.threadId ?? a.id}`} onClick={(e) => e.stopPropagation()} className="block truncate font-medium text-[var(--color-text)] hover:text-[var(--color-accent-text)]">{a.question}</Link>
-                          <span className="sm:hidden block text-body text-[var(--color-text-muted)]">{(a.userName ?? "someone").split("@")[0]}, {when(a.at)}</span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 hidden sm:table-cell whitespace-nowrap text-[var(--color-text-muted)]">{(a.userName ?? "someone").split("@")[0]}</td>
-                      <td className="px-4 py-3 hidden sm:table-cell whitespace-nowrap text-[var(--color-text-muted)] tabular-nums">{when(a.at)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              // Who asked what, newest first, by day: a timeline, the asker
+              // as an avatar. Each question opens its conversation.
+              <div className="px-4 sm:px-5 py-4">
+                <Timeline items={s.recentAsks.map((a): TimelineItem => ({
+                  id: a.id,
+                  at: a.at,
+                  kind: "Asked",
+                  tone: "muted",
+                  title: <Link href={`/assistant?thread=${a.threadId ?? a.id}`} className="text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{a.question}</Link>,
+                  who: { name: (a.userName ?? "someone").split("@")[0], email: a.userName },
+                }))} />
+              </div>
             )}
           </Card>
 

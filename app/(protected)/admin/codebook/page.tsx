@@ -137,10 +137,12 @@ export default function CodebookPage() {
             {!canWrite && <> Read only: Admins and Document Controllers edit the codebook.</>}
           </>
         }
+        // A row of zeros says nothing (the path below says what's missing):
+        // a count shows once there is one.
         facts={[
-          { label: "Units", value: book.units.length },
-          { label: "Equipment types", value: book.equipmentTypes.length },
-          { label: "Drawing types", value: book.drawingTypes.length },
+          ...(book.units.length > 0 ? [{ label: "Units", value: book.units.length }] : []),
+          ...(book.equipmentTypes.length > 0 ? [{ label: "Equipment types", value: book.equipmentTypes.length }] : []),
+          ...(book.drawingTypes.length > 0 ? [{ label: "Drawing types", value: book.drawingTypes.length }] : []),
         ]}
         factsHero="none"
         primary={canWrite ? (

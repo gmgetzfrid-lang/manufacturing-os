@@ -1511,7 +1511,7 @@ export default function ExecutionView({
               phases) so the key shows even for a one-root schedule. */}
           {colors.groups.length > 1 && (
             <div className="mt-2.5 flex items-center gap-x-3 gap-y-1 flex-wrap text-caption">
-              <span className="text-body font-medium text-[var(--color-text-muted)]">Phases</span>
+              <span className="font-medium text-[var(--color-text-muted)]">Phases</span>
               {colors.groups.map((g) => {
                 const c = colors.colorOf(g);
                 return (
@@ -1874,15 +1874,22 @@ function CompactSummary({ items, now, shiftTimes, projectId, onOpen }: { items: 
   // One phase (or none): the job's own standing, read the way the header reads it.
   const one = useMemo(() => (byPhase ? null : standingOf(items, { now: now.getTime(), tz, shiftTimes, criticalMode })), [byPhase, items, now, tz, shiftTimes, criticalMode]);
   const bad = "font-medium text-[var(--state-overdue-text)]";
+  // A phase that's off: a red dot and its words in text color (the dot is
+  // the signal; a whole sentence in red pulls the eye from the work).
+  const phrase = (key: string | undefined, text: string, off: boolean) => (
+    <span key={key} className="inline-flex items-baseline gap-1.5 font-medium text-[var(--color-text)]">
+      {off && <span aria-hidden className="w-2 h-2 shrink-0 self-center rounded-full bg-[var(--state-overdue)]" />}{text}
+    </span>
+  );
   return (
-    // A row on the board's card: where the job stands, problems in their colour.
+    // A row on the board's card: where the job stands, problems marked by a dot.
     <button onClick={onOpen} aria-label="Show the summary" className="group w-full flex items-center gap-x-3 gap-y-1 flex-wrap py-2.5 text-body text-left">
       {byPhase ? byPhase.map((s) => {
         const p = standingPhrase(s, tz, now.getTime());
-        return <span key={s.id} className={p.bad ? bad : "font-medium text-[var(--color-text)]"}>{s.name}: {p.text}</span>;
+        return phrase(s.id, `${s.name}: ${p.text}`, !!p.bad);
       }) : one && (() => {
         const p = standingPhrase(one, tz, now.getTime());
-        return <span className={p.bad ? bad : "font-medium text-[var(--color-text)]"}>{upperFirst(p.text)}</span>;
+        return phrase(undefined, upperFirst(p.text), !!p.bad);
       })()}
       {r.overdue > 0 && <span className={bad}>{r.overdue} overdue</span>}
       {r.blocked + r.onHold > 0 && <span className="font-medium text-[var(--state-held-text)]">{r.blocked + r.onHold} stuck</span>}

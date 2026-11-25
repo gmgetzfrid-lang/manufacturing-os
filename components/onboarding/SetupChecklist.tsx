@@ -133,7 +133,9 @@ export default function SetupChecklist() {
           </p>
         )}
 
-        <ol className="divide-y divide-[var(--color-border)]">
+        {/* Six steps: space between them, no line under each. Only the next
+            step is at full weight; done and later steps step back. */}
+        <ol className="py-1.5">
           {all.map((s, i) => {
             const isNext = s === next;
             const body = (
@@ -143,20 +145,20 @@ export default function SetupChecklist() {
                   : <span aria-hidden className={`w-5 h-5 shrink-0 rounded-full border-2 ${isNext ? "border-[var(--color-current)]" : "border-[var(--color-border-strong)]"}`} />}
                 <span className="sr-only">{s.done ? "Done:" : "To do:"}</span>
                 <span className="min-w-0 flex-1">
-                  <span className={`block text-reading ${s.done ? "text-[var(--color-text-muted)]" : "font-medium text-[var(--color-text)]"}`}>
+                  <span className={`block text-reading ${isNext ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>
                     <span className="tabular-nums text-[var(--color-text-muted)] font-normal mr-1.5">{i + 1}.</span>{s.label}
                   </span>
-                  {!s.done && s.blurb && <span className="block text-body text-[var(--color-text-muted)] truncate">{s.blurb}</span>}
+                  {isNext && s.blurb && <span className="block text-body text-[var(--color-text-muted)] truncate">{s.blurb}</span>}
                 </span>
-                {isNext && <span className="shrink-0 text-body font-medium text-[var(--color-accent-text)]">Next</span>}
+                {isNext && <span className="shrink-0 text-body font-medium text-[var(--color-text)]">Next</span>}
                 {!s.done && <ChevronRight aria-hidden className="w-4 h-4 shrink-0 text-[var(--color-text-faint)]" />}
               </>
             );
             return (
               <li key={s.key}>
                 {s.done || !s.href
-                  ? <div className="flex items-center gap-3 px-4 py-3">{body}</div>
-                  : <Link href={s.href} aria-current={isNext ? "step" : undefined} className="flex items-center gap-3 px-4 py-3 hover:bg-[var(--color-surface-2)] transition-colors">{body}</Link>}
+                  ? <div className="flex items-center gap-3 px-4 py-2.5">{body}</div>
+                  : <Link href={s.href} aria-current={isNext ? "step" : undefined} className="flex items-center gap-3 px-4 py-2.5 pointer-coarse:min-h-11 hover:bg-[var(--color-surface-2)] transition-colors">{body}</Link>}
               </li>
             );
           })}

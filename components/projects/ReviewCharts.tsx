@@ -105,7 +105,7 @@ export function LateHours({ bars, late, onPick, findings = [] }: { bars: LateBar
   return (
     <div>
       <p className="mb-1 text-caption text-[var(--color-text-muted)]">Each bar is out of the whole {late} h late; together they add up to it.</p>
-      <ul className="divide-y divide-[var(--color-border)]" aria-label={`Where the ${late} h went`} data-late-hours>
+      <ul className="space-y-1" aria-label={`Where the ${late} h went`} data-late-hours>
         {bars.map((b, i) => {
           const one = b.segs.length === 1 ? b.segs[0] : null;
           // One cause: the whole row says it, and goes to its finding.

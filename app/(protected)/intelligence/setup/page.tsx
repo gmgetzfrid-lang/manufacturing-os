@@ -79,7 +79,8 @@ export default function IntelligenceSetupPage() {
 
         {/* Org-level teaching + health, for the roles that hold them. */}
         <Card label="Teach the workspace" pad={false} className="overflow-hidden">
-          <div className="divide-y divide-[var(--color-border)]">
+          {/* Three links: space between them, no line under each. */}
+          <div className="py-1.5">
           {isController && (
             <SetupLink href="/admin/ai-instructions"
               title="AI instructions (playbooks)"

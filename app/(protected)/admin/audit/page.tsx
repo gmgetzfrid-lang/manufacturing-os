@@ -23,6 +23,7 @@ import { tbl, btnRow, link, RowEdge, shortDateTime, type Tone } from "@/componen
 import { bandInput, bandInputIcon, bandSelect, plural } from "@/components/admin/band";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 import { ErrorNote } from "@/components/ui/ErrorNote";
+import UserAvatar from "@/components/ui/UserAvatar";
 
 // Auditor included: the role exists FOR audit review — it was defined with an
 // "audit" capability yet locked out of the one page that shows the trail.
@@ -224,11 +225,13 @@ export default function AuditLogPage() {
               <IsoGuidance topic="audit_log" size="md" />
             </>
           }
+          // Deletes lead only when there are some; no deletes isn't news.
           facts={kpis.total > 0 ? [
-            { label: "Deletes and undos", value: kpis.deletes, tone: kpis.deletes > 0 ? "bad" : undefined, hero: kpis.deletes > 0 },
+            ...(kpis.deletes > 0 ? [{ label: "Deletes and undos", value: kpis.deletes, tone: "bad" as const, hero: true }] : []),
             { label: "People", value: kpis.people },
             { label: "Items touched", value: kpis.items },
           ] : undefined}
+          factsHero={kpis.deletes > 0 ? "auto" : "none"}
           tools={
             <button type="button" className={heroQuiet} onClick={fetchRows} disabled={loading} aria-label="Check for new events" title="Check for new events">
               <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
@@ -390,7 +393,7 @@ function AuditRowItem({ row, docMeta, open, onToggle, onFilterAction, onFilterRe
     return null;
   })();
   const itemLabel = docMeta
-    ? <><span className="ui-id text-reading">{docMeta.documentNumber ?? ""}</span>{docMeta.title && docMeta.title !== docMeta.documentNumber && <span className="text-[var(--color-text-muted)]"> {docMeta.title}</span>}</>
+    ? <><span className="ui-id">{docMeta.documentNumber ?? ""}</span>{docMeta.title && docMeta.title !== docMeta.documentNumber && <span className="text-[var(--color-text-muted)]"> {docMeta.title}</span>}</>
     : <span className="text-[var(--color-text-muted)] capitalize">{row.resourceType}</span>;
   void Icon; // the action reads as words; color only for deletes and holds
   const actionCls = `text-body font-medium ${style.tone === "bad" ? "text-[var(--state-overdue-text)]" : style.tone === "warn" ? "text-[var(--state-held-text)]" : "text-[var(--color-text)]"}`;
@@ -425,11 +428,15 @@ function AuditRowItem({ row, docMeta, open, onToggle, onFilterAction, onFilterRe
           </span>
         </td>
         <td className={`${tbl.td} max-md:col-span-2 max-md:row-start-3 max-md:pt-0.5 text-body text-[var(--color-text-muted)]`}>
+          {/* Who: a small avatar and their name, not the email on every row
+              (the email shows on hover, tapping it still filters, and the
+              CSV keeps it). */}
           <span className="inline-flex flex-wrap items-center gap-1.5">
+            <UserAvatar uid={row.userId} email={row.userEmail} size={20} />
             {row.userEmail && onFilterUser
-              ? <button type="button" onClick={() => onFilterUser(row.userEmail!)} title={`Show only ${row.userEmail}`} className="text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{row.userEmail}</button>
-              : <span className="text-[var(--color-text)]">{row.userEmail || row.userId}</span>}
-            {row.userRole ? <span className="text-body text-[var(--color-text-muted)]">{row.userRole}</span> : null}
+              ? <button type="button" onClick={() => onFilterUser(row.userEmail!)} title={`Show only ${row.userEmail}`} className="text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{nameOf(row.userEmail)}</button>
+              : <span className="text-[var(--color-text)]" title={row.userEmail ?? undefined}>{row.userEmail ? nameOf(row.userEmail) : row.userId}</span>}
+            {row.userRole ? <span className="text-caption text-[var(--color-text-muted)]">{row.userRole}</span> : null}
           </span>
         </td>
         <td className={`${tbl.td} max-md:col-start-2 max-md:row-start-1 max-md:py-1 text-right`}>
@@ -496,6 +503,11 @@ function exportAuditCsv(
   a.click();
   document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** A person's name from their email: "jane.doe@x.com" reads "jane.doe". */
+function nameOf(email: string): string {
+  return email.split("@")[0] || email;
 }
 
 function prettyAction(action: string): string {

@@ -257,7 +257,7 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
             <Cells size="sm" cells={[
               { label: "Knowledge library", value: <Link href={`/knowledge/${status.boundLibrary.id}`} className="text-[var(--color-accent-text)] hover:underline underline-offset-2 break-words">{status.boundLibrary.name}</Link> },
               { label: "Readable", value: status.counts.ready.toLocaleString() },
-              { label: "Indexing", value: status.counts.pending.toLocaleString() },
+              ...(status.counts.pending > 0 ? [{ label: "Indexing", value: status.counts.pending.toLocaleString() }] : []),
               { label: "Watched sources", value: status.sources.length.toLocaleString() },
             ]} />
           </div>
@@ -310,8 +310,9 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
           </div>
         )}
 
-        {/* The order of operations, live. */}
-        <ol className="divide-y divide-[var(--color-border)]">
+        {/* The order of operations, live. Four steps: space between them,
+            no line under each. */}
+        <ol className="py-1.5">
           <Step n={1} title="File this area's drawings in Documents"
             state={status === null ? (error ? "todo" : "loading") : drawingsDone ? "done" : "todo"}
             action={<Link href="/documents" className={`${btnRow} no-underline`}>Open Documents <ExternalLink className="w-3.5 h-3.5" /></Link>}>
@@ -336,7 +337,8 @@ export function AreaKnowledgePanel({ orgId, userId, userName, unit, unitAssetIds
               </button>
             }>
             <span className="inline-flex items-center gap-x-4 gap-y-0.5 flex-wrap">
-              {([[flowCount, "process flow"], [docLinkCount, "linked document"], [plotMarkCount, "plot marker"]] as const).map(([n, word]) => (
+              {/* Three zeros say nothing: one line in words instead. */}
+              {flowCount === 0 && docLinkCount === 0 && plotMarkCount === 0 ? <span>Nothing read yet.</span> : ([[flowCount, "process flow"], [docLinkCount, "linked document"], [plotMarkCount, "plot marker"]] as const).map(([n, word]) => (
                 <span key={word} className="inline-flex items-center gap-1">
                   {n === null ? <Skeleton className="!w-5 !h-3" /> : <span className={`font-display font-semibold tabular-nums ${n > 0 ? "text-[var(--color-text)]" : "text-[var(--color-text-faint)]"}`}>{n}</span>}
                   {word}{n === 1 ? "" : "s"}

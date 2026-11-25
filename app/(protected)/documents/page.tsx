@@ -396,14 +396,16 @@ export default function DocumentsHomePage() {
                       : <Library aria-hidden className="w-[18px] h-[18px] shrink-0 text-[var(--color-text-faint)]" />}
                     <span className="min-w-0">
                       <span className="flex items-center gap-1.5">
+                        {/* The description mostly says the name again in
+                            more words: it shows on hover, not on every row. */}
                         <Link href={`/documents/${lib._id}`}
                           onClick={(e) => { e.stopPropagation(); onTransitionClick(e, () => openLib(lib._id!)); if (!e.defaultPrevented) setPendingLibId(lib._id!); }}
+                          title={lib.description || undefined}
                           className="truncate text-reading font-medium text-[var(--color-text)] group-hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">
                           {lib.name}
                         </Link>
                         {isPending && <Loader2 aria-label="Opening" className="w-3.5 h-3.5 shrink-0 animate-spin text-[var(--color-text-faint)]" />}
                       </span>
-                      {lib.description && <span className="block text-body text-[var(--color-text-muted)] truncate">{lib.description}</span>}
                       {/* Phone: the facts under the name. */}
                       <span className="sm:hidden flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1 text-body text-[var(--color-text-muted)]">
                         {n != null && <span className="tabular-nums">{n.toLocaleString()} document{n === 1 ? "" : "s"}</span>}
@@ -455,19 +457,26 @@ export default function DocumentsHomePage() {
   const answer = listLoading ? "Libraries" : libraries.length === 0 ? (error ? "Libraries didn't load." : "No libraries yet.")
     : countsIn && totalDocs > 0 ? `${totalDocs.toLocaleString()} document${totalDocs === 1 ? "" : "s"}.`
     : `${nLibs}.`;
+  // The numbers behind it, small (the title carries the count): the other
+  // count, what is checked out now and what changed this week. A zero is
+  // not news: it is said once in words under the title, not as a "0" cell
+  // (and with nothing filed, "Nothing filed yet" says it all).
+  const docsAnswer = countsIn && totalDocs > 0;
+  const quietZeros = docsAnswer && orgFacts
+    ? orgFacts.out === 0 && orgFacts.week === 0 ? "Nothing checked out now or changed this week."
+      : orgFacts.out === 0 ? "Nothing checked out now."
+      : orgFacts.week === 0 ? "Nothing changed this week."
+      : null
+    : null;
   const answerSub = listLoading ? undefined : libraries.length === 0
     ? (error ? undefined : isController ? "Set one up in Library admin." : "You don't have access to a controlled library yet.")
     : countsIn && totalDocs === 0 ? `Nothing filed yet${orgName ? ` at ${orgName}` : ""}.`
+    : quietZeros ? `${orgName ? `${orgName}. ` : ""}${quietZeros}`
     : orgName ?? undefined;
-  // The numbers behind it, small (the title carries the count): the other
-  // count, what is checked out now and what changed this week.
-  const docsAnswer = countsIn && totalDocs > 0;
-  const answerFacts = libraries.length === 0 ? undefined : [
-    docsAnswer ? { label: "Libraries", value: libraries.length.toLocaleString() } : { label: "Documents", value: countsIn ? totalDocs.toLocaleString() : "-" },
-    ...(orgFacts ? [
-      { label: "Checked out now", value: orgFacts.out.toLocaleString() },
-      { label: "Changed this week", value: orgFacts.week.toLocaleString() },
-    ] : []),
+  const answerFacts = !docsAnswer ? undefined : [
+    { label: "Libraries", value: libraries.length.toLocaleString() },
+    ...(orgFacts && orgFacts.out > 0 ? [{ label: "Checked out now", value: orgFacts.out.toLocaleString() }] : []),
+    ...(orgFacts && orgFacts.week > 0 ? [{ label: "Changed this week", value: orgFacts.week.toLocaleString() }] : []),
   ];
 
   return (

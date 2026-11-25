@@ -80,7 +80,7 @@ export default function PlanNextShift({ milestones, next, now, tz, times, mode, 
             <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-[var(--color-border)] text-caption">
               <span className="flex-1 text-body text-[var(--color-text-muted)]"><b className="text-[var(--color-text)]">{list.length} step{list.length === 1 ? "" : "s"}</b> on the {next.kind} crew&apos;s list · {report.goals.mustDoHours} h</span>
               <button type="button" onClick={() => { setSaved(null); setView({ v: "pick" }); }}
-                className="inline-flex items-center gap-1.5 h-10 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 text-body font-medium text-[var(--color-accent-fg)] shadow-[0_10px_20px_-10px_var(--color-accent)]">
+                className="inline-flex items-center gap-1.5 h-10 rounded-xl bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-4 text-body font-medium text-[var(--color-accent-fg)]">
                 <Plus className="w-3.5 h-3.5" /> Pull in work
               </button>
             </div>
@@ -289,10 +289,11 @@ function Confirm({ milestones, action, next, now, tz, times, mode, crews, when, 
   return (
     <div className="px-4 py-3 space-y-3 text-caption text-[var(--color-text)]">
       <BackLink onClick={onBack} />
-      <div className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+      {/* The swap, in and out: two lines apart, no box in the dialog's box. */}
+      <div className="grid gap-2">
         {plan.in && (
-          <div className="px-3 py-2">
-            <span className="inline-block w-10 font-medium text-[var(--state-released-text)]">In</span>
+          <div>
+            <span className="inline-block w-10 font-medium text-[var(--color-text-muted)]">In</span>
             <b>{plan.in.name}</b><span className="text-[var(--color-text-muted)]">{wo(plan.in.wo)}</span>
             <div className="pl-10 text-[var(--color-text-muted)]">{shiftName(next)} shift: {span(plan.in.to[0], plan.in.to[1])} · was planned {when(plan.in.from[0])}</div>
             <label className="pl-10 mt-1 flex flex-wrap items-center gap-1.5">
@@ -305,8 +306,8 @@ function Confirm({ milestones, action, next, now, tz, times, mode, crews, when, 
           </div>
         )}
         {plan.out && (
-          <div className="px-3 py-2">
-            <span className="inline-block w-10 font-medium text-[var(--state-held-text)]">Out</span>
+          <div>
+            <span className="inline-block w-10 font-medium text-[var(--color-text-muted)]">Out</span>
             <b>{plan.out.name}</b><span className="text-[var(--color-text-muted)]">{wo(plan.out.wo)}</span>
             <div className="pl-10 text-[var(--color-text-muted)]">to {span(plan.out.to[0], plan.out.to[1])} · was planned {when(plan.out.from[0])}</div>
           </div>

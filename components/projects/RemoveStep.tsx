@@ -58,16 +58,16 @@ export function RemoveStepDialog({ m, under, userId, userName, userEmail, onDele
           <CancelJobForm id={m.id} name={m.name} steps={Math.max(1, under)} userId={userId} userName={userName} userEmail={userEmail}
             onClose={() => setCancelling(false)} onDone={onCancelled} />
         ) : (
-          <div className="border-y border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+          <div className="grid gap-1">
             <button type="button" onClick={onDelete} className={`${choice} hover:bg-transparent`}>
-              <Trash2 className="w-5 h-5 mt-0.5 text-[var(--state-overdue-text)] shrink-0" />
+              <Trash2 className="w-5 h-5 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
               <span>
                 <b className="block text-body text-[var(--color-text)]">Delete it</b>
                 <span className="block text-caption text-[var(--color-text-muted)]">Put in by mistake. Gone, with its comments and progress. Undo right after brings it back.</span>
               </span>
             </button>
             <button type="button" onClick={() => setCancelling(true)} className={`${choice} hover:bg-transparent`}>
-              <Ban className="w-5 h-5 mt-0.5 text-[var(--state-held-text)] shrink-0" />
+              <Ban className="w-5 h-5 mt-0.5 text-[var(--color-text-muted)] shrink-0" />
               <span>
                 <b className="block text-body text-[var(--color-text)]">Cancel it</b>
                 <span className="block text-caption text-[var(--color-text-muted)]">Planned, but not done on this job. Kept on the close-out report as cancelled, with why and where it went.</span>

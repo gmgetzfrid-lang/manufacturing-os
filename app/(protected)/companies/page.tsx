@@ -92,11 +92,12 @@ export default function CompaniesPage() {
   const contractors = companies.filter((c) => c.kind === "contractor").length;
   const answer = loading ? <Skeleton className="h-7 w-64 max-w-full" /> : error != null && companies.length === 0 ? "The companies didn't load."
     : companies.length === 0 ? "No companies yet." : `${plural(companies.length, "company", "companies")} on record.`;
-  // Plain facts, all small: the title already says how many.
+  // Plain facts, all small: the title already says how many. A zero that
+  // isn't news (no one flagged, none rated yet) stays out.
   const facts: HeroFact[] = loading || companies.length === 0 ? [] : [
-    { label: "Contractors", value: contractors },
-    { label: "Rated", value: rated },
-    { label: "Do not use", value: doNotUse, tone: doNotUse > 0 ? "bad" : undefined },
+    ...(contractors > 0 ? [{ label: "Contractors", value: contractors }] : []),
+    ...(rated > 0 ? [{ label: "Rated", value: rated }] : []),
+    ...(doNotUse > 0 ? [{ label: "Do not use", value: doNotUse, tone: "bad" as const }] : []),
   ];
   const [limit, setLimit] = useState(20);
   const kindCount = (k: (typeof KIND_FILTERS)[number]) => (k === "all" ? companies.length : companies.filter((c) => c.kind === k).length);
@@ -254,7 +255,8 @@ function ScoreCell({ profile, failed }: { profile: CompanyProfileData | null; fa
   const sc = profile.scorecard;
   return (
     <span title={sc.evidenceCount > 0 ? `${sc.evidenceCount} evidence point${sc.evidenceCount === 1 ? "" : "s"} back this score` : "No recorded work yet"}>
-      <ScoreBadge score={sc.composite} />
+      {/* Reading size in the list: the score reads, it doesn't shout on every row. */}
+      <ScoreBadge score={sc.composite} size="sm" />
     </span>
   );
 }

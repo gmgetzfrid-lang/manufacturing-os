@@ -20,7 +20,7 @@ export const vKicker =
 
 /** The drawing's name: the one big thing in the chrome. */
 export const vTitle =
-  "font-display truncate text-[24px] sm:text-[26px] leading-[1.1] font-semibold tabular-nums text-[var(--color-text)]";
+  "font-display truncate text-section sm:text-title leading-[1.1] font-semibold tabular-nums text-[var(--color-text)]";
 
 /** A quiet icon button on the charcoal. */
 export const vIcon =

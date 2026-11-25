@@ -811,7 +811,9 @@ export default function ChatShell() {
               instructionsActive={!!instructions.trim()}
               instructionCount={standingCount + (instructions.trim() ? 1 : 0)}
               onToggleInstructions={() => setPanel((p) => (p?.kind === "instructions" ? null : { kind: "instructions" }))}
-              disabledReason={disabledReason}
+              // On the empty chat the reason is said once, above the
+              // suggestions; the box only says it's off.
+              disabledReason={disabledReason && messages.length === 0 && !streaming && !threadLoading ? "Can't ask yet." : disabledReason}
               autoFocus={!isMobile}
               webOn={useWeb} onToggleWeb={() => setUseWeb((v) => !v)}
               answerMode={pickedMode} onAnswerMode={pickMode}

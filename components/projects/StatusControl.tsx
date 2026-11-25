@@ -29,10 +29,10 @@ interface Meta { label: string; dot: string; pill: string; Icon: React.Component
 export const STATUS_META: Record<MilestoneStatus, Meta> = {
   planned:     { label: "Planned",     dot: "bg-[var(--color-border-strong)] border-[var(--color-border-control)]",   pill: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",     Icon: Circle },
   in_progress: { label: "In progress", dot: "bg-[var(--color-text-muted)] border-[var(--color-border-strong)]",     pill: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",        Icon: Loader2 },
-  completed:   { label: "Done",        dot: "bg-[var(--state-released)] border-[var(--state-released)]",pill: "bg-transparent text-[var(--state-released-text)] border-[var(--color-border)]",Icon: CircleCheck },
-  on_hold:     { label: "On hold",     dot: "bg-[var(--state-held)] border-[var(--state-held)]",   pill: "bg-transparent text-[var(--state-held-text)] border-[var(--color-border)]",     Icon: PauseCircle, needsReason: true },
-  blocked:     { label: "Blocked",     dot: "bg-[var(--state-overdue)] border-[var(--state-overdue)]",     pill: "bg-transparent text-[var(--state-overdue-text)] border-[var(--color-border)]",        Icon: AlertTriangle, needsReason: true },
-  missed:      { label: "Missed",      dot: "bg-[var(--state-overdue)] border-[var(--state-overdue)]",     pill: "bg-transparent text-[var(--state-overdue-text)] border-[var(--color-border)]",        Icon: XCircle },
+  completed:   { label: "Done",        dot: "bg-[var(--state-released)] border-[var(--state-released)]",pill: "bg-transparent text-[var(--color-text)] border-[var(--color-border)]",Icon: CircleCheck },
+  on_hold:     { label: "On hold",     dot: "bg-[var(--state-held)] border-[var(--state-held)]",   pill: "bg-transparent text-[var(--color-text)] border-[var(--color-border)]",     Icon: PauseCircle, needsReason: true },
+  blocked:     { label: "Blocked",     dot: "bg-[var(--state-overdue)] border-[var(--state-overdue)]",     pill: "bg-transparent text-[var(--color-text)] border-[var(--color-border)]",        Icon: AlertTriangle, needsReason: true },
+  missed:      { label: "Missed",      dot: "bg-[var(--state-overdue)] border-[var(--state-overdue)]",     pill: "bg-transparent text-[var(--color-text)] border-[var(--color-border)]",        Icon: XCircle },
 };
 
 export function statusLabel(s: MilestoneStatus): string { return STATUS_META[s].label; }

@@ -513,7 +513,7 @@ export default function DayAgendaPanel({
                         {r.live === "overdue" && <span aria-hidden className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r bg-[var(--state-overdue)]" />}
                         {/* Day-only or night-only work is marked; round the clock is the norm. */}
                         {(() => { const w = workShiftOf(r.leaf, tz, shiftTimes); return w === "both" ? <span className="w-4 shrink-0" aria-hidden /> : <ShiftMark work={w} />; })()}
-                        <span className={`w-[80px] shrink-0 text-caption font-display tabular-nums ${r.live === "overdue" ? "font-semibold text-[var(--state-overdue-text)]" : r.live === "started-early" ? "font-bold text-[var(--color-text)]" : r.live === "done-ahead" ? "font-bold text-[var(--state-released-text)]" : "text-[var(--color-text-muted)]"}`}>{windowOf(r)}</span>
+                        <span className={`w-[80px] shrink-0 text-caption font-display tabular-nums ${r.live === "overdue" ? "font-semibold text-[var(--state-overdue-text)]" : r.live === "started-early" ? "font-bold text-[var(--color-text)]" : r.live === "done-ahead" ? "font-bold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{windowOf(r)}</span>
                         <span className="shrink-0">
                           <StatusControl
                             status={r.leaf.status} size="sm" variant="dot" disabled={!canEdit || !onSetStatus || !r.leaf.id}

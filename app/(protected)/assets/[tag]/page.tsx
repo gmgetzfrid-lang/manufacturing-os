@@ -182,8 +182,9 @@ export default function AssetHubPage() {
   const outCount = docs.filter((d) => !!d.checkedOutByName).length;
   const answerFacts = error && docs.length === 0 ? undefined : [
     { label: "Documents", value: docCount.toLocaleString() },
-    { label: "On hold", value: heldCount.toLocaleString(), tone: heldCount > 0 ? "bad" as const : undefined, hero: heldCount > 0 },
-    { label: "Checked out", value: outCount.toLocaleString(), tone: outCount > 0 ? "warn" as const : undefined },
+    // Holds and check-outs show only when there are some (a zero isn't news).
+    ...(heldCount > 0 ? [{ label: "On hold", value: heldCount.toLocaleString(), tone: "bad" as const, hero: true }] : []),
+    ...(outCount > 0 ? [{ label: "Checked out", value: outCount.toLocaleString(), tone: "warn" as const }] : []),
     ...(photos.length > 0 ? [{ label: "Photos", value: photos.length.toLocaleString() }] : []),
   ];
   const openDoc = (d: HubDoc) => transitionPush(router, d.libraryId ? `/documents/${d.libraryId}?doc=${d.id}` : "/documents");

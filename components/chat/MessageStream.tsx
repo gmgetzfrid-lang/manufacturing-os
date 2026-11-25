@@ -122,10 +122,11 @@ export default function MessageStream({
                 </p>
               )}
               <h3 className="mt-8 mb-2 text-body font-medium text-[var(--color-text-muted)]">Try one of these</h3>
-              <div className="flex flex-col divide-y divide-[var(--color-border)] border-y border-[var(--color-border)]">
+              {/* Three suggestions: space between them, no ruled lines. */}
+              <div className="flex flex-col gap-1">
                 {EXAMPLES[scope].map((e) => (
                   <button key={e} type="button" onClick={() => onExample(e)} disabled={!!emptyNote}
-                    className="group -mx-2 px-2 flex items-center gap-3 py-3 text-left text-reading text-[var(--color-text)] rounded-lg hover:bg-[var(--color-surface-2)] disabled:opacity-60 disabled:hover:bg-transparent transition-colors">
+                    className="group -mx-2 px-2 flex items-center gap-3 py-2.5 pointer-coarse:min-h-11 text-left text-reading text-[var(--color-text)] rounded-lg hover:bg-[var(--color-surface-2)] disabled:opacity-60 disabled:hover:bg-transparent transition-colors">
                     <span className="flex-1">{e}</span>
                     <ArrowRight aria-hidden className="w-4 h-4 shrink-0 text-[var(--color-text-faint)] group-hover:text-[var(--color-accent-text)] transition-colors" />
                   </button>

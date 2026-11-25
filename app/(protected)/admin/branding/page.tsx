@@ -161,7 +161,8 @@ export default function AdminBrandingPage() {
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,38fr)_minmax(0,62fr)] gap-x-6 gap-y-8 items-start">
         {/* LOGO */}
         <Card label="Logo">
-          <div {...drag.bind} className={`rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface-2)] h-28 flex items-center justify-center mb-3 overflow-hidden ${drag.ring}`}>
+          {/* The drop area is a quiet fill, not a second box inside the card. */}
+          <div {...drag.bind} className={`rounded-lg bg-[var(--color-surface-2)] h-28 flex items-center justify-center mb-3 overflow-hidden ${drag.ring}`}>
             {drag.over ? (
               <span className="text-body font-medium text-[var(--color-text)]">{drag.say}</span>
             ) : logoPreview ? (

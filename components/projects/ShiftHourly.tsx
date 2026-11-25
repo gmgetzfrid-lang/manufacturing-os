@@ -561,7 +561,8 @@ export function MeetingBox({ m, edit }: { m: MeetingCtx; edit: boolean }) {
         <div className="inline-flex items-center gap-1 text-caption font-medium text-[var(--state-released-text)]"><Check className="w-3.5 h-3.5" aria-hidden /> Updated for this shift</div>
       ) : null}
       <div className="rounded-lg bg-[var(--color-surface-2)]/60">
-        <div className={`${grid} items-center px-2 py-1 text-body font-medium text-[var(--color-text-muted)]`}>
+        {/* Column heads one step under the rows they head. */}
+        <div className={`${grid} items-center px-2 py-1 text-caption font-medium text-[var(--color-text-muted)]`}>
           <span className="max-sm:hidden">Resource</span>
           <span className="flex flex-wrap items-center gap-x-3">
             Meeting attendees
@@ -627,7 +628,8 @@ function CrewRow({ grid, crew, value, known, edit, plan, onNames, onCount, onTot
   };
   const pick = (known ?? []).filter((x) => !names.includes(x));
   return (
-    <div className={`${grid} items-start px-2 py-1 border-t border-[var(--color-border)]`}>
+    // A short roster: space between the crews, no rule under each (the total keeps its line).
+    <div className={`${grid} items-start px-2 py-1.5`}>
       <div className="min-w-0 flex flex-wrap items-center gap-1 pt-0.5 max-sm:col-start-1 max-sm:row-start-1">
         <b className="text-caption text-[var(--color-text)] break-words">{crew}</b>
         {edit && onRemove && (

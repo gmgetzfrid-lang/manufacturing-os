@@ -43,7 +43,7 @@ export default function SigninSettings({ orgId, canEdit, suggestDomain }: { orgI
 
   return (
     <Section label="Sign-in">
-      <div className={`${sheet} divide-y divide-[var(--color-border)]`}>
+      <div className={`${sheet} py-1`}>
         <FormRow label="Microsoft only for" htmlFor="ms-domains"
           hint={<>Emails on these domains must sign in with Microsoft; a password sign-in is refused.{suggestDomain && !parsed.includes(suggestDomain) ? <> Yours is <b className="font-medium">{suggestDomain}</b>.</> : null}</>}>
           <input id="ms-domains" className={field} value={domains} disabled={!canEdit || !loaded} spellCheck={false} autoCapitalize="off"

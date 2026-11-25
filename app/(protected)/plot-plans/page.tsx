@@ -118,7 +118,7 @@ export default function PlotPlansPage() {
               </thead>
               <tbody className="divide-y divide-[var(--color-border)]">
               {plans.map((p) => {
-                const changed = p.updatedAt && p.createdAt && p.updatedAt > p.createdAt ? `Changed ${humanDate(p.updatedAt)}` : `Added ${humanDate(p.createdAt)}${p.createdByName ? ` by ${p.createdByName}` : ""}`;
+                const changed = p.updatedAt && p.createdAt && p.updatedAt > p.createdAt ? `Changed ${humanDate(p.updatedAt)}` : `Added ${humanDate(p.createdAt)}${p.createdByName ? ` by ${p.createdByName.split("@")[0]}` : ""}`;
                 return (
                 <tr key={p.id} className="hover:bg-[var(--color-surface-2)] cursor-pointer" onClick={() => open(p)}>
                   <td className="pl-4 pr-2 py-2.5 w-[112px] sm:w-[128px]">

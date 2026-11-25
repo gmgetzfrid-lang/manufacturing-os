@@ -100,10 +100,11 @@ export default function KnowledgePage() {
         kicker="Intelligence · Knowledge"
         title={answer}
         sub="Reference libraries you can ask. Answers cite the page."
+        // The title says how many documents: the facts don't repeat it, and
+        // "Empty" shows only when some (not all) libraries are.
         facts={libraries && libraries.length > 0 ? [
           { label: "Libraries", value: libraries.length },
-          { label: "Documents", value: docTotal.toLocaleString() },
-          { label: "Empty", value: emptyCount },
+          ...(emptyCount > 0 && docTotal > 0 ? [{ label: "Empty", value: emptyCount }] : []),
         ] : undefined}
         factsHero="none"
         tools={

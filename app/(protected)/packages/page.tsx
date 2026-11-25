@@ -238,7 +238,8 @@ export default function PackagesPage() {
     : "A job's drawings, pinned at their revisions. You're told when one moves on.";
   const driftedDocs = (packages ?? []).reduce((n, p) => n + p.staleCount, 0);
   const answerFacts = nPk === 0 ? undefined : [
-    { label: "Drawings that moved on", value: driftedDocs.toLocaleString(), tone: driftedDocs > 0 ? "warn" as const : undefined, hero: driftedDocs > 0 },
+    // None moved on is already the title ("all current"): no "0" cell (B7).
+    ...(driftedDocs > 0 ? [{ label: "Drawings that moved on", value: driftedDocs.toLocaleString(), tone: "warn" as const, hero: true }] : []),
     { label: "Open packages", value: nPk.toLocaleString() },
     { label: "Pinned", value: (packages ?? []).reduce((n, p) => n + p.docs.length, 0).toLocaleString() },
   ];

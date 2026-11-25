@@ -226,9 +226,9 @@ function InstructionsPane({
   useEffect(() => { setProf(profile); }, [profile]);
 
   const flash = (what: string) => { setSaved(what); setTimeout(() => setSaved(null), 1800); };
-  const field = "w-full px-3 py-2 text-reading rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40";
+  const field = "w-full px-3 py-2 pointer-coarse:min-h-11 text-reading rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-main)] focus:ring-2 focus:ring-[var(--color-accent-ring)]/40";
   const label = "font-display text-section font-semibold text-[var(--color-heading)] mb-0.5";
-  const quiet = "inline-flex items-center gap-1.5 h-10 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-body font-medium hover:bg-[var(--color-surface-2)] disabled:opacity-40 transition-colors";
+  const quiet = "inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-3.5 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] text-body font-medium hover:bg-[var(--color-surface-2)] disabled:opacity-40 transition-colors";
   const savedTag = <span className="ui-pill is-good">Saved</span>;
   const own = instructions.trim() ? 1 : 0;
   const total = own + standingCount;
@@ -238,7 +238,8 @@ function InstructionsPane({
       {header("Instructions",
         total === 0 ? "None yet." : `${total} ${total === 1 ? "applies" : "apply"} here.`,
         `${own ? "This conversation has its own" : "Nothing set for this conversation"} · ${standingCount} from the org playbook`)}
-      <div className="flex-1 overflow-y-auto px-5 divide-y divide-[var(--color-border)]">
+      {/* Three groups split by space, not ruled lines. */}
+      <div className="flex-1 overflow-y-auto px-5 py-2">
         <section className="py-4">
           <label htmlFor="chat-instructions" className={`block ${label}`}>This conversation</label>
           <p className="text-body text-[var(--color-text-muted)] mb-2">
@@ -250,7 +251,7 @@ function InstructionsPane({
           <div className="mt-2 flex items-center gap-2 flex-wrap">
             <button disabled={saving !== null || text === instructions}
               onClick={() => void run("instructions", () => onSaveInstructions(text))}
-              className="inline-flex items-center gap-1.5 h-10 px-4 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-40 transition-colors">
+              className="inline-flex items-center gap-1.5 h-10 pointer-coarse:h-11 px-4 rounded-md bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-medium hover:bg-[var(--color-accent-hover)] disabled:opacity-40 transition-colors">
               {saving === "instructions" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Save
             </button>
             {canPromote && text.trim() && (

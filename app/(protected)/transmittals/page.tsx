@@ -210,12 +210,13 @@ export default function TransmittalsPage() {
     : waiting > 0 ? `${waiting.toLocaleString()} waiting on a receipt.`
     : `${all.length.toLocaleString()} transmittal${all.length === 1 ? "" : "s"}.`;
   const answerSub = "Documents issued to others, each with a number, a cover sheet and a receipt.";
-  // The numbers behind it, in ruled cells.
+  // The numbers behind it, small; a zero is not a cell (B7). An old rev
+  // out is the one number that needs someone, so it leads when there is one.
   const answerFacts = all.length === 0 ? undefined : [
-    { label: "Old rev out", value: staleIds.size.toLocaleString(), tone: staleIds.size > 0 ? "bad" as const : undefined, hero: staleIds.size > 0 },
+    ...(staleIds.size > 0 ? [{ label: "Old rev out", value: staleIds.size.toLocaleString(), tone: "bad" as const, hero: true }] : []),
     ...(waiting > 0 ? [{ label: "In all", value: all.length.toLocaleString() }] : []),
-    { label: "Drafts", value: drafts.toLocaleString() },
-    { label: "Received", value: received.toLocaleString() },
+    ...(drafts > 0 ? [{ label: "Drafts", value: drafts.toLocaleString() }] : []),
+    ...(received > 0 ? [{ label: "Received", value: received.toLocaleString() }] : []),
   ];
 
   return (
@@ -298,7 +299,7 @@ export default function TransmittalsPage() {
                   });
                   if (t.status === "draft") more.push({ icon: <Trash2 className="w-4 h-4" />, label: "Delete draft", tone: "bad", line: true, onClick: () => doDelete(t) });
                   if (t.status === "issued") more.push({ icon: <Ban className="w-4 h-4" />, label: "Void (issued in error)", tone: "bad", line: true, onClick: () => doVoid(t) });
-                  const small = "inline-flex items-center gap-1.5 h-8 pointer-coarse:h-11 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
+                  const small = "inline-flex items-center gap-1.5 whitespace-nowrap h-8 pointer-coarse:h-11 px-2.5 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-50 transition-colors";
                   return (
                     <tr key={t.id} data-transmittal-id={t.id} className={`scroll-mt-24 align-top md:align-middle max-md:block max-md:relative ${highlightId === t.id ? "bg-[var(--color-accent-soft)]" : "hover:bg-[var(--color-surface-2)]"}`}>
                       <td className="px-4 pt-3 md:py-3 relative max-md:block">
@@ -309,7 +310,7 @@ export default function TransmittalsPage() {
                       <td className="px-4 md:py-3 max-md:block max-md:pr-4 min-w-0">
                         <div className="font-medium text-[var(--color-text)]">{t.subject || "Document transmittal"}</div>
                         <div className="mt-0.5 text-body text-[var(--color-text-muted)] flex flex-wrap items-center gap-x-3 gap-y-1">
-                          {t.purpose && <span className="ui-tag !h-6 !font-sans !text-body">{t.purpose}</span>}
+                          {t.purpose && <span>{t.purpose}</span>}
                           {stale && <span className="ui-pill is-bad" title="A document on it has a newer revision now. The recipient has an old one.">They have an old revision</span>}
                           {t.status === "acknowledged" && t.acknowledgedAt && (
                             <span>Received {humanDate(t.acknowledgedAt)}{t.acknowledgedByName ? ` by ${t.acknowledgedByName}` : ""}{t.acknowledgedVia === "portal" ? ", confirmed by them" : t.acknowledgedVia === "manual" ? ", recorded by us" : ""}</span>
@@ -333,7 +334,7 @@ export default function TransmittalsPage() {
                           )}
                           {t.status === "issued" && (
                             <button type="button" onClick={() => doAcknowledge(t)} disabled={busyId === t.id} title="Record that they received it" className={small}>
-                              {busyId === t.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5 text-[var(--state-released)]" />} Record receipt
+                              {busyId === t.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />} Record receipt
                             </button>
                           )}
                           <MoreMenu items={more} iconOnly label={`More for ${t.number}`} triggerClass="inline-grid place-items-center w-8 h-8 pointer-coarse:w-11 pointer-coarse:h-11 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)]" />

@@ -256,14 +256,15 @@ function CoordinationInner() {
               ? <p className="text-reading text-[var(--color-text-muted)]">The holds didn&apos;t load.</p>
               : <p className="text-reading text-[var(--color-text)]">{holds === 0 ? "Nothing blocked right now." : <span className="font-medium text-[var(--state-held-text)] tabular-nums">{holds} active hold{holds === 1 ? "" : "s"}</span>}</p>}
             {/* How holds are going: one fact a row. */}
-            <dl className="mt-2 divide-y divide-[var(--color-border)] border-t border-[var(--color-border)] text-body">
+            {/* A fact list: label left, value right, space instead of lines. */}
+            <dl className="mt-3 grid gap-1 text-body">
               {([
                 snap.holds.longestActiveDays > 0 ? ["Longest open", `${snap.holds.longestActiveDays}d`] : null,
                 snap.holds.avgClosedDurationDays > 0 ? ["Average to clear", `${snap.holds.avgClosedDurationDays}d`] : null,
                 ["Opened in 7 days", String(snap.holds.openedLast7Days)],
                 ["Cleared in 7 days", String(snap.holds.releasedLast7Days)],
               ].filter(Boolean) as Array<[string, string]>).map(([k, v]) => (
-                <div key={k} className="flex items-center justify-between gap-3 py-1.5">
+                <div key={k} className="flex items-center justify-between gap-3 py-0.5">
                   <dt className="text-[var(--color-text-muted)]">{k}</dt>
                   <dd className={`font-medium tabular-nums ${v === "0" ? "text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{v}</dd>
                 </div>

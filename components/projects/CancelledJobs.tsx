@@ -79,19 +79,20 @@ export function CancelledJobsList({ jobs, canEdit, userId, userEmail, onChanged 
   const [all, setAll] = useState(false);
   const shown = all ? jobs : jobs.slice(0, SHOW_FIRST);
   return (
-    <div className="divide-y divide-[var(--color-border)]">
+    // A short list: space between the jobs, no rule under each.
+    <div className="py-1">
       {err && <div role="alert" className="px-3 py-2 text-caption text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>{err}</span></div>}
       {shown.map((j) => (
         <div key={j.m.id} className="px-3 py-2 flex items-start gap-3">
           <div className="flex-1 min-w-0 text-caption space-y-0.5">
-            <div className="text-[var(--color-text)]">
-              {j.m.workOrderRef && <span className="font-display tabular-nums font-bold">WO {j.m.workOrderRef} · </span>}
-              <b className="break-words">{j.m.name}</b>
+            <div className="text-body text-[var(--color-text)]">
+              {j.m.workOrderRef && <span className="font-display tabular-nums font-semibold">WO {j.m.workOrderRef} · </span>}
+              <b className="font-semibold break-words">{j.m.name}</b>
               {j.crumbs.length > 0 && <span className="text-caption text-[var(--color-text-muted)]"> · {j.crumbs.join(" › ")}</span>}
               {j.steps > 1 && <span className="text-caption text-[var(--color-text-muted)]"> · {j.steps} steps</span>}
             </div>
             <div className="text-[var(--color-text)]">
-              <span className="text-caption font-medium text-[var(--state-held-text)]">Moved to </span>
+              <span className="text-caption text-[var(--color-text-muted)]">Moved to </span>
               {j.m.movedTo ? <b>{j.m.movedTo}</b> : <span className="text-[var(--color-text-faint)]">not said</span>}
             </div>
             {j.m.cancelNote && <div className="italic text-[var(--color-text-muted)] break-words">“{j.m.cancelNote}”</div>}

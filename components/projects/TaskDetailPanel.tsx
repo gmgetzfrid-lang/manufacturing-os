@@ -43,6 +43,7 @@ import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 import { useDraft } from "@/hooks/useDraft";
 import { MoreDetails } from "@/components/ui/MoreDetails";
 import HelpTooltip from "@/components/ui/HelpTooltip";
+import Timeline, { type TimelineItem, type TimelineTone } from "@/components/ui/Timeline";
 
 interface Props {
   milestone: Milestone;
@@ -327,7 +328,7 @@ export default function TaskDetailPanel({
                     {i > 0 && <ChevronRight className="w-2.5 h-2.5 text-[var(--color-text-faint)]" />}
                     <button
                       onClick={() => onSelectMilestone?.(a)}
-                      className="font-medium hover:text-[var(--color-accent-hover)] hover:underline truncate max-w-[120px]"
+                      className="font-medium hover:text-[var(--color-text)] hover:underline truncate max-w-[120px]"
                       title={a.name}
                     >
                       {a.name}
@@ -554,7 +555,7 @@ export default function TaskDetailPanel({
                       value={noteDraft} onChange={(e) => setNoteDraft(e.target.value)}
                       aria-label="Add a note" enterKeyHint="send"
                       placeholder="Add a note…"
-                      className="flex-1 text-caption px-2 py-1.5 border border-[var(--color-border-strong)] rounded-md"
+                      className="flex-1 min-w-0 text-body px-2 py-1.5 border border-[var(--color-border-strong)] rounded-md"
                       onKeyDown={(e) => { if (e.key === "Enter") void addNote(); }}
                     />
                     <button onClick={() => void addNote()} disabled={!noteDraft.trim()} aria-label="Add note" className="ui-hit p-1.5 rounded-md text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-40" title="Add note">
@@ -568,42 +569,33 @@ export default function TaskDetailPanel({
                   <div className="text-caption text-[var(--color-text-faint)] italic">No activity yet.</div>
                 ) : (
                   <>
-                  <ul className="space-y-2">
-                    {(allNotes ? notes : notes.slice(0, NOTES_SHOWN)).map((n) => (
-                      <li key={n.id} className="text-caption">
-                        <div className="flex items-center gap-1.5">
-                          {n.kind === "reschedule"
-                            ? <CalendarDays className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
-                            : n.statusAt
-                              ? <StatusPill status={n.statusAt} dotOnly />
-                              : <MessageSquarePlus className="w-3 h-3 text-[var(--color-text-faint)] shrink-0" />}
-                          <span className="font-medium text-[var(--color-text)]">{n.createdByName ?? "Someone"}</span>
-                          <span className="text-[var(--color-text-faint)]">{n.kind === "status" ? "set status" : n.kind === "reschedule" ? "rescheduled" : "noted"}{n.kind === "status" && n.statusAt ? ` · ${labelOf(n.statusAt)}` : ""}</span>
-                          <span className="text-[var(--color-text-faint)] ml-auto">{fmtWhen(n.createdAt, tz)}</span>
-                        </div>
-                        {editNote && editNote.id === n.id ? (
-                          <div className="mt-1 flex items-center gap-1.5">
-                            <input value={editNote.body} autoFocus aria-label="Edit note" onChange={(e) => setEditNote({ id: editNote.id, body: e.target.value })}
-                              onKeyDown={(e) => { if (e.key === "Enter") void saveNoteEdit(); if (e.key === "Escape") setEditNote(null); }}
-                              className="flex-1 text-caption px-2 py-1 border border-[var(--color-border-strong)] rounded-md bg-[var(--color-surface)]" />
-                            <button onClick={() => void saveNoteEdit()} className="text-body text-[var(--color-accent-text)] hover:underline">Save</button>
-                            <button onClick={() => setEditNote(null)} className="text-caption text-[var(--color-text-muted)]">Cancel</button>
-                          </div>
-                        ) : n.body && (
-                          <div className="group flex items-start gap-1.5 mt-0.5 pl-1 border-l-2 border-[var(--color-border)] ml-1">
-                            <span className="flex-1 text-[var(--color-text-muted)]">{n.body}</span>
-                            {/* A comment is its author's to change. */}
-                            {canEdit && n.kind === "note" && n.id && n.createdBy === userId && (
-                              <span className="shrink-0 flex gap-1.5 text-caption font-medium">
-                                <button onClick={() => setEditNote({ id: n.id!, body: n.body ?? "" })} className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]">Edit</button>
-                                <button onClick={() => void removeNote(n.id!)} className="text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]">Delete</button>
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
+                  {/* Read as a timeline: newest first, by day, a dot and a word for what happened, who as an avatar. */}
+                  <Timeline tz={tz} items={(allNotes ? notes : notes.slice(0, NOTES_SHOWN)).map((n, i): TimelineItem => {
+                    const mine = canEdit && n.kind === "note" && !!n.id && n.createdBy === userId;
+                    return {
+                      id: n.id ?? `note-${i}`,
+                      at: n.createdAt instanceof Date ? n.createdAt.getTime() : (n.createdAt ?? 0),
+                      kind: n.kind === "status" ? (n.statusAt ? labelOf(n.statusAt) : "Set status") : n.kind === "reschedule" ? "Rescheduled" : "Noted",
+                      tone: n.kind === "status" && n.statusAt ? NOTE_TONE[n.statusAt] : "muted",
+                      title: n.body ?? "",
+                      who: n.createdByName ? { uid: n.createdBy, name: n.createdByName } : null,
+                      // A comment is its author's to change.
+                      detail: editNote && editNote.id === n.id ? (
+                        <span className="mt-1 flex items-center gap-1.5">
+                          <input value={editNote.body} autoFocus aria-label="Edit note" onChange={(e) => setEditNote({ id: editNote.id, body: e.target.value })}
+                            onKeyDown={(e) => { if (e.key === "Enter") void saveNoteEdit(); if (e.key === "Escape") setEditNote(null); }}
+                            className="flex-1 min-w-0 text-body px-2 py-1 border border-[var(--color-border-strong)] rounded-md bg-[var(--color-surface)] text-[var(--color-text)]" />
+                          <button onClick={() => void saveNoteEdit()} className="font-medium text-[var(--color-accent-text)] hover:underline">Save</button>
+                          <button onClick={() => setEditNote(null)} className="text-[var(--color-text-muted)]">Cancel</button>
+                        </span>
+                      ) : mine ? (
+                        <span className="flex gap-3 font-medium">
+                          <button onClick={() => setEditNote({ id: n.id!, body: n.body ?? "" })} className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]">Edit</button>
+                          <button onClick={() => void removeNote(n.id!)} className="text-[var(--color-text-faint)] hover:text-[var(--state-overdue-text)]">Delete</button>
+                        </span>
+                      ) : undefined,
+                    };
+                  })} />
                   {notes.length > NOTES_SHOWN && (
                     <button type="button" onClick={() => setAllNotes((v) => !v)} aria-expanded={allNotes}
                       className="mt-2 inline-flex items-center min-h-8 pointer-coarse:min-h-11 text-body font-medium text-[var(--color-accent-text)] hover:underline">
@@ -805,7 +797,7 @@ export default function TaskDetailPanel({
                   className="inline-flex items-center gap-1.5 text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] px-2 py-1 pointer-coarse:min-h-11 rounded-md">
                   <Ban className="w-3.5 h-3.5" /> Cancel job
                 </button>
-                <button onClick={() => void onDelete()} title="Put in by mistake: gone for good" className="inline-flex items-center gap-1.5 text-caption font-medium text-[var(--state-overdue-text)] hover:text-[var(--state-overdue-text)] hover:bg-transparent px-2 py-1 pointer-coarse:min-h-11 rounded-md">
+                <button onClick={() => void onDelete()} title="Put in by mistake: gone for good" className="inline-flex items-center gap-1.5 text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)] hover:bg-[var(--color-surface)] px-2 py-1 pointer-coarse:min-h-11 rounded-md">
                   <Trash2 className="w-3.5 h-3.5" /> Delete task
                 </button>
               </>
@@ -1064,26 +1056,19 @@ function StatusPill({ status, dotOnly }: { status: MilestoneStatus; dotOnly?: bo
     status === "blocked"     ? "bg-[var(--state-overdue)]" :
     status === "missed"      ? "bg-[var(--state-overdue)]" : "bg-[var(--color-border-control)]";
   if (dotOnly) return <span className={`shrink-0 w-2 h-2 rounded-full ${tone}`} title={labelOf(status)} />;
-  const text =
-    status === "completed"   ? "text-[var(--state-released-text)] bg-transparent border-[var(--color-border)]" :
-    status === "in_progress" ? "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]" :
-    status === "on_hold"     ? "text-[var(--state-held-text)] bg-transparent border-[var(--color-border)]" :
-    status === "blocked"     ? "text-[var(--state-overdue-text)] bg-transparent border-[var(--color-border)]" :
-    status === "missed"      ? "text-[var(--state-overdue-text)] bg-transparent border-[var(--color-border)]" : "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]";
-  return <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-caption font-medium border ${text}`}><span className={`w-1.5 h-1.5 rounded-full ${tone}`} />{labelOf(status)}</span>;
+  // A dot and the word in text color (S1): the dot carries the status.
+  return <span className="inline-flex items-center gap-1.5 text-body font-medium text-[var(--color-text)]"><span aria-hidden className={`w-2 h-2 rounded-full ${tone}`} />{labelOf(status)}</span>;
 }
 
 function labelOf(s: MilestoneStatus): string {
   return s === "in_progress" ? "In progress" : s === "on_hold" ? "On hold" : s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+/** A status entry's dot on the activity timeline: green done, amber held, red blocked or missed. */
+const NOTE_TONE: Record<MilestoneStatus, TimelineTone> = {
+  completed: "good", on_hold: "warn", blocked: "bad", missed: "bad", in_progress: "muted", planned: "muted",
+};
 
-/** "Oct 26 14:05" in plant time, like every other time on the schedule. */
-function fmtWhen(iso: string | number | Date | null | undefined, tz: string): string {
-  if (!iso) return "";
-  try { return fmtInTz(iso, tz, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true }); }
-  catch { return ""; }
-}
 
 // datetime-local wants "YYYY-MM-DDTHH:mm" — shown and typed in PLANT time.
 function toLocalInput(iso: string | null | undefined, tz: string): string {
@@ -1199,7 +1184,7 @@ function DependencyEditor({
                   </>
                 ) : linkShort(l) ? <span className="text-caption">{linkShort(l)}</span> : null}
                 {canEdit && (
-                  <button type="button" disabled={saving} onClick={() => void save(deps.filter((dd) => dd !== id))} aria-label="Remove dependency" className="ui-hit p-0.5 rounded-full hover:bg-[var(--color-border)] text-[var(--color-accent-text)] hover:text-[var(--color-text)]" title="Remove dependency">
+                  <button type="button" disabled={saving} onClick={() => void save(deps.filter((dd) => dd !== id))} aria-label="Remove dependency" className="ui-hit p-0.5 rounded-full hover:bg-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]" title="Remove dependency">
                     <XIcon className="w-3 h-3" />
                   </button>
                 )}
@@ -1280,7 +1265,7 @@ function HoldsUpEditor({ milestone, allTasks, canEdit, userId, onChanged, onSele
   return (
     <div className="px-5 py-4 border-b border-[var(--color-border)]">
       <div className="flex items-center gap-1.5 mb-1.5">
-        <ArrowRight className="w-3.5 h-3.5 text-[var(--state-held-text)]" />
+        <ArrowRight className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
         <span className="text-body font-medium text-[var(--color-text-muted)]">Holds up</span>
         <span className="text-caption text-[var(--color-text-faint)]">- can&apos;t start until this is done</span>
       </div>
@@ -1289,12 +1274,12 @@ function HoldsUpEditor({ milestone, allTasks, canEdit, userId, onChanged, onSele
       ) : (
         <div className="space-y-1 mb-1.5">
           {waiting.map((t) => (
-            <div key={t.id} className="flex items-center gap-1.5 rounded-md bg-transparent border border-[var(--color-border)] text-[var(--state-held-text)] text-caption font-medium pl-2 pr-1 py-0.5">
+            <div key={t.id} className="flex items-center gap-1.5 rounded-md bg-transparent border border-[var(--color-border)] text-[var(--color-text)] text-caption font-medium pl-2 pr-1 py-0.5">
               <button type="button" className="flex-1 min-w-0 break-words text-left hover:underline" onClick={() => onSelectMilestone?.(t)} title={withTask(t, byId)}>
                 {withTask(t, byId)}{t.status === "completed" ? " (done)" : ""}
               </button>
               {canEdit && (
-                <button type="button" disabled={saving} onClick={() => void save(t, depsOf(t).filter((d) => d !== me))} aria-label={`${withTask(t, byId)} doesn't wait on this`} className="ui-hit p-0.5 rounded-full hover:bg-transparent text-[var(--state-held-text)] hover:text-[var(--state-held-text)]" title="It doesn't wait on this">
+                <button type="button" disabled={saving} onClick={() => void save(t, depsOf(t).filter((d) => d !== me))} aria-label={`${withTask(t, byId)} doesn't wait on this`} className="ui-hit p-0.5 rounded-full hover:bg-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]" title="It doesn't wait on this">
                   <XIcon className="w-3 h-3" />
                 </button>
               )}

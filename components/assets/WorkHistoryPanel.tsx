@@ -62,7 +62,8 @@ export default function WorkHistoryPanel({ orgId, assetId, code, tag, unitCode }
           No work orders on it yet. A project&apos;s work orders show here once they&apos;re linked to it in the project&apos;s Setup › Units &amp; equipment{code ? `, or carry its number ${code} in the schedule` : ""}.
         </div>
       ) : (
-        <ul className="divide-y divide-[var(--color-border)]">
+        // One group per project, split by space, not a ruled line.
+        <ul className="py-1">
           {[...byProject.entries()].map(([pid, js]) => (
             <li key={pid} className="px-4 py-3 space-y-1.5">
               <Link href={`/projects/${pid}?tab=work`} className="text-reading font-medium text-[var(--color-accent-text)] hover:underline">{js[0].projectName}</Link>

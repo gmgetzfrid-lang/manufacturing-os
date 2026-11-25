@@ -35,6 +35,7 @@ import MoreMenu, { type MoreItem } from "@/components/ui/MoreMenu";
 import { heroPrimary, heroQuiet } from "@/components/ui/PageHero";
 import { docStatusTone, humanDate } from "@/components/documents/StatusTag";
 import CopyId from "@/components/ui/CopyId";
+import Timeline from "@/components/ui/Timeline";
 import { SkeletonText } from "@/components/ui/Skeleton";
 import quietTags from "@/components/documents/quietTags.module.css";
 import CheckoutHistoryPanel from "@/components/documents/CheckoutHistoryPanel";
@@ -436,7 +437,7 @@ export default function InspectorPanel({
           facts in one quiet row (rev, status, who has it, sheet) and what
           changed last, so the panel answers "is this the one I want". ── */}
       <div>
-        <h2 className="font-display text-[26px] leading-[1.15] font-semibold tabular-nums text-[var(--color-heading)] break-words [&_button]:!text-[26px]">
+        <h2 className="font-display text-title leading-[1.15] font-semibold tabular-nums text-[var(--color-heading)] break-words [&_button]:!text-title">
           {selectedDoc.documentNumber
             ? <CopyId value={selectedDoc.documentNumber} label="document number" />
             : bigName}
@@ -447,7 +448,7 @@ export default function InspectorPanel({
         <dl className="mt-4 flex flex-wrap items-start gap-x-8 gap-y-3">
           <div className="min-w-0">
             <dt className="text-body text-[var(--color-text-muted)]">Rev</dt>
-            <dd className="mt-0.5 text-section leading-tight">
+            <dd className="mt-1.5 text-reading leading-tight">
               {revShown ? <CopyId value={revShown} label="revision" /> : <span className="text-reading text-[var(--color-text-muted)]">No revision set</span>}
             </dd>
           </div>
@@ -459,19 +460,21 @@ export default function InspectorPanel({
               </span>
             </dd>
           </div>
-          <div className="min-w-0">
-            <dt className="text-body text-[var(--color-text-muted)]">Checked out</dt>
-            <dd className="mt-1.5 min-w-0"
-              title={isCheckedOut ? `Checked out by ${checkedOutByMe ? "you" : selectedDoc.checkedOutByName || "someone else"}` : undefined}>
-              {isCheckedOut
-                ? <span className="ui-pill is-warn !text-reading max-w-full"><span className="truncate">{checkedOutByMe ? "By you" : `By ${selectedDoc.checkedOutByName || "someone"}`}</span></span>
-                : <span className="ui-pill is-muted !text-reading">No</span>}
-            </dd>
-          </div>
+          {/* Checked out shows only when it is: "No" is not news (B7);
+              Check out below says it is free. */}
+          {isCheckedOut && (
+            <div className="min-w-0">
+              <dt className="text-body text-[var(--color-text-muted)]">Checked out</dt>
+              <dd className="mt-1.5 min-w-0"
+                title={`Checked out by ${checkedOutByMe ? "you" : selectedDoc.checkedOutByName || "someone else"}`}>
+                <span className="ui-pill is-warn !text-reading max-w-full"><span className="truncate">{checkedOutByMe ? "By you" : `By ${selectedDoc.checkedOutByName || "someone"}`}</span></span>
+              </dd>
+            </div>
+          )}
           {sheet && (
             <div className="min-w-0">
               <dt className="text-body text-[var(--color-text-muted)]">Sheet</dt>
-              <dd className="mt-0.5 ui-id text-section leading-tight">{sheet}</dd>
+              <dd className="mt-1.5 ui-id text-reading leading-tight">{sheet}</dd>
             </div>
           )}
         </dl>
@@ -848,19 +851,21 @@ export default function InspectorPanel({
         {auditState === "loading" ? (
           <SkeletonText lines={3} />
         ) : auditState === "failed" ? (
-          <div className="text-body text-[var(--state-overdue)]">Couldn&apos;t load recent activity.</div>
+          <div className="text-body text-[var(--state-overdue-text)]">Couldn&apos;t load recent activity.</div>
         ) : recentAudits.length === 0 ? (
           <div className="text-body text-[var(--color-text-muted)]">No recent activity.</div>
         ) : (
-          <div>
-            {recentAudits.map((log, i) => (
-              <div key={i} className="flex items-baseline gap-3 py-1.5 border-b border-[var(--color-border)] last:border-b-0 text-body">
-                <span className="flex-1 min-w-0 font-medium text-[var(--color-text)]">{(() => { const t = log.action.replace(/_/g, " ").toLowerCase(); return t.charAt(0).toUpperCase() + t.slice(1); })()}</span>
-                <span className="shrink-0 text-body text-[var(--color-text-muted)]">{log.userEmail?.split('@')[0]}</span>
-                <span className="shrink-0 text-body text-[var(--color-text-muted)] tabular-nums">{formatTs(log.timestamp)}</span>
-              </div>
-            ))}
-          </div>
+          // The recent audit tail as a history: by day, who as an avatar.
+          <Timeline items={recentAudits.filter((log) => !!log.timestamp).map((log, i) => {
+            const t = log.action.replace(/_/g, " ").toLowerCase();
+            return {
+              id: `${i}:${log.timestamp}`,
+              at: log.timestamp!,
+              kind: t.charAt(0).toUpperCase() + t.slice(1),
+              title: null,
+              who: { uid: log.userId || null, email: log.userEmail ?? null, name: log.userEmail?.split("@")[0] ?? null },
+            };
+          })} />
         )}
       </PanelSection>
 
@@ -1183,11 +1188,12 @@ function TransmittalTrail({ orgId, documentId, currentRev }: { orgId: string; do
   }, [orgId, documentId]);
 
   if (state === "loading") return <p className="mt-3 text-body text-[var(--color-text-muted)]">Checking transmittals…</p>;
-  if (state === "failed") return <p className="mt-3 text-body text-[var(--state-overdue)]">Couldn&apos;t load the transmittals for this document.</p>;
+  if (state === "failed") return <p className="mt-3 text-body text-[var(--state-overdue-text)]">Couldn&apos;t load the transmittals for this document.</p>;
   // Never transmitted: nothing to show.
   if (rows.length === 0) return null;
   return (
-    <div className="mt-3 rounded-lg border border-[var(--color-border)] px-3 py-2.5">
+    // Inside its section: no box of its own (B3).
+    <div className="mt-3">
       <div className="text-body font-medium text-[var(--color-text-muted)] mb-1.5">Transmitted on</div>
       <ul className="space-y-1">
         {rows.map((r) => {

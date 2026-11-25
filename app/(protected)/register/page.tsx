@@ -131,9 +131,11 @@ export default function RegisterPage() {
     : issues.length === 0 ? "All owned, all in date, nothing on hold."
     : undefined;
   // The numbers behind it: the problems first, in ruled cells.
-  const answerFacts = !kpis || kpis.totalControlled === 0 ? undefined
-    : (issues.length > 0 ? issues : chips.filter((c) => c.key === "in_review" || c.key === "review_due")).slice(0, 4)
-      .map((c) => ({ label: SHORT[c.key] ?? c.label, value: c.n.toLocaleString(), tone: c.n > 0 ? c.tone : undefined }));
+  // A zero is not a cell (B7): "all in date" already says it in words.
+  const factRows = !kpis || kpis.totalControlled === 0 ? []
+    : (issues.length > 0 ? issues : chips.filter((c) => (c.key === "in_review" || c.key === "review_due") && c.n > 0)).slice(0, 4);
+  const answerFacts = factRows.length === 0 ? undefined
+    : factRows.map((c) => ({ label: SHORT[c.key] ?? c.label, value: c.n.toLocaleString(), tone: c.n > 0 ? c.tone : undefined }));
   // Fewer choices up front: only the counts that aren't zero, plus the one in use.
   const shownChips = chips.filter((c) => c.n > 0 || c.key === filter);
 

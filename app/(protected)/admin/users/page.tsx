@@ -347,7 +347,7 @@ export default function AdminUsersPage() {
         facts={members.length > 0 ? [
           { label: 'Active', value: active },
           ...(suspended > 0 ? [{ label: 'Suspended', value: suspended, tone: 'warn' as const }] : []),
-          { label: 'Invited or off', value: notActive },
+          ...(notActive > 0 ? [{ label: 'Invited or off', value: notActive }] : []),
           { label: 'Admins', value: admins },
         ] : undefined}
         primary={

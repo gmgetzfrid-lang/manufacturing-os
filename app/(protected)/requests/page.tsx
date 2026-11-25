@@ -682,11 +682,14 @@ export default function RequestPortal() {
     : waitN > 0 ? `${plural(waitN, 'request')} waiting on you.`
     : metrics.overdue > 0 ? `${plural(metrics.overdue, 'request')} overdue.`
     : `${plural(openN, 'open request')}.`;
+  // The facts behind the answer, all small: the title is the one big thing
+  // (B1). The count the title already says isn't repeated (B5), and a zero
+  // isn't a cell (B7).
+  const titleSays = openN === 0 ? null : waitN > 0 ? 'wait' : metrics.overdue > 0 ? 'overdue' : 'open';
   const facts: HeroFact[] = metrics.totalVolume === 0 ? [] : [
-    { label: 'Waiting on you', value: waitN, tone: waitN > 0 ? 'warn' : undefined, hero: waitN > 0 },
-    { label: 'Overdue', value: metrics.overdue, tone: metrics.overdue > 0 ? 'bad' : undefined, hero: waitN === 0 && metrics.overdue > 0 },
-    ...(narrow ? [] : [{ label: 'Due this week', value: metrics.dueThisWeek }]),
-    { label: 'Open', value: openN },
+    ...(metrics.overdue > 0 && titleSays !== 'overdue' ? [{ label: 'Overdue', value: metrics.overdue, tone: 'bad' as const }] : []),
+    ...(!narrow && metrics.dueThisWeek > 0 ? [{ label: 'Due this week', value: metrics.dueThisWeek }] : []),
+    ...(openN > 0 && titleSays !== 'open' ? [{ label: 'Open', value: openN }] : []),
   ];
   const onlyMine = filters.assignedTo === 'action';
   const filtersOn = filters.status !== 'ALL' || filters.type !== 'ALL' || filters.dateRange !== 'all' || filters.assignedTo !== 'all' || filters.priority !== 'all' || !!filters.search || showClosed;
@@ -765,6 +768,7 @@ export default function RequestPortal() {
         kicker="Drafting requests"
         title={answer}
         facts={facts}
+        factsHero="none"
         sub={waitN > 0 && !onlyMine
           ? <button type="button" onClick={() => setFilters({ ...filters, assignedTo: 'action', status: 'ALL' })} className="text-[var(--color-accent-text)] hover:underline underline-offset-2">Show only what waits on you</button>
           : metrics.staleTickets > 0 ? `${plural(metrics.staleTickets, 'open request')} with no activity in 7 days.` : undefined}

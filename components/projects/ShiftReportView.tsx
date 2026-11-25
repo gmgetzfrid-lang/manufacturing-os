@@ -2598,6 +2598,9 @@ function FollowUpsBox({ open, edit, T, onAdd, onDone }: {
   onAdd: (text: string) => void; onDone: (n: ShiftNote & { shiftKey: string }) => void;
 }) {
   const [text, setText] = useState("");
+  // The add line opens from one button under a list (B9); with none open,
+  // it's there already (the section was opened to add one).
+  const [adding, setAdding] = useState(open.length === 0);
   const add = () => { const t = text.trim(); if (!t) return; onAdd(t); setText(""); };
   return (
     <div className="space-y-2">
@@ -2612,13 +2615,16 @@ function FollowUpsBox({ open, edit, T, onAdd, onDone }: {
           ))}
         </ul>
       )}
-      {edit && (
+      {edit && (adding ? (
         <div className="flex gap-2">
           <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="Add a follow-up item"
+            autoFocus={open.length > 0}
             aria-label="Add a follow-up item" className="flex-1 min-w-0 h-9 pointer-coarse:h-11 px-2.5 rounded-lg border border-transparent bg-[var(--color-surface-2)] text-body text-[var(--color-text)] focus:bg-[var(--color-surface)]" />
           <button type="button" onClick={add} disabled={!text.trim()} className="h-9 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] text-body font-medium disabled:opacity-50">Add</button>
         </div>
-      )}
+      ) : (
+        <button type="button" onClick={() => setAdding(true)} className={SMALL}><Plus aria-hidden className="w-3.5 h-3.5" /> Add a follow-up</button>
+      ))}
     </div>
   );
 }

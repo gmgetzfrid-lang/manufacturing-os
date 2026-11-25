@@ -73,10 +73,11 @@ interface EpisodeDetail {
 }
 
 const CLOSE_REASON_LABEL: Record<string, { label: string; cls: string }> = {
-  checked_in: { label: "Checked in", cls: "bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] text-[var(--state-released)] border-[color-mix(in_srgb,var(--state-released)_35%,transparent)]" },
-  force_released: { label: "Force released", cls: "bg-[color-mix(in_srgb,var(--state-overdue)_10%,transparent)] text-[var(--state-overdue)] border-[color-mix(in_srgb,var(--state-overdue)_35%,transparent)]" },
-  expired: { label: "Auto-expired", cls: "bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] text-[var(--state-held)] border-[color-mix(in_srgb,var(--state-held)_40%,transparent)]" },
-  reconciled: { label: "Closed by cleanup", cls: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" },
+  // A dot and a word (S1), never a filled pill on every row.
+  checked_in: { label: "Checked in", cls: "is-good" },
+  force_released: { label: "Force released", cls: "is-bad" },
+  expired: { label: "Auto-expired", cls: "is-warn" },
+  reconciled: { label: "Closed by cleanup", cls: "is-muted" },
 };
 
 export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeId }: CheckoutHistoryPanelProps) {
@@ -183,10 +184,11 @@ export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeI
   const hasAnything = episodes.length > 0 || legacyCount > 0;
 
   return (
-    <div className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm overflow-hidden">
+    // Sits inside its section's panel: no second box around it (B3).
+    <div>
       <button
         onClick={() => setOpen((v) => !v)}
-        className="w-full px-5 py-3 flex items-center justify-between hover:bg-[var(--color-surface-2)] transition-colors"
+        className="w-full px-2 min-h-10 pointer-coarse:min-h-11 rounded-md flex items-center justify-between hover:bg-[var(--color-surface-2)] transition-colors"
       >
         <span className="text-body font-medium text-[var(--color-text-muted)] flex items-center gap-2">
           <History className="w-3.5 h-3.5 text-[var(--color-text-faint)]" />
@@ -196,7 +198,7 @@ export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeI
       </button>
 
       {open && (
-        <div className="border-t border-[var(--color-border)]">
+        <div className="mt-1">
           {loading ? (
             <div className="p-4 text-center text-body text-[var(--color-text-faint)]">
               <Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Loading register…
@@ -206,14 +208,14 @@ export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeI
               No previous checkouts on record for this document.
             </div>
           ) : (
-            <div className="divide-y divide-[var(--color-border)]">
+            <div className="grid gap-1">
               {episodes.map((ep) => {
                 const reason = CLOSE_REASON_LABEL[ep.closeReason ?? ""] ?? CLOSE_REASON_LABEL.checked_in;
                 return (
                   <div key={ep.id}>
                     <button
                       onClick={() => void expand(ep.id, ep)}
-                      className="w-full px-5 py-2.5 flex items-center gap-3 text-left hover:bg-[var(--color-surface-2)]"
+                      className="w-full px-2 py-2 rounded-md flex items-center gap-3 text-left hover:bg-[var(--color-surface-2)]"
                     >
                       <span className="text-body font-semibold text-[var(--color-text)] font-display tabular-nums shrink-0">#{ep.seq}</span>
                       <span className="flex-1 min-w-0">
@@ -221,7 +223,7 @@ export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeI
                           {ep.openedByName || "Unknown"} · {fmtRange(ep.openedAt, ep.closedAt)}
                         </span>
                       </span>
-                      <span className={`shrink-0 text-body font-medium px-1.5 py-0.5 rounded-full border ${reason.cls}`}>
+                      <span className={`ui-pill shrink-0 ${reason.cls}`}>
                         {reason.label}
                       </span>
                       <ChevronRight className={`w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0 ui-chevron${(expandedId === ep.id) ? " rotate-90" : ""}`} />
@@ -237,7 +239,7 @@ export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeI
                 <div>
                   <button
                     onClick={() => void expand("__legacy__")}
-                    className="w-full px-5 py-2.5 flex items-center gap-3 text-left hover:bg-[var(--color-surface-2)]"
+                    className="w-full px-2 py-2 rounded-md flex items-center gap-3 text-left hover:bg-[var(--color-surface-2)]"
                   >
                     <AlarmClock className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />
                     <span className="flex-1 text-body font-medium text-[var(--color-text-muted)]">
@@ -261,13 +263,13 @@ export default function CheckoutHistoryPanel({ orgId, documentId, activeEpisodeI
 function EpisodeDetailView({ detail, loading }: { detail: EpisodeDetail | null; loading: boolean }) {
   if (loading || !detail) {
     return (
-      <div className="px-5 py-3 bg-[var(--color-surface-2)] text-center text-body text-[var(--color-text-faint)] border-t border-[var(--color-border)]">
+      <div className="px-3 py-3 rounded-md bg-[var(--color-surface-2)] text-center text-body text-[var(--color-text-faint)]">
         <Loader2 className="w-3.5 h-3.5 animate-spin inline mr-2" /> Opening record…
       </div>
     );
   }
   return (
-    <div className="px-5 py-3 bg-[var(--color-surface-2)]/70 border-t border-[var(--color-border)] space-y-3">
+    <div className="px-3 py-3 rounded-md bg-[var(--color-surface-2)]/70 space-y-3">
       {/* Participants */}
       {detail.sessions.length > 0 && (
         <div>

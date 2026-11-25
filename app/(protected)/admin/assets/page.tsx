@@ -52,6 +52,7 @@ import { normalizeTag } from "@/lib/assets";
 import ViewTabs, { EQUIPMENT_VIEWS } from "@/components/navigation/ViewTabs";
 import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
 import LoadingBlock from "@/components/ui/LoadingBlock";
+import HelpTooltip from "@/components/ui/HelpTooltip";
 import MoreMenu, { type MoreItem } from "@/components/ui/MoreMenu";
 import { Modal, ModalHeader, ModalBody, ModalFooter } from "@/components/ui/Modal";
 import { useDraft } from "@/hooks/useDraft";
@@ -346,9 +347,10 @@ function AssetsPageInner() {
   // One number leads only when it needs someone: equipment with no area.
   const facts: HeroFact[] | undefined = loading || error || scope.length === 0 ? undefined : [
     ...(!unitFilter && unitCounts.unassigned > 0 ? [{ label: "Not in an area", value: unitCounts.unassigned.toLocaleString(), tone: "warn" as const, hero: true }] : []),
-    { label: "Without photos", value: scopeNoPhotos.toLocaleString() },
+    // Zeros that aren't news stay quiet: a fact shows only when it counts.
+    ...(scopeNoPhotos > 0 ? [{ label: "Without photos", value: scopeNoPhotos.toLocaleString() }] : []),
     ...(scopeUncat > 0 ? [{ label: "No type yet", value: scopeUncat.toLocaleString() }] : []),
-    ...(unitFilter && currentUnit ? [{ label: "Libraries pinned", value: ((currentUnit.meta.links ?? []) as UnitResourceLink[]).length.toLocaleString() }] : []),
+    ...(unitFilter && currentUnit && ((currentUnit.meta.links ?? []) as UnitResourceLink[]).length > 0 ? [{ label: "Libraries pinned", value: ((currentUnit.meta.links ?? []) as UnitResourceLink[]).length.toLocaleString() }] : []),
   ];
   const sub = loading || error ? undefined : unitFilter ? (
     <>
@@ -919,12 +921,13 @@ function UnitResources({ orgId, unitCode, links, canEdit, onChanged }: {
     );
   }
   return (
-    <div className={`${sheet} overflow-hidden`}>
-      <ul className="divide-y divide-[var(--color-border)]">
+    <div className={`${sheet} overflow-hidden py-1.5`}>
+      {/* A short list: space between the rows, no line under each. */}
+      <ul>
         {links.map((l) => (
           <li key={l.id} className="flex items-center gap-3 pr-2 hover:bg-[var(--color-surface-2)] transition-colors">
             <Link href={`/documents/${l.libraryId}${l.folderId ? `?folderId=${l.folderId}` : ""}`}
-              className="flex-1 min-w-0 flex items-center gap-3 px-4 sm:px-5 py-3">
+              className="flex-1 min-w-0 flex items-center gap-3 px-4 sm:px-5 py-2.5">
               <FolderOpen aria-hidden className="w-4 h-4 shrink-0 text-[var(--color-text-faint)]" />
               <span className="min-w-0">
                 <span className="block text-reading font-medium text-[var(--color-text)] truncate">{l.label}</span>
@@ -940,7 +943,7 @@ function UnitResources({ orgId, unitCode, links, canEdit, onChanged }: {
         ))}
       </ul>
       {canEdit && (
-        <div className="px-4 sm:px-5 py-3 border-t border-[var(--color-border)]">
+        <div className="px-4 sm:px-5 pt-1 pb-1.5">
           <button type="button" onClick={() => setAdding(true)} className={btnLink}>
             <Link2 className="w-4 h-4" /> Pin another library
           </button>
@@ -1122,7 +1125,7 @@ function UnassignedAssignPanel({ assets, book, userId, onAssigned }: {
   const shown = assets.slice(0, 50);
 
   return (
-    <Section label="File each one under its operating area"
+    <Section label={<>File each one under its operating area <HelpTooltip>Where its drawings say which unit, it&apos;s picked already. The site code fills in.</HelpTooltip></>}
       action={chosen.length > 1 ? (
         <Button variant="secondary" {...all.state} doneLabel="Filed" disabled={busy !== null}
           onClick={() => void all.run(() => assign(chosen.map((a) => ({ asset: a, unitCode: choices.get(a.id)! })))).catch(async (e) => { await appAlert({ title: "Couldn't file them all", message: friendlyError(e), tone: "danger" }); })}>
@@ -1130,9 +1133,6 @@ function UnassignedAssignPanel({ assets, book, userId, onAssigned }: {
         </Button>
       ) : undefined}>
       <div className={`${sheet} overflow-hidden`}>
-        <p className="px-4 sm:px-5 py-3 text-body text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
-          Where its drawings say which unit, it&apos;s picked already. The site code fills in.
-        </p>
         <ul className="divide-y divide-[var(--color-border)]">
           {shown.map((a) => {
             const hint = hints.get(a.id);
@@ -1577,10 +1577,10 @@ function AssetEditDrawer({
                         {canEdit && (
                           <div className="absolute top-1 right-1 flex flex-col gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
                             <button onClick={() => markPhotoStatus(p, p.status === "current" ? "needs_verification" : "current")} title={p.status === "current" ? "Mark as needs checking" : "Mark as current"} aria-label={p.status === "current" ? "Mark as needs checking" : "Mark as current"} className="inline-flex items-center justify-center pointer-coarse:size-11 p-1 bg-[var(--color-surface)]/90 rounded hover:bg-[var(--color-surface)]">
-                              <AlertTriangle className="w-3 h-3 text-[var(--state-held)]" />
+                              <AlertTriangle className="w-3 h-3 text-[var(--color-text-muted)]" />
                             </button>
                             <button onClick={() => onDeletePhoto(p)} title="Delete photo" aria-label="Delete photo" className="inline-flex items-center justify-center pointer-coarse:size-11 p-1 bg-[var(--color-surface)]/90 rounded hover:bg-[var(--color-surface)]">
-                              <Trash2 className="w-3 h-3 text-[var(--state-overdue)]" />
+                              <Trash2 className="w-3 h-3 text-[var(--color-text-muted)]" />
                             </button>
                           </div>
                         )}
