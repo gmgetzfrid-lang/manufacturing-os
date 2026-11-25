@@ -269,7 +269,9 @@ export function StepLine({ steps, onDark = false, compact = false }: {
               </div>
             ) : <div className="mt-2.5 pr-3 text-body font-medium truncate text-[var(--color-text)]">{s.label}</div>}
             {!compact && s.note && (
-              <div className={`pr-3 text-body mt-0.5 tabular-nums ${s.tone === "bad" ? "text-[var(--state-overdue-text)] font-medium" : "text-[var(--color-text-muted)]"}`}>{s.note}</div>
+              // The note stays quiet: the page marks only the late part red
+              // (dates and the rest stay gray, docs/design-rules.md B2).
+              <div className="pr-3 text-body mt-0.5 tabular-nums text-[var(--color-text-muted)]">{s.note}</div>
             )}
           </li>
         );
