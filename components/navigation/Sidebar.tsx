@@ -85,6 +85,8 @@ interface NavLeaf {
   tone: Tone;
   badge?: number;
   badgeTone?: 'orange' | 'red' | 'blue';
+  /** Space above it: the first item of a new group. */
+  startsGroup?: boolean;
 }
 interface NavSection {
   id: string;
@@ -228,16 +230,18 @@ export default function Sidebar({
       {
         label: 'Home', hint: 'Your dashboard + live coordination', href: '/dashboard', icon: LayoutDashboard, tone: 'orange',
       },
+      // Three groups split by space, not labels (docs/design-rules.md B3):
+      // the daily work, the plant, and the tools.
       { label: 'Documents',   hint: 'Libraries · board · locks · packages · blocked', href: '/documents',    icon: FileStack, tone: 'blue', ...badgeOf(sectionCounts.documents)   },
-      { label: 'Operating areas', hint: 'Equipment registry by unit · plot-plan map',  href: '/admin/assets', icon: Factory,   tone: 'purple' },
       { label: 'Projects',    hint: 'Project workspaces & milestones',                         href: '/projects',     icon: Briefcase, tone: 'indigo', ...badgeOf(sectionCounts.projects) },
-      { label: 'Companies',   hint: 'Known contractors & vendors - scored on evidence',        href: '/companies',    icon: HardHat,   tone: 'amber' },
       {
-        label: 'Drafting Requests', hint: 'Drafting & design request portal', href: '/requests', icon: MailPlus, tone: 'orange',
+        label: 'Drafting requests', hint: 'Drafting & design request portal', href: '/requests', icon: MailPlus, tone: 'orange',
         ...badgeOf(sectionCounts.requests),
       },
-      { label: 'Intelligence', hint: 'Ask the AI: your documents, the system, the web', href: '/assistant', icon: Bot, tone: 'violet' },
-      { label: 'Output Docs', hint: 'Generate scopes & letters from templates + data', href: '/output-templates', icon: FileOutput, tone: 'orange' },
+      { label: 'Operating areas', hint: 'Equipment registry by unit · plot-plan map',  href: '/admin/assets', icon: Factory,   tone: 'purple', startsGroup: true },
+      { label: 'Companies',   hint: 'Known contractors & vendors - scored on evidence',        href: '/companies',    icon: HardHat,   tone: 'amber' },
+      { label: 'Intelligence', hint: 'Ask the AI: your documents, the system, the web', href: '/assistant', icon: Bot, tone: 'violet', startsGroup: true },
+      { label: 'Output docs', hint: 'Generate scopes & letters from templates + data', href: '/output-templates', icon: FileOutput, tone: 'orange' },
       { label: 'Activity',    hint: 'History + audit log',                             href: '/activity',     icon: Activity, tone: 'emerald' },
     ];
     // Viewers/Contractors hold few or no capabilities — showing them the
@@ -248,7 +252,7 @@ export default function Sidebar({
     // revisions and check review status through a project's Intake tab.
     const work: NavLeaf[] =
       activeRole === 'Viewer' || activeRole === 'Contractor'
-        ? workAll.filter((item) => ['Home', 'Documents', 'Drafting Requests', 'Projects'].includes(item.label))
+        ? workAll.filter((item) => ['Home', 'Documents', 'Drafting requests', 'Projects'].includes(item.label)).map((item) => ({ ...item, startsGroup: false }))
         : workAll;
 
     const admin: NavLeaf[] = isAdmin ? [
@@ -395,20 +399,23 @@ export default function Sidebar({
           const open = isHot || !closedSections.has(section.id);
           return (
             <div key={section.id} className={collapsed ? 'mb-1' : 'mb-3 px-2'}>
-              {collapsed ? (
-                <SectionDivider />
+              {/* The work menu needs no title; Admin, a different place, keeps
+                  its own (closed until wanted). Space splits them, not lines. */}
+              {section.id !== 'work' && (collapsed ? (
+                <div aria-hidden className="h-4" />
               ) : (
                 <SectionHeader section={section} open={open} active={isHot} onToggle={() => toggleSection(section.id)} />
-              )}
-              {(collapsed || open) && (
+              ))}
+              {(collapsed || open || section.id === 'work') && (
                 <div className={collapsed ? 'px-2 space-y-0.5' : 'mt-1 space-y-0.5'}>
                   {section.items.map((leaf) => (
-                    <SidebarLeaf
-                      key={leaf.href}
-                      leaf={leaf}
-                      active={isPathActive(leaf.href)}
-                      collapsed={collapsed}
-                    />
+                    <div key={leaf.href} className={leaf.startsGroup ? (collapsed ? 'pt-3' : 'pt-4') : undefined}>
+                      <SidebarLeaf
+                        leaf={leaf}
+                        active={isPathActive(leaf.href)}
+                        collapsed={collapsed}
+                      />
+                    </div>
                   ))}
                 </div>
               )}
@@ -435,7 +442,7 @@ export default function Sidebar({
               <UserAvatar uid={uid} email={userEmail} size={36} rounded="lg" />
               <div className="ml-2.5 overflow-hidden">
                 <div className="text-body font-medium text-[var(--color-text)] truncate">{userEmail?.split('@')[0] ?? '-'}</div>
-                <div className="text-body text-[var(--color-text-muted)] truncate">{activeOrgId ? (activeRole ?? '…') : 'No workspace'}</div>
+                <div className="text-caption text-[var(--color-text-muted)] truncate">{activeOrgId ? (activeRole ?? '…') : 'No workspace'}</div>
               </div>
             </Link>
             <button
@@ -476,14 +483,6 @@ function SectionHeader({
       </span>
       <ChevronDown aria-hidden className={`ui-chevron w-3.5 h-3.5 text-[var(--color-text-faint)] group-hover/sec:text-[var(--color-text-muted)] ${open ? '' : '-rotate-90'}`} />
     </button>
-  );
-}
-
-function SectionDivider() {
-  return (
-    <div className="px-3 my-2 flex items-center" aria-hidden>
-      <div className="h-px flex-1 bg-[var(--color-border)]" />
-    </div>
   );
 }
 

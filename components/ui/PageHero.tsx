@@ -161,7 +161,9 @@ export function PageHero({
                 {rest.map((f, i) => (
                   <div key={i} className="min-w-0 sm:pb-1">
                     <dt className="text-body text-[var(--color-text-muted)] truncate">{f.label}</dt>
-                    <dd className={`mt-0.5 font-display text-section leading-tight font-semibold tabular-nums whitespace-nowrap ${factColor(f)}`}><CountUp value={f.value} /></dd>
+                    {/* Beside a hero number the others are small (no middle size:
+                        docs/design-rules.md TY5, B4); with no hero they lead. */}
+                    <dd className={`mt-0.5 font-display ${hero ? "text-reading" : "text-section"} leading-tight font-semibold tabular-nums whitespace-nowrap ${factColor(f)}`}><CountUp value={f.value} /></dd>
                   </div>
                 ))}
               </dl>

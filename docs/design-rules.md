@@ -300,6 +300,30 @@ Our tokens live in `app/globals.css`. Type: 12 / 14 / 16 / 20 / 26 / 42 px (capt
 
 ---
 
+## 18. Calm and focused (not boring)
+
+From two posts the owner sent: `DfW8B7oIFoJ` (a buy box rebuilt in four fixes: color, spacing, text sizes, shorter text, with every link and button kept) and `Dft07xmDJkm` (fixing boring design: contrast for focus, a lead color, a simple layout, not playing it safe, room to breathe).
+
+**B1. One focal point per screen.** The one thing the screen is for (the answer, the key number, the list to act on) is the biggest and heaviest; everything else steps back. Two things at the same weight means one of them gets smaller. Check: squint at the screenshot; one thing stands out. (Dft07xmDJkm, DfW8B7oIFoJ)
+
+**B2. Nothing else pulls the eye.** Besides the one accent button, the current tab or menu item and links, color appears only where something needs the person (a status dot, a red count, a real warning). No colored labels, headings or notes for decoration. (DfW8B7oIFoJ: "everything pulls your eye", one button stands out)
+
+**B3. Space splits the groups; each group stays tight.** Groups are 24 to 32 px apart; things inside a group 4 to 8 px. A short list (up to about 8 rows) or a list of facts has no line under every row: space does the job. Long tables keep their row lines. No box inside a box. Check: no ruled line between rows of a short list. (DfW8B7oIFoJ, Dft07xmDJkm)
+
+**B4. Three text sizes per screen,** plus the hero number when the screen has one: a title size, one reading size and one detail size. The text people read (sentences, row titles in lists and cards) is 16 px; dense tables use 14 px for their cells; details (dates, who, counts) one size smaller. Skip the in-between sizes. (DfW8B7oIFoJ: five sizes become three, body text bigger)
+
+**B5. Same information, fewer words.** Cut what repeats; label on the left, value on the right; where a reason or a source is useful but not needed to act, it moves behind a "Why?" tip (`HelpTooltip`). Who did something shows as a small avatar, not their email on every line. Check: no sentence on a row repeats on every row. (DfW8B7oIFoJ: "Fastest delivery" became "Paid fast delivery")
+
+**B6. Every link and button stays.** Calmer never means fewer functions: an action moves (into a menu, behind a tip) but is never dropped. (DfW8B7oIFoJ)
+
+**B7. Zeros that aren't the news stay quiet.** A row of "0 0 0" says nothing; say it once in words ("Nothing filed yet"). A zero that is the news (no overdue steps on a running job) stays. (Dft07xmDJkm)
+
+**B8. Histories read as a timeline:** newest first, grouped by day, a dot and a word for what happened, who as an avatar. `components/ui/Timeline.tsx`. (Dft07xmDJkm)
+
+**B9. A form that isn't the screen's main job opens from one button** ("Add a job"), instead of sitting open under every list. (Dft07xmDJkm)
+
+**B10. Real pictures where the data has them** (equipment photos, document thumbnails), never stock art or decoration (C6). (Dft07xmDJkm)
+
 ## Ideas (optional, use where they fit)
 
 Layout and hierarchy
