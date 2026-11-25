@@ -52,7 +52,7 @@ import {
   ChevronRight, ChevronDown, ArrowLeft, PanelLeftClose, PanelLeftOpen,
   ShieldCheck, UsersRound, FileStack, Palette, Plus, Eye,
   Check, Image as ImageIcon, X, Bot, CreditCard, DatabaseBackup, ArchiveRestore, Compass,
-  HardHat, Upload, BookOpenText, AlertCircle, CheckCircle2, Loader2,
+  HardHat, Upload, BookOpenText, AlertCircle, CheckCircle2, Loader2, HardDriveDownload,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 import { useNotificationCenter } from '@/components/notifications/NotificationCenter';
@@ -623,7 +623,7 @@ function RunningCard({ items }: { items: RunningItem[] }) {
   return (
     <div className="rounded-[14px] border border-[var(--color-border)] bg-[color-mix(in_srgb,var(--color-text)_6%,transparent)] px-3 py-2.5 space-y-3" role="status" aria-live="polite">
       {items.map((it) => {
-        const Icon = it.state === 'error' ? AlertCircle : it.state === 'done' ? CheckCircle2 : it.kind === 'upload' ? Upload : BookOpenText;
+        const Icon = it.state === 'error' ? AlertCircle : it.state === 'done' ? CheckCircle2 : it.kind === 'upload' ? Upload : it.kind === 'backup' ? HardDriveDownload : BookOpenText;
         return (
           <div key={it.id}>
             <div className="flex items-center gap-2.5">
@@ -645,6 +645,12 @@ function RunningCard({ items }: { items: RunningItem[] }) {
               </div>
             )}
             {it.state === 'error' && it.error && <div className="mt-1 text-caption text-[var(--color-text-muted)] line-clamp-2">{it.error}</div>}
+            {it.state === 'running' && it.cancel && (
+              <button type="button" onClick={it.cancel}
+                className={`mt-2 h-8 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-strong)] text-caption font-semibold text-[var(--color-text)] hover:text-[var(--state-overdue-text)] ${HOVER}`}>
+                Cancel
+              </button>
+            )}
             {it.state === 'error' && it.retry && (
               <button type="button" onClick={it.retry}
                 className={`mt-2 h-8 pointer-coarse:h-11 px-3 rounded-lg border border-[var(--color-border-strong)] text-caption font-semibold text-[var(--color-text)] ${HOVER}`}>

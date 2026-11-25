@@ -216,7 +216,7 @@ export default function NewTurnaround({ orgId, actorUserId, actorEmail, actorRol
         <input ref={listInput} type="file" accept={LIST_ACCEPT} className="sr-only" tabIndex={-1} aria-hidden onChange={(e) => { void takeList(e.target.files?.[0]); e.target.value = ""; }} />
         <input ref={schedInput} type="file" accept={SCHEDULE_ACCEPT} className="sr-only" tabIndex={-1} aria-hidden onChange={(e) => { void takeSchedule(e.target.files?.[0]); e.target.value = ""; }} />
 
-        <div className="px-6 py-5 space-y-5 max-h-[70vh] overflow-y-auto">
+        <div className="px-6 py-5 space-y-5 max-h-[calc(100dvh-12rem)] overflow-y-auto">
           {!start ? (
             // ── How do you want to start? ──
             <fieldset>
@@ -363,7 +363,10 @@ function StartCard({ icon: Icon, title, body, action, onPick, onDrag, onFile, bu
       <span className="flex-1 min-w-0">
         <span className="block text-reading font-semibold text-[var(--color-text)]">{title}</span>
         <span className="block mt-0.5 text-body text-[var(--color-text-muted)]">{body}</span>
-        {onFile && <span className="block mt-1.5 text-caption text-[var(--color-text-muted)]">{busy ? "Reading it…" : "Drop the file here, or click to choose it."}</span>}
+        {/* A phone can't drop a file: there, the card is just tapped. */}
+        {onFile && (busy
+          ? <span className="block mt-1.5 text-caption text-[var(--color-text-muted)]">Reading it…</span>
+          : <span className="block mt-1.5 text-caption text-[var(--color-text-muted)] pointer-coarse:hidden">Drop the file here, or click to choose it.</span>)}
       </span>
       <ChevronRight aria-hidden className="w-5 h-5 mt-0.5 shrink-0 text-[var(--color-text-muted)] group-hover:text-[var(--color-text)]" />
     </button>
@@ -374,11 +377,16 @@ function StartCard({ icon: Icon, title, body, action, onPick, onDrag, onFile, bu
 function Fold({ open, onToggle, title, summary, children }: { open: boolean; onToggle: () => void; title: string; summary: string; children: React.ReactNode }) {
   return (
     <div className="rounded-lg border border-[var(--color-border)]">
-      <button type="button" onClick={onToggle} aria-expanded={open} className="w-full flex items-start gap-2 min-h-11 px-3 py-2.5 text-left text-body text-[var(--color-text)]">
-        <ChevronDown aria-hidden className={`ui-chevron w-4 h-4 mt-0.5 shrink-0 text-[var(--color-text-muted)] ${open ? "" : "-rotate-90"}`} />
-        <span className="font-medium shrink-0">{title}</span>
-        <span className="text-[var(--color-text-muted)] min-w-0">{summary}</span>
-        <span className="ml-auto pl-2 shrink-0 font-medium text-[var(--color-accent-text)]">{open ? "Done" : "Change"}</span>
+      {/* The title and Change on one line; what's set on its own line under
+          it, full width (beside the title it squeezed into a thin column on a
+          phone). */}
+      <button type="button" onClick={onToggle} aria-expanded={open} className="w-full min-h-11 px-3 py-2.5 text-left text-body text-[var(--color-text)]">
+        <span className="flex items-center gap-2">
+          <ChevronDown aria-hidden className={`ui-chevron w-4 h-4 shrink-0 text-[var(--color-text-muted)] ${open ? "" : "-rotate-90"}`} />
+          <span className="font-medium">{title}</span>
+          <span className="ml-auto font-medium text-[var(--color-accent-text)]">{open ? "Done" : "Change"}</span>
+        </span>
+        {!open && <span className="block mt-0.5 pl-6 text-[var(--color-text-muted)]">{summary}</span>}
       </button>
       {open && <div className="px-3 pb-3">{children}</div>}
     </div>

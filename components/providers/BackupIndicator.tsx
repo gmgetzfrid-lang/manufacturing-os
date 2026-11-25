@@ -6,19 +6,44 @@
 // what it's doing — which file, which part, how far along. Closing or
 // refreshing the tab is the only thing that kills a run (a beforeunload
 // warning guards that); navigating inside the app never does.
+//
+// Where it shows: on a desktop, in the side menu with the other running
+// work (lib/runningWork), with Cancel and close; this floating card only
+// when there's no side menu on screen (a phone).
 
 import React, { useEffect, useState } from "react";
 import { Loader2, X, HardDriveDownload, CheckCircle2, AlertTriangle } from "lucide-react";
 import {
   subscribeBackup, cancelBackup, dismissBackup, type BackupProgress,
 } from "@/lib/clientBackup";
+import { publishRunning, useRunningDocked } from "@/lib/runningWork";
 
 const mb = (n: number) => `${(n / 1048576).toFixed(0)} MB`;
 
 export default function BackupIndicator() {
   const [p, setP] = useState<BackupProgress | null>(null);
   useEffect(() => subscribeBackup(setP), []);
-  if (!p) return null;
+  const docked = useRunningDocked();
+
+  // The side menu's line for it.
+  useEffect(() => {
+    if (!p) { publishRunning("backup", []); return; }
+    const pctNow = p.filesTotal > 0 ? Math.round((p.filesDone / p.filesTotal) * 100) : 5;
+    const running = !(p.phase === "done" || p.phase === "cancelled" || p.phase === "failed");
+    publishRunning("backup", [running ? {
+      id: "backup", kind: "backup", title: "Backup",
+      detail: `${p.phase === "envelope" ? "Reading every table" : p.phase === "files" ? `File ${p.filesDone + 1} of ${p.filesTotal}` : `Packing part ${p.part}`}. Keep this tab open.`,
+      pct: pctNow, right: `${pctNow}%`, state: "running", cancel: cancelBackup,
+    } : p.phase === "failed" ? {
+      id: "backup", kind: "backup", title: "Backup failed", pct: null, state: "error", error: p.fatalError ?? undefined, dismiss: dismissBackup,
+    } : {
+      id: "backup", kind: "backup", title: p.phase === "cancelled" ? "Backup cancelled" : "Backup complete", pct: null, state: "done", dismiss: dismissBackup,
+      detail: p.phase === "cancelled" ? "The parts so far are saved." : p.errors.length ? `${p.errors.length} file${p.errors.length === 1 ? "" : "s"} missed: see backup-report.json in the last part.` : `${p.part} part${p.part === 1 ? "" : "s"}, every file checked.`,
+    }]);
+  }, [p]);
+  useEffect(() => () => publishRunning("backup", []), []);
+
+  if (!p || docked) return null;
 
   const pct = p.filesTotal > 0 ? Math.round((p.filesDone / p.filesTotal) * 100) : 5;
   const finished = p.phase === "done" || p.phase === "cancelled" || p.phase === "failed";

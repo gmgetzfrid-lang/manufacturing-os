@@ -1,7 +1,8 @@
 // lib/runningWork.ts - work that runs in the background (uploads, the AI
 // reading the library), told to whatever shows it.
 //
-// The drivers (components/providers/UploadIndicator, KnowledgeIndexIndicator)
+// The drivers (components/providers/UploadIndicator, KnowledgeIndexIndicator,
+// BackupIndicator)
 // publish what they're doing here. On a desktop the side menu shows it, with
 // progress, while it runs; the floating corner cards only show when there is
 // no side menu on screen (a phone, where the menu is a closed drawer).
@@ -10,7 +11,7 @@ import { useSyncExternalStore } from "react";
 
 export interface RunningItem {
   id: string;
-  kind: "upload" | "reading";
+  kind: "upload" | "reading" | "backup";
   /** "Uploading 3 files", "Reading the library". */
   title: string;
   /** The file or document, and where it is: "5602-D 1000, page 4 of 12". */
@@ -26,6 +27,8 @@ export interface RunningItem {
   retry?: () => void;
   /** Close a finished or failed line. */
   dismiss?: () => void;
+  /** Stop it while it runs (a backup). */
+  cancel?: () => void;
 }
 
 const bySource = new Map<string, RunningItem[]>();

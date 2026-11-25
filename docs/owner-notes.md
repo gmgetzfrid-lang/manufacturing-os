@@ -96,6 +96,7 @@ Also read: `docs/design-rules.md` (rules are musts, ideas are optional) and `doc
 
 ## Mistakes log (newest first; add one line each time he corrects something)
 
+- Nov 25 (found by running the checklist, before he did): the backup's floating progress card was missed when running work moved into the side menu; a schedule-started project didn't take new work orders from a re-imported schedule; the new-project dialog clipped on a phone and told phone users to "drop" a file. All fixed. Lesson: the checklist finds these; run it every time.
 - Nov 25: New project made everyone go list, scope, shifts, check, then later "import the schedule". Fixed: ask how to start (schedule, list, empty); a schedule's work orders are the scope.
 - Nov 25: Side menu went through four rejected versions (random "+ New", "Recent projects", hiding tools under More, "Checked out to you", "Jump back in", an "Ask the library" box that duplicated Intelligence). What worked: a mock-up first, then build. Kept: Work / Site / Tools, the admin toolbar, running work moved out of the corner cards, On now.
 - Nov 25: Phone sign-in needed scrolling and had a 4 px misalignment. Fixed: fits one screen, one left edge.

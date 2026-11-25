@@ -233,10 +233,22 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
     } catch (e) { return sayError(e); }
   };
   // On the schedule, not in the list: into the scope in one go.
-  const addFromSchedule = async (wos: string[]) => {
-    const r = await addTyped(wos.map((w) => ({ what: facts?.byWo[w]?.name || `WO ${w}`, wo: w, group: "From the schedule" })), "On the schedule, not in the list");
+  const addFromSchedule = async (wos: string[], why = "On the schedule, not in the list") => {
+    const r = await addTyped(wos.map((w) => ({ what: facts?.byWo[w]?.name || `WO ${w}`, wo: w, group: "From the schedule" })), why);
     if (typeof r === "string") setError(r); else if (!r.ok) setError(r.text);
   };
+  // Started from its schedule: the scope IS the schedule's work orders, so
+  // the ones a re-imported schedule brings join the scope on their own
+  // (each once; one taken off the scope stays off, under Removed).
+  const fromSchedule = scope?.start === "schedule";
+  const synced = useRef("");
+  useEffect(() => {
+    if (!canManage || !fromSchedule || !vs?.extra.length) return;
+    const key = vs.extra.join(",");
+    if (synced.current === key) return;
+    synced.current = key;
+    void addFromSchedule(vs.extra, "New on the schedule");
+  }, [vs, canManage, fromSchedule]); // eslint-disable-line react-hooks/exhaustive-deps -- adds what the schedule brought, once
   const ADD_FIELDS: AddField[] = [
     { key: "what", label: "What the work is", placeholder: "e.g. Replace the 6\" gate valve", required: true },
     { key: "equipment", label: "Equipment", placeholder: "e.g. P-60" },
@@ -400,9 +412,9 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
         {/* The schedule against the list, once there is a schedule. */}
         {vs && (vs.missing.length > 0 || vs.extra.length > 0) && (
           <div className="mx-5 mb-4 rounded-md bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] px-3 py-2.5 grid gap-1">
-            <div className="text-body font-semibold text-[var(--state-held-text)]">The schedule and the list don&apos;t match</div>
-            {vs.missing.length > 0 && <p className="text-body text-[var(--color-text)]"><b>{vs.missing.length}</b> in the list, not on the schedule: {vs.missing.slice(0, 8).map((x) => x.wo).join(", ")}{vs.missing.length > 8 ? ` + ${vs.missing.length - 8} more` : ""}. {vs.missing.length === 1 ? "Add it to the schedule, or remove it below if it isn't being done." : "Add them to the schedule, or remove them below if they aren't being done."}</p>}
-            {vs.extra.length > 0 && <p className="text-body text-[var(--color-text)]"><b>{vs.extra.length}</b> on the schedule, not in the list: {vs.extra.slice(0, 8).join(", ")}{vs.extra.length > 8 ? ` + ${vs.extra.length - 8} more` : ""}</p>}
+            <div className="text-body font-semibold text-[var(--state-held-text)]">{fromSchedule ? "The schedule changed" : <>The schedule and the list don&apos;t match</>}</div>
+            {vs.missing.length > 0 && <p className="text-body text-[var(--color-text)]"><b>{vs.missing.length}</b> {fromSchedule ? "in the scope, no longer on the schedule" : "in the list, not on the schedule"}: {vs.missing.slice(0, 8).map((x) => x.wo).join(", ")}{vs.missing.length > 8 ? ` + ${vs.missing.length - 8} more` : ""}. {fromSchedule ? (vs.missing.length === 1 ? "Remove it below if it isn't being done." : "Remove them below if they aren't being done.") : vs.missing.length === 1 ? "Add it to the schedule, or remove it below if it isn't being done." : "Add them to the schedule, or remove them below if they aren't being done."}</p>}
+            {vs.extra.length > 0 && <p className="text-body text-[var(--color-text)]"><b>{vs.extra.length}</b> {fromSchedule ? "new on the schedule, not in the scope yet" : "on the schedule, not in the list"}: {vs.extra.slice(0, 8).join(", ")}{vs.extra.length > 8 ? ` + ${vs.extra.length - 8} more` : ""}</p>}
             {vs.extra.length > 0 && canManage && <Button variant="secondary" className="mt-1 justify-self-start" onClick={() => void addFromSchedule(vs.extra)}><Plus className="w-4 h-4" /> Add {vs.extra.length === 1 ? "it" : `these ${vs.extra.length}`} to the scope</Button>}
           </div>
         )}
