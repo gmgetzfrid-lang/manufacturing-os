@@ -79,7 +79,8 @@ export function AuthCard({ title, sub, children, footer, wide = false, status, s
       {/* The sheet. On a phone it takes the room the card leaves (at least
           enough for the words) and runs under the card's round corners. */}
       <div className="bp-stage surface-side relative flex-1 min-h-[10.5rem] -mb-5 md:mb-0 md:absolute md:inset-x-0 md:top-0 md:h-[52dvh] lg:fixed lg:inset-0 lg:h-auto overflow-hidden">
-        {mode && <div className="bp-camera"><Blueprint /></div>}
+        {/* Placed, not in the flow: the drawing never sets the band's height. */}
+        {mode && <div className="bp-camera absolute inset-0"><Blueprint /></div>}
         <div aria-hidden className="bp-border inset-2.5 lg:inset-5" />
         <div aria-hidden className="bp-zones top-[3px] inset-x-8 lg:top-[3px] lg:inset-x-16">
           {["1", "2", "3", "4", "5", "6", "7", "8"].map((z, i) => <span key={z} className={i > 3 ? "max-sm:hidden" : ""}>{z}</span>)}
@@ -91,7 +92,7 @@ export function AuthCard({ title, sub, children, footer, wide = false, status, s
         <div aria-hidden className="md:hidden absolute inset-x-0 top-0 h-44" style={{ background: "linear-gradient(var(--side-bg, #081d48) 58%, transparent)" }} />
         <div className="bp-intro absolute left-5 right-5 top-6 sm:left-7 sm:right-7 lg:left-16 lg:top-16 lg:right-auto max-w-[30rem]">
           <p className="text-caption font-medium uppercase tracking-[0.14em] text-[var(--color-text-muted)]">Manufacturing OS</p>
-          <p className="mt-2 font-display text-section sm:text-[26px] lg:text-[34px] leading-[1.15] font-semibold text-[var(--color-text)]">
+          <p className="mt-2 font-display text-section sm:text-[26px] lg:text-[34px] leading-[1.15] font-semibold text-balance text-[var(--color-text)]">
             Your site&apos;s drawings, equipment and work, in one place.
           </p>
         </div>

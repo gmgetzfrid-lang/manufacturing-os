@@ -518,9 +518,9 @@ export default function LoginPage() {
       footer={<>
         <p className="text-body text-[var(--color-text-muted)]">
           New company?{" "}
-          <Link href="/signup" className={link}>Start a workspace</Link>
+          <Link href="/signup" className={`${link} ui-hit`}>Start a workspace</Link>
         </p>
-        <p className="text-caption text-[var(--color-text-muted)]">No account? Your workspace admin adds you. Authorized use only.</p>
+        <p className="text-caption text-pretty text-[var(--color-text-muted)]">No account? Your workspace admin adds you. Authorized use only.</p>
       </>}
     >
             {/* A problem sits where it happened: right above the doors it's about. */}
