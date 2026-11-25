@@ -26,7 +26,7 @@ export * from "@/lib/woPackagesCore";
 
 // ── Reading and saving ───────────────────────────────────────
 
-async function readConfig<T>(orgId: string, key: string): Promise<{ data: T | null; updatedAt: string | null }> {
+export async function readConfig<T>(orgId: string, key: string): Promise<{ data: T | null; updatedAt: string | null }> {
   const { data, error } = await supabase.from("org_configurations").select("data, updated_at").eq("org_id", orgId).eq("key", key).maybeSingle();
   if (error) throw new Error(error.message);
   const row = data as { data?: T | null; updated_at?: string | null } | null;
@@ -35,7 +35,7 @@ async function readConfig<T>(orgId: string, key: string): Promise<{ data: T | nu
 
 /** Change a settings row from its latest copy; if someone saved in between,
  *  do it again on theirs (up to 4 times). */
-async function mutateConfig<T>(orgId: string, key: string, empty: T, fn: (cur: T) => T): Promise<T> {
+export async function mutateConfig<T>(orgId: string, key: string, empty: T, fn: (cur: T) => T): Promise<T> {
   for (let attempt = 0; attempt < 4; attempt++) {
     const { data, updatedAt } = await readConfig<T>(orgId, key);
     const next = fn(data ?? empty);

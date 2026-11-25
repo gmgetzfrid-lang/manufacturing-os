@@ -81,6 +81,7 @@ Also read: `docs/design-rules.md` (rules are musts, ideas are optional) and `doc
 48. **Never use the THOR indexer** (the network-drive indexer script in the repo) for anything in the app. Forget it entirely. (Nov 25)
 49. **Every dialog opens over the whole screen**, wherever it's opened from: use the shared `Modal` (it draws over the page), never a hand-made `fixed inset-0` box, and check it on a long page scrolled down. (Nov 25: "that tiny modal is way down the scroll screen")
 50. **Don't box him in with fixed slots.** His sheets and forms are his: he says what each sheet is and what the app fills on it; the app reads the labels on it and suggests, he confirms or changes; some sheets are just printed blank and swapped once signed. (Nov 25)
+53. **Everything is tied together; never a weaker side door.** When a screen needs documents or data, start from what the app already knows (the work order's equipment, its drawings, the app's own find service) and offer it up front; never build a lesser search beside the real one. And let the work build the system: when the work brings in something the system lacks (a drawing for equipment with nothing on file), offer to file it for good. Files live in one place, document control; the equipment registry is the index that points at them. (Nov 25)
 52. **The scope is a list of work orders, one row each, with everything his list says** (WO, description, equipment number, tag and name, category, date added and by whom, notes, drafted/approved, any other column). Grouping by category or equipment is a view he picks, never the shape of the list; nothing is cut off behind "Show all". (Nov 25)
 51. **Count things as what they are.** Packages are counted as packages (one per piece of equipment), not as work orders; a number is never shown twice on one screen. (Nov 25)
 
@@ -100,6 +101,8 @@ Also read: `docs/design-rules.md` (rules are musts, ideas are optional) and `doc
 ---
 
 ## Mistakes log (newest first; add one line each time he corrects something)
+
+- Nov 25: Adding drawings to a work package was a plain name search that ignored the work order's equipment and the app's own find service. Rebuilt: the equipment's documents are offered up front, the app's full search is there, files drop anywhere on the package, and equipment with nothing on file gets offered the new files for good (filed in document control, tagged to the equipment). Lesson 53.
 
 - Nov 25: The imported work order list read by equipment (equipment name in bold, the WO number small and grey on the right), hid the date added, who added it, the equipment number and some notes, and cut groups off behind "Show all". Rebuilt as a work order register (lesson 52). Also: I had reported dark mode as checked for the kit setup when the test hadn't switched the app to dark; re-checked for real. Lesson: look at every screenshot before saying a state was checked.
 

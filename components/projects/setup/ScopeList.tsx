@@ -565,7 +565,7 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
         const g = groupsByKey.get(building) ?? (scope.items.some((x) => x.wo === building) ? packageGroup(scope.items, building) : null);
         return g ? (
           <PackageBuilder orgId={orgId} projectId={projectId} projectName={projectName} workspace={workspace} logoUrl={logoUrl} tz={tz} actorEmail={actorEmail} canManage={canManage}
-            group={g} kit={kit} all={pkgs} onClose={() => setBuilding(null)} onOpenKit={() => setKitOpen(true)}
+            uid={uid} group={g} kit={kit} all={pkgs} onClose={() => setBuilding(null)} onOpenKit={() => setKitOpen(true)}
             onMarkScope={(what) => markScope(g.map((x) => x.wo), what)} />
         ) : null;
       })()}
