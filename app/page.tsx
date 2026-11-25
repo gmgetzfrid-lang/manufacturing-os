@@ -31,6 +31,25 @@ import { Button } from '@/components/ui/Button';
 import { AlertCircle, LogOut, Mail } from 'lucide-react';
 import { SlowNotice, useElapsed, startOver } from '@/components/system/SlowNotice';
 
+/** Whether the app's database answers within a few seconds. The last step of
+ *  a Microsoft sign-in runs on Supabase's server and writes to that
+ *  database; when it isn't answering, that step ends on a bare "upstream
+ *  request timeout" page we can't change. Asked first, so this page can say
+ *  so instead. Any answer, even "not allowed", means it's up. */
+async function databaseAnswers(ms = 6000): Promise<boolean> {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), ms);
+  try {
+    const { error } = await supabase.from("orgs").select("id").limit(1).abortSignal(ctl.signal);
+    return !(error && /abort|fetch|network/i.test(`${error.message} ${(error as { name?: string }).name ?? ""}`));
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(t);
+  }
+}
+const SERVER_DOWN = "The app's server isn't answering, so Microsoft sign-in can't finish. Try again in a minute.";
+
 /** The door this device signed in through last (shown as "Last used"). */
 const LAST_DOOR = "mfgos.signin.last";
 type Door = "microsoft" | "email";
@@ -82,6 +101,9 @@ export default function LoginPage() {
   const deviceKeep = useSyncExternalStore(noStore, rememberDefault, () => true);
   const [keepChoice, setKeepChoice] = useState<boolean | null>(null);
   const [forgot, setForgot] = useState(false);
+  // The server didn't answer the check before Microsoft: the next press goes
+  // anyway (it may just be slow).
+  const [serverSlow, setServerSlow] = useState(false);
   // The email form opens from its button (or already open when this device
   // last signed in with email).
   const [emailOpen, setEmailOpen] = useState(false);
@@ -298,7 +320,13 @@ export default function LoginPage() {
       try { alreadyTried = sessionStorage.getItem(SILENT_TRIED_KEY) === "1"; } catch { /* ignore */ }
       if (prefersMicrosoft() && !alreadyTried) {
         try { sessionStorage.setItem(SILENT_TRIED_KEY, "1"); } catch { /* ignore */ }
-        startMicrosoft({ silent: true, remember: true }); // keeps the spinner; navigates away
+        // Only when the server answers: otherwise the silent try would land
+        // on Supabase's timeout page before anyone pressed anything.
+        void databaseAnswers(4000).then((up) => {
+          if (!active) return;
+          if (up) startMicrosoft({ silent: true, remember: true }); // keeps the spinner; navigates away
+          else { setServerSlow(true); setError(SERVER_DOWN); setView("login"); }
+        });
         return;
       }
       setView("login");
@@ -378,10 +406,18 @@ export default function LoginPage() {
     }
   };
 
-  const handleMicrosoft = () => {
+  const handleMicrosoft = async () => {
     setError(null);
     setOauthLoading(true);
-    startMicrosoft({ silent: false, remember: keepSignedIn });
+    // Checked first (once): a server that isn't answering is said here, not
+    // on Supabase's bare timeout page. Pressed again, it goes anyway.
+    if (!serverSlow && !(await databaseAnswers())) {
+      setServerSlow(true);
+      setOauthLoading(false);
+      setError(SERVER_DOWN);
+      return;
+    }
+    void startMicrosoft({ silent: false, remember: keepSignedIn });
   };
 
   const handleSignOut = async () => {
@@ -466,7 +502,7 @@ export default function LoginPage() {
               <Button variant="secondary" onClick={handleMicrosoft} disabled={loading} loading={oauthLoading}
                 className={`${authBtn} gap-3 ${msLeads ? "!border-[var(--color-border-control)] font-semibold shadow-[var(--shadow-action)]" : ""}`}>
                 {!oauthLoading && <MicrosoftLogo className="w-5 h-5" />}
-                {oauthLoading ? "Opening Microsoft" : "Sign in with Microsoft"}
+                {oauthLoading ? "Opening Microsoft" : serverSlow ? "Try Microsoft again" : "Sign in with Microsoft"}
               </Button>
               {lastDoor === "microsoft" && <LastUsed />}
             </div>
