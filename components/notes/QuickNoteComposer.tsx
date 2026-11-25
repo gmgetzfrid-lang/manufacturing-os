@@ -98,12 +98,15 @@ export default function QuickNoteComposer({ orgId, userId, userEmail, userName, 
       ) : notes.length === 0 ? (
         <div className="py-2 text-caption text-[var(--color-text-muted)]">No notes yet. A note you add below shows here.</div>
       ) : (
-        <ul className="space-y-1.5 mb-2">
+        // Notes sit on this panel itself (no card inside the card), spaced
+        // apart; the words at the reading step of this small panel, who and
+        // when one step smaller.
+        <ul className="space-y-3 mb-3">
           {notes.map((n) => (
-            <li key={n.id} className="group flex items-start gap-2 text-caption">
-              <div className="flex-1 min-w-0 bg-[var(--color-surface)] rounded-md border border-[var(--color-border)] px-2 py-1.5">
-                <CommentBody text={n.body} currentUserId={userId} className="text-[var(--color-text)] text-caption" />
-                <div className="text-caption text-[var(--color-text-faint)] mt-1">{n.createdByName ?? "-"} · {formatAgo(n.createdAt)}</div>
+            <li key={n.id} className="group flex items-start gap-2">
+              <div className="flex-1 min-w-0">
+                <CommentBody text={n.body} currentUserId={userId} className="text-[var(--color-text)] text-body" />
+                <div className="text-caption text-[var(--color-text-muted)] mt-0.5">{n.createdByName ?? "-"} · {formatAgo(n.createdAt)}</div>
               </div>
               {String(n.createdBy) === String(userId) && (
                 <button

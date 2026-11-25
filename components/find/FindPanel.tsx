@@ -95,7 +95,7 @@ function Section({ title, count, children }: { title: string; count?: number; ch
   );
 }
 
-const openBtn = "shrink-0 inline-flex items-center justify-center h-8 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-text-faint)] transition-colors";
+const openBtn = "shrink-0 inline-flex items-center justify-center h-8 pointer-coarse:h-11 px-3 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] hover:border-[var(--color-text-faint)] transition-colors";
 
 /** A document found: Open shows it right here, over the page, and closing
  *  it leaves the search as it was. Folder goes to where it is filed. */
@@ -113,7 +113,7 @@ function DocRow({ d, line, compact, onOpen }: { d: FindDoc; line?: React.ReactNo
       </button>
       <button type="button" onClick={onOpen} className={openBtn} aria-label={`Open ${docLabel(d)}`}>Open</button>
       <Link href={docHref(d)} data-find-doc-folder={d.id} title={`Go to ${d.folderName ?? "where it is filed"}`}
-        className="shrink-0 inline-flex items-center gap-1 text-body text-[var(--color-accent-text)] hover:underline underline-offset-2">
+        className="shrink-0 inline-flex items-center gap-1 pointer-coarse:min-h-11 text-body text-[var(--color-accent-text)] hover:underline underline-offset-2">
         <Folder className="w-3.5 h-3.5" /> Folder
       </Link>
     </li>
@@ -177,7 +177,7 @@ export default function FindPanel({ orgId, f, unit, compact, onOpenFolder, onOpe
             <div className="flex items-center gap-2 text-body text-[var(--color-text-muted)] py-3"><Loader2 className="w-4 h-4 animate-spin" /> Searching…</div>
           )}
           {f.failed && (
-            <p role="alert" className="border-l-[3px] border-[var(--state-overdue)] pl-3 text-body text-[var(--state-overdue)]">
+            <p role="alert" className="border-l-[3px] border-[var(--state-overdue)] pl-3 text-body text-[var(--state-overdue-text)]">
               Part of the search didn&apos;t answer, so some results may be missing. Change the search to try again.
             </p>
           )}

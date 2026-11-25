@@ -26,22 +26,11 @@ import { friendlyError } from "@/lib/friendlyError";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 import { buildNeeds, needsFacts } from "@/components/cockpit/needsYou";
 import NeedsTable, { isNewSince } from "@/components/cockpit/NeedsTable";
-import { rowBtn, link } from "@/components/cockpit/ui";
+import { rowBtn, link, FactLine } from "@/components/cockpit/ui";
 
 interface NotificationBellProps {
   collapsed?: boolean;
   variant?: "sidebar" | "header";
-}
-
-/** A small labelled figure in the drop-down's summary line; zeros muted. */
-function Fact({ label, value, bad = false }: { label: string; value: number; bad?: boolean }) {
-  const tone = value === 0 ? "text-[var(--color-text-faint)]" : bad ? "font-medium text-[var(--state-overdue-text)]" : "font-medium text-[var(--color-text)]";
-  return (
-    <div className="inline-flex items-baseline gap-1.5">
-      <dt className="text-[var(--color-text-muted)]">{label}</dt>
-      <dd className={`tabular-nums ${tone}`}>{value.toLocaleString()}</dd>
-    </div>
-  );
 }
 
 export default function NotificationBell({ collapsed, variant = "sidebar" }: NotificationBellProps) {
@@ -159,12 +148,13 @@ export default function NotificationBell({ collapsed, variant = "sidebar" }: Not
                 </h2>
                 <Link href="/settings/notifications" onClick={() => setOpen(false)} className={`ui-hit text-body ${link}`}>Settings</Link>
               </div>
+              {/* The counts behind it, zeros left out. */}
               {count > 0 && (
-                <dl className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-body">
-                  <Fact label="Overdue" value={facts.overdue} bad />
-                  <Fact label="Waiting on you" value={facts.yourTurn} />
-                  <Fact label="Updates" value={facts.news} />
-                </dl>
+                <FactLine className="mt-1.5" facts={[
+                  { label: "Overdue", value: facts.overdue, bad: true },
+                  { label: "Waiting on you", value: facts.yourTurn },
+                  { label: "Updates", value: facts.news },
+                ]} />
               )}
               {markError && <p role="alert" className="mt-1.5 text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" /><span>{markError}</span></p>}
             </div>

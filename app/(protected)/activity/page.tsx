@@ -3,9 +3,10 @@
 // /activity: the workspace's activity, for people.
 //
 // Different from /admin/audit (a power-user log with raw detail blocks).
-// This is "what's been happening lately?": grouped by day, each change in
-// plain words (who did what to which item, when), linked to the item. A
-// forced release, a hold or a missed milestone gets the red edge.
+// This is "what's been happening lately?": a timeline grouped by day, each
+// change in plain words (what was done to which item, when, who as a small
+// avatar), linked to the item. A forced release, a hold or a missed
+// milestone gets a red dot.
 //
 // Reads the same audit_logs table (the back-end is shared) but renders
 // for humans, not auditors.
@@ -22,9 +23,8 @@ import { ErrorNote } from "@/components/ui/ErrorNote";
 import ViewTabs, { ACTIVITY_VIEWS } from "@/components/navigation/ViewTabs";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
-import { sheet, thead, th, rowBtn, rowHover, link, humanTime, SectionHead } from "@/components/cockpit/ui";
-import { useRouter } from "next/navigation";
-import { transitionPush } from "@/lib/viewTransition";
+import { sheet, rowBtn, link, FactLine } from "@/components/cockpit/ui";
+import Timeline, { type TimelineItem } from "@/components/ui/Timeline";
 
 interface ActivityRow {
   id: string;
@@ -79,7 +79,6 @@ const RESOURCE_LABEL: Record<string, string> = {
 
 export default function ActivityFeedPage() {
   const { activeOrgId } = useRole();
-  const router = useRouter();
   const [rows, setRows] = useState<ActivityRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
@@ -162,21 +161,6 @@ export default function ActivityFeedPage() {
 
   useEffect(() => { void refresh(); }, [refresh]);
 
-  // Group rows by day for the timeline
-  const grouped = useMemo(() => {
-    const out: Array<{ day: string; rows: ActivityRow[] }> = [];
-    const map = new Map<string, ActivityRow[]>();
-    for (const r of rows) {
-      const d = new Date(r.timestamp);
-      const day = d.toLocaleDateString("en-US", d.getFullYear() === new Date().getFullYear() ? { weekday: "long", month: "short", day: "numeric" } : { weekday: "long", month: "short", day: "numeric", year: "numeric" });
-      const list = map.get(day) || [];
-      list.push(r);
-      map.set(day, list);
-    }
-    for (const [day, list] of map) out.push({ day, rows: list });
-    return out;
-  }, [rows]);
-
   // Top-of-feed "pulse" widget: at-a-glance counts so Activity reads like a
   // dashboard, not a raw log. Buckets the loaded window by category + today.
   const pulse = useMemo(() => {
@@ -200,23 +184,20 @@ export default function ActivityFeedPage() {
     : rows.length === 0 ? (error ? "The activity didn't load." : "Nothing has happened yet.")
       : pulse.today === 0 ? "Quiet today." : `${pulse.today} ${pulse.today === 1 ? "change" : "changes"} today.`;
 
-  const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
-  const yesterday = new Date(Date.now() - 86_400_000).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
-
   return (
     <PageShell width="work">
         <PageHero
           kicker="History · Activity"
           title={answer}
+          // The title says today's count; the rest is one quiet line under
+          // it (zeros left out), not a second row of large numbers.
           sub={rows.length > 0
-            ? `The last ${rows.length.toLocaleString()} changes, by ${pulse.actors} ${pulse.actors === 1 ? "person" : "people"}, newest first.`
+            ? <>The last {rows.length.toLocaleString()} changes, by {pulse.actors} {pulse.actors === 1 ? "person" : "people"}, newest first.
+                <FactLine className="mt-2" facts={[
+                  { label: "Revisions", value: pulse.revisions },
+                  { label: "Checkouts", value: pulse.locks },
+                ]} /></>
             : "What happened in the workspace, in plain words."}
-          facts={rows.length > 0 ? [
-            { label: "Today", value: pulse.today, hero: pulse.today > 0 },
-            { label: "Revisions", value: pulse.revisions },
-            { label: "Checkouts", value: pulse.locks },
-          ] : undefined}
-          factsHero={pulse.today > 0 ? "auto" : "none"}
           tools={
             <button type="button" className={heroQuiet} onClick={refresh} disabled={loading} aria-label="Refresh">
               <RefreshCw className={`w-4 h-4 ${loading ? "motion-safe:animate-spin" : ""}`} /><span className="max-sm:hidden">Refresh</span>
@@ -239,8 +220,12 @@ export default function ActivityFeedPage() {
           )
         ) : (
           <>
-            {grouped.map((group) => {
-              const items = group.rows.map((r) => {
+            {/* A history reads as a timeline: grouped by day, newest first,
+                a dot and the words for what happened (red for bad news),
+                who as a small avatar, and the document's own first page
+                where it has one. */}
+            <div className={`${sheet} px-4 py-4 sm:px-5`}>
+              <Timeline items={rows.map((r): TimelineItem => {
                 const meta = ACTION_VERBS[r.action];
                 const verb = meta?.verb ?? r.action.toLowerCase().replace(/_/g, " ");
                 const dm = r.resourceType === "document" ? docMeta.get(r.resourceId) : undefined;
@@ -252,77 +237,30 @@ export default function ActivityFeedPage() {
                   : `${RESOURCE_LABEL[r.resourceType] || r.resourceType} ${r.resourceId.slice(0, 8)}`;
                 const href = dm?.libraryId ? `/documents/${dm.libraryId}?doc=${r.resourceId}` : xm?.href ?? null;
                 const filePath = dm ? docFile.get(r.resourceId) : undefined;
-                return { r, meta, verb, number, name, resourceLabel, href, filePath, who: r.userEmail?.split("@")[0] ?? "Someone", time: humanTime(r.timestamp) };
-              });
-              return (
-                <section key={group.day} aria-label={group.day}>
-                  <SectionHead
-                    title={group.day === today ? `Today, ${group.day.split(", ").slice(1).join(", ")}` : group.day === yesterday ? `Yesterday, ${group.day.split(", ").slice(1).join(", ")}` : group.day}
-                    count={group.rows.length} />
-                  <div className={`${sheet} @container`}>
-                    <table className="hidden @[40rem]:table w-full table-fixed text-body">
-                      <thead className={thead}>
-                        <tr>
-                          <th className={`${th} w-[7.5rem]`}>Time</th>
-                          <th className={`${th} w-[9rem]`}>Who</th>
-                          <th className={`${th} w-[16rem]`}>What</th>
-                          <th className={th}>Item</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-[var(--color-border)]">
-                        {items.map((it) => (
-                          <tr key={it.r.id} className={it.href ? rowHover : ""} onClick={it.href ? () => transitionPush(router, it.href!) : undefined}>
-                            <td className="relative px-4 py-2.5 whitespace-nowrap tabular-nums text-[var(--color-text-muted)]">
-                              {it.meta?.bad && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
-                              {it.time}
-                            </td>
-                            <td className="px-4 py-2.5 truncate text-[var(--color-text)]">{it.who}</td>
-                            <td className={`px-4 py-2.5 ${it.meta?.bad ? "text-[var(--state-overdue-text)] font-medium" : "text-[var(--color-text)]"}`}>
-                              <span className="block min-w-0 truncate">{it.verb}</span>
-                            </td>
-                            <td className="px-4 py-2">
-                              <span className="flex items-center gap-3 min-w-0">
-                                {it.filePath && (
-                                  <DocHoverPreview documentId={it.r.resourceId} filePath={it.filePath} label={it.resourceLabel}>
-                                    <DocThumb filePath={it.filePath} width={28} />
-                                  </DocHoverPreview>
-                                )}
-                                {it.href ? (
-                                  <Link href={it.href} onClick={(e) => e.stopPropagation()} className="ui-id min-w-0 truncate">{it.resourceLabel}</Link>
-                                ) : (
-                                  <span className="ui-id min-w-0 truncate">{it.resourceLabel}</span>
-                                )}
-                                {it.name && <span className="min-w-0 truncate text-body text-[var(--color-text-muted)]">{it.name}</span>}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    <ul className="@[40rem]:hidden divide-y divide-[var(--color-border)]">
-                      {items.map((it) => {
-                        const inner = (
-                          <>
-                            <span className="flex items-baseline gap-3">
-                              <span className="ui-id min-w-0 flex-1 truncate text-reading">{it.resourceLabel}</span>
-                              <span className="shrink-0 text-body text-[var(--color-text-muted)] tabular-nums">{it.time}</span>
-                            </span>
-                            {it.name && <span className="block text-body text-[var(--color-text-muted)] truncate">{it.name}</span>}
-                            <span className={`mt-0.5 block text-body truncate ${it.meta?.bad ? "text-[var(--state-overdue-text)] font-medium" : "text-[var(--color-text)]"}`}>{it.who} {it.verb}</span>
-                          </>
-                        );
-                        return (
-                          <li key={it.r.id} className="relative">
-                            {it.meta?.bad && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-overdue)]" />}
-                            {it.href ? <Link href={it.href} className="block px-4 py-2.5 hover:bg-[var(--color-surface-2)]">{inner}</Link> : <div className="px-4 py-2.5">{inner}</div>}
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </div>
-                </section>
-              );
-            })}
+                return {
+                  id: r.id,
+                  at: r.timestamp,
+                  kind: verb.charAt(0).toUpperCase() + verb.slice(1),
+                  tone: meta?.bad ? "bad" : "muted",
+                  title: (
+                    <>
+                      {filePath && (
+                        <span className="inline-flex align-middle mr-2">
+                          <DocHoverPreview documentId={r.resourceId} filePath={filePath} label={resourceLabel}>
+                            <DocThumb filePath={filePath} width={28} />
+                          </DocHoverPreview>
+                        </span>
+                      )}
+                      {href
+                        ? <Link href={href} className="ui-id">{resourceLabel}</Link>
+                        : <span className="ui-id">{resourceLabel}</span>}
+                    </>
+                  ),
+                  detail: name ?? undefined,
+                  who: r.userEmail ? { email: r.userEmail, name: r.userEmail.split("@")[0] } : null,
+                };
+              })} />
+            </div>
 
             {rows.length >= limit && (
               <div>

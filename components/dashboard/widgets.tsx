@@ -110,9 +110,9 @@ export interface WidgetMeta {
 /** A suggested action: a dot in its status color, the words, and a link. */
 function NudgeList({ nudges }: { nudges: ReturnType<typeof computeNudges> }) {
   return (
-    <ul className="divide-y divide-[var(--color-border)]">
+    <ul>
       {nudges.map((n) => (
-        <li key={n.id} className="py-2.5 flex items-baseline gap-3 text-reading text-[var(--color-text)]">
+        <li key={n.id} className="py-2 flex items-baseline gap-3 text-reading text-[var(--color-text)]">
           <span aria-hidden className={`w-[7px] h-[7px] shrink-0 rounded-full -translate-y-px ${n.severity === "high" ? "bg-[var(--state-overdue)]" : "bg-[var(--state-held)]"}`} />
           <span className="flex-1 min-w-0">{n.message}</span>
           {n.actionLabel && n.href && (
@@ -149,14 +149,22 @@ function InboxBody() {
   if (loading) return <Skeleton />;
   const buckets = dayBuckets(data?.notifDates ?? [], 14);
   const wk = weekSplit(data?.notifDates ?? []);
+  const allZero = !data?.openRequests && !data?.lockedDocs && !data?.activeProjects;
   return (
     // FILL + SCROLL: on phones the height is capped; the list scrolls.
     <div className="-m-4 p-4 flex-1 min-h-0 overflow-y-auto flex flex-col">
-      <FactRow className="-mx-4 -mt-4 border-b border-[var(--color-border)]" cells={[
-        { label: "Open requests", value: (data?.openRequests ?? 0).toLocaleString(), href: "/requests" },
-        { label: "Checked out", value: (data?.lockedDocs ?? 0).toLocaleString(), href: "/documents" },
-        { label: "Active projects", value: (data?.activeProjects ?? 0).toLocaleString(), href: "/projects" },
-      ]} />
+      {/* Three zeros aren't news: one line in words, each still a link. */}
+      {allZero ? (
+        <p className="shrink-0 text-body text-[var(--color-text-muted)]">
+          No open <Link href="/requests" className={link}>requests</Link>, nothing <Link href="/documents" className={link}>checked out</Link>, no active <Link href="/projects" className={link}>projects</Link>.
+        </p>
+      ) : (
+        <FactRow className="-mx-4 -mt-4 border-b border-[var(--color-border)]" cells={[
+          { label: "Open requests", value: (data?.openRequests ?? 0).toLocaleString(), href: "/requests" },
+          { label: "Checked out", value: (data?.lockedDocs ?? 0).toLocaleString(), href: "/documents" },
+          { label: "Active projects", value: (data?.activeProjects ?? 0).toLocaleString(), href: "/projects" },
+        ]} />
+      )}
       {/* Your notifications over two weeks. */}
       <div className="mt-4 shrink-0">
         <div className="flex items-baseline justify-between gap-3 mb-1.5">
@@ -183,7 +191,7 @@ function DailyBriefBody() {
     <div className={`${FILL} ${SCROLL} gap-3`}>
       <DailyBrief data={snap} />
       {nudges.length > 0 && (
-        <div className="border-t border-[var(--color-border)] pt-3">
+        <div className="pt-3">
           <h3 className="text-reading font-medium text-[var(--color-text)]">Suggested actions</h3>
           <NudgeList nudges={nudges} />
         </div>
@@ -300,7 +308,7 @@ function SuggestedActionsBody() {
 // stale warning), holds I opened, transmittals awaiting receipt, and milestones
 // due this week. Interactive markup respond is preserved via resolveMarkupRequest.
 /** A group inside the Outstanding widget: its name as text and a plain
- *  count, then its rows. */
+ *  count, then its rows, spaced rather than ruled (short lists). */
 function WidgetCard({
   title, count, children,
 }: {
@@ -312,8 +320,8 @@ function WidgetCard({
   children: React.ReactNode;
 }) {
   return (
-    <section className="pt-1">
-      <div className="flex items-baseline gap-2 pb-1.5 border-b border-[var(--color-border)]">
+    <section>
+      <div className="flex items-baseline gap-2 pb-1">
         <h3 className="text-reading font-medium text-[var(--color-text)]">{title}</h3>
         <span className="text-body tabular-nums text-[var(--color-text-muted)]">{badgeText(count)}</span>
       </div>
@@ -365,15 +373,15 @@ function OutstandingBody() {
   if (total === 0) {
     return <BodyShell>Nothing outstanding: no markups, checkouts, holds, transmittals or milestones waiting.</BodyShell>;
   }
-  const row = "py-2.5 flex items-center gap-3 min-w-0 text-reading";
+  const row = "py-2 flex items-center gap-3 min-w-0 text-reading";
 
   return (
     <div className={FILL}>
-      <div className={`space-y-5 ${SCROLL}`}>
+      <div className={`space-y-6 ${SCROLL}`}>
         {snap.markupRequestsToMe.length > 0 && (
           <WidgetCard icon={PenLine} title="Markup requests for you" count={snap.markupRequestsToMe.length}>
             {resolveError && <p role="alert" className="mt-2 text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" /><span>{resolveError}</span></p>}
-            <ul className="divide-y divide-[var(--color-border)]">
+            <ul>
               {snap.markupRequestsToMe.slice(0, 6).map((mr) => (
                 <li key={mr.id} className={`${row} flex-wrap`}>
                   <span className="min-w-0 flex-1">
@@ -402,7 +410,7 @@ function OutstandingBody() {
             {snap.myStaleCheckouts.length > 0 && (
               <p className="pt-2.5"><StatusTag tone="overdue">{snap.myStaleCheckouts.length} past the expected release. Check in or extend.</StatusTag></p>
             )}
-            <ul className="divide-y divide-[var(--color-border)]">
+            <ul>
               {snap.myCheckouts.slice(0, 6).map((s) => (
                 <li key={s.id} className={row}>
                   <DocHoverPreview documentId={s.documentId}>
@@ -421,7 +429,7 @@ function OutstandingBody() {
 
         {snap.myOpenHolds.length > 0 && (
           <WidgetCard icon={OctagonPause} title="Holds you opened" count={snap.myOpenHolds.length}>
-            <ul className="divide-y divide-[var(--color-border)]">
+            <ul>
               {snap.myOpenHolds.slice(0, 6).map((h) => (
                 <li key={h.id} className={row}>
                   <span className="min-w-0 flex-1">
@@ -438,7 +446,7 @@ function OutstandingBody() {
 
         {snap.transmittalsAwaitingAck.length > 0 && (
           <WidgetCard icon={Send} title="Transmittals awaiting receipt" count={snap.transmittalsAwaitingAck.length}>
-            <ul className="divide-y divide-[var(--color-border)]">
+            <ul>
               {snap.transmittalsAwaitingAck.slice(0, 6).map((t) => {
                 const tone = ageTone(t.__ageDays);
                 return (
@@ -456,7 +464,7 @@ function OutstandingBody() {
 
         {snap.milestonesUpcoming.length > 0 && (
           <WidgetCard icon={Flag} title="Milestones due this week" count={snap.milestonesUpcoming.length}>
-            <ul className="divide-y divide-[var(--color-border)]">
+            <ul>
               {snap.milestonesUpcoming.slice(0, 8).map((m) => {
                 const d = m.__dueInDays ?? 0;
                 return (
@@ -536,14 +544,14 @@ function AdminAnalyticsBody() {
       {(data?.topLibs?.length ?? 0) > 0 && (
         <div className="mt-4 shrink-0">
           <div className="text-body text-[var(--color-text-muted)] mb-1">Busiest libraries</div>
-          <ul className="divide-y divide-[var(--color-border)]">
+          <ul>
             {data!.topLibs.map((l, i) => (
               <li key={l.id}>
                 <Link href={`/documents/${l.id}`} className="group flex items-center gap-3 py-2 pointer-coarse:min-h-11">
                   <span className="text-reading font-medium text-[var(--color-text)] truncate w-40 group-hover:text-[var(--color-accent-text)]">{l.name}</span>
                   <span className="flex-1 h-2 rounded-sm bg-[var(--color-surface-2)] overflow-hidden">
-                    {/* The busiest one in the brand color, the rest gray. */}
-                    <span className="block h-full rounded-sm" style={{ width: `${(l.count / maxLib) * 100}%`, background: i === 0 ? "var(--color-current)" : "var(--color-text-faint)" }} />
+                    {/* Gray: color is for what needs you; the busiest is a shade darker. */}
+                    <span className="block h-full rounded-sm" style={{ width: `${(l.count / maxLib) * 100}%`, background: i === 0 ? "var(--color-text-muted)" : "var(--color-text-faint)" }} />
                   </span>
                   <span className="font-display text-reading tabular-nums text-[var(--color-text)] w-14 text-right">{l.count.toLocaleString()}</span>
                 </Link>

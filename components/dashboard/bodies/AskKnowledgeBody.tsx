@@ -328,7 +328,7 @@ export default function AskKnowledgeBody() {
                 </p>
                 {parts.p.settle.length > 0 && (
                   <div className="mt-2 border-l-2 border-[var(--state-held)] pl-2.5">
-                    <div className="text-body font-medium text-[var(--state-held-text)]">To settle this</div>
+                    <div className="text-body font-medium text-[var(--color-text)]">To settle this</div>
                     <ul className="mt-0.5 space-y-0.5">
                       {parts.p.settle.slice(0, 2).map((b, i) => (
                         <li key={i} className="text-body text-[var(--color-text)]"><Inline text={b.text} onCite={(n) => openCite(citeByN(n))} /></li>
@@ -359,8 +359,8 @@ export default function AskKnowledgeBody() {
                               {c.url ? (c.title ?? c.url) : docDesignation(c.documentName ?? "Document")}
                               {clause ? ` § ${clause}` : ""}{c.page ? ` · p.${c.page}` : ""}
                             </span>
-                            {c.role === "decides" && <span className="ml-auto shrink-0 text-[var(--state-released-text)]">decides</span>}
-                            {c.role === "limits" && <span className="ml-auto shrink-0 text-[var(--state-held-text)]">limits</span>}
+                            {c.role === "decides" && <span className="ml-auto shrink-0 text-[var(--color-text)]">decides</span>}
+                            {c.role === "limits" && <span className="ml-auto shrink-0 text-[var(--color-text)]">limits</span>}
                           </div>
                           <div className="mt-0.5 text-body leading-snug text-[var(--color-text-muted)] line-clamp-3">
                             {win ? (

@@ -30,7 +30,7 @@ import { formatBytes } from "@/lib/formatBytes";
 
 export default function ProfilePage() {
   const router = useRouter();
-  const { uid, userEmail, activeRole, activeOrgId } = useRole();
+  const { uid, userEmail, activeOrgId } = useRole();
   const [displayName, setDisplayName] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -137,14 +137,9 @@ export default function ProfilePage() {
           kicker="Your profile"
           size="md"
           title={`Signed in as ${shownName}.`}
+          // Your role and workspaces are in the Workspaces list below, so
+          // the header doesn't repeat them as a row of facts.
           sub={userEmail ?? undefined}
-          // A role and a count of workspaces: facts, not one number that
-          // matters, so all small.
-          facts={[
-            { label: "Role", value: activeRole || "None" },
-            { label: "Workspaces", value: orgs.length },
-          ]}
-          factsHero="none"
           tools={
             <>
               <Link href="/settings/notifications" className={heroQuiet} aria-label="Notification settings">
@@ -181,7 +176,7 @@ export default function ProfilePage() {
                       </button>
                       {hasAvatar && (
                         <button type="button" disabled={avatarBusy} onClick={() => void removeAvatar()}
-                          className={`${btnLink} !text-[var(--state-overdue-text)]`}>
+                          className={`${btnLink} !text-[var(--color-text-muted)] hover:!text-[var(--color-text)]`}>
                           Remove photo
                         </button>
                       )}
@@ -262,7 +257,8 @@ export default function ProfilePage() {
                     <th className={tbl.th}><span className="sr-only">Current</span></th>
                   </tr>
                 </thead>
-                <tbody className={tbl.tbody}>
+                {/* A few workspaces: space between them, no rule under each. */}
+                <tbody className="ui-stagger">
                   {orgs.map((o) => (
                     <tr key={o.org_id}>
                       <td className={`${tbl.td} font-medium text-reading text-[var(--color-text)] max-w-0`}>

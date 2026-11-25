@@ -148,12 +148,12 @@ export default function NotificationSettingsPage() {
         <PageBody>
         {error && <p role="alert" className="text-body font-medium text-[var(--state-overdue-text)] flex items-start gap-1.5"><CircleAlert aria-hidden className="w-4 h-4 shrink-0 mt-px" /><span>{error}</span></p>}
 
-        <Card pad={false} className="divide-y divide-[var(--color-border)] overflow-hidden">
+        <Card pad={false} className="overflow-hidden">
           <PrefRow title="Email notifications" hint="Off means no email at all, whatever is set below."
             on={prefs.email_enabled} onChange={(v) => setPrefs({ ...prefs, email_enabled: v })} strong />
         </Card>
 
-        <Card label="Email me when" pad={false} className={`divide-y divide-[var(--color-border)] overflow-hidden ${prefs.email_enabled ? "" : "opacity-50"}`}>
+        <Card label="Email me when" pad={false} className={`py-2 overflow-hidden ${prefs.email_enabled ? "" : "opacity-50"}`}>
           {EVENTS.map((ev) => (
             <PrefRow key={ev.key} title={ev.title} hint={ev.hint} disabled={!prefs.email_enabled}
               on={prefs[ev.key] as boolean} onChange={(v) => setPrefs({ ...prefs, [ev.key]: v })} />
@@ -186,9 +186,9 @@ function PrefRow({ title, hint, on, onChange, disabled, strong }: {
   title: string; hint: string; on: boolean; onChange: (v: boolean) => void; disabled?: boolean; strong?: boolean;
 }) {
   return (
-    <div className="px-4 sm:px-5 py-4 flex items-start gap-4">
+    <div className={`px-4 sm:px-5 ${strong ? "py-4" : "py-3"} flex items-start gap-4`}>
       <div className="flex-1 min-w-0">
-        <div className={`${strong ? "text-reading" : "text-reading"} font-medium text-[var(--color-text)]`}>{title}</div>
+        <div className="text-reading font-medium text-[var(--color-text)]">{title}</div>
         <div className="text-body text-[var(--color-text-muted)] mt-0.5">{hint}</div>
       </div>
       <Toggle label={title} on={on} onChange={onChange} disabled={disabled} />

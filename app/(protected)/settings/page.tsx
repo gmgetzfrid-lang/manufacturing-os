@@ -47,10 +47,11 @@ const WORKSPACE: Array<{ group: string; rows: Row[] }> = [
 
 function Rows({ rows }: { rows: Row[] }) {
   return (
-    <ul className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] divide-y divide-[var(--color-border)] overflow-hidden">
+    // A short list: space between the rows, no rule under each.
+    <ul className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] py-1.5 overflow-hidden">
       {rows.map((r) => (
         <li key={r.href}>
-          <Link href={r.href} className="group flex items-center gap-4 px-4 sm:px-5 min-h-[60px] py-3 hover:bg-[var(--color-surface-2)] transition-colors">
+          <Link href={r.href} className="group flex items-center gap-4 px-4 sm:px-5 min-h-14 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors">
             <span className="min-w-0 flex-1">
               <span className="block text-reading font-medium text-[var(--color-text)]">{r.name}</span>
               <span className="block text-body text-[var(--color-text-muted)]">{r.what}</span>

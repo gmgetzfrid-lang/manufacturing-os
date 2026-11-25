@@ -92,16 +92,12 @@ export default function SearchPage() {
   const answerSub = q.length < 2
     ? "Tags, equipment IDs, drawing numbers, words from the drawings, and the requests, projects and notes that mention them."
     : `For “${q}”.`;
-  const searchFacts = q.length >= 2 && found ? [
-    { label: "Documents", value: nDocs.toLocaleString() },
-    { label: "Equipment", value: nEq.toLocaleString() },
-    { label: "Requests, projects, notes", value: others.length.toLocaleString() },
-  ] : undefined;
 
   return (
     <PageShell width="work">
-      {/* The title already says the count, so the facts stay small. */}
-      <PageHero kicker="Search" title={answer} sub={answerSub} facts={searchFacts} factsHero="none">
+      {/* The title already says what was found, and each section heading
+          its count: no row of numbers repeating them. */}
+      <PageHero kicker="Search" title={answer} sub={answerSub}>
         <form onSubmit={(e) => e.preventDefault()} className="relative" role="search">
           <Search aria-hidden className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-muted)] pointer-events-none" />
           <input

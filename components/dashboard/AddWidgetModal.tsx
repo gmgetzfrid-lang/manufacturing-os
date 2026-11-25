@@ -51,14 +51,15 @@ export default function AddWidgetModal({ open, onClose, existingTypes, isAdmin, 
           </label>
         </div>
 
-        <div className="p-4 pt-3 overflow-y-auto space-y-4">
+        <div className="p-4 pt-3 overflow-y-auto space-y-6">
           {ORDER.map((cat) => {
             const list = entries.filter((m) => m.category === cat);
             if (list.length === 0) return null;
             return (
               <section key={cat}>
-                <h3 className="pb-1.5 border-b border-[var(--color-border)] text-reading font-medium text-[var(--color-text)]">{cat}</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 sm:gap-x-6 divide-y divide-[var(--color-border)] sm:divide-y-0">
+                {/* A few widgets per group: spaced, not ruled. */}
+                <h3 className="pb-1 text-reading font-medium text-[var(--color-text)]">{cat}</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 sm:gap-x-6">
                   {list.map((m) => {
                     const n = count(m.type);
                     const blocked = n > 0 && !m.multi;
@@ -66,7 +67,7 @@ export default function AddWidgetModal({ open, onClose, existingTypes, isAdmin, 
                     return (
                       <button key={m.type} type="button" disabled={blocked}
                         onClick={() => { onAdd(m.type); setJustAdded(m.type); }}
-                        className={`relative flex items-center gap-3 py-2.5 px-2 -mx-2 rounded-md text-left transition-colors sm:border-b sm:border-[var(--color-border)] ${
+                        className={`relative flex items-center gap-3 py-2.5 px-2 -mx-2 rounded-md text-left transition-colors ${
                           blocked ? "opacity-60 cursor-default" : "hover:bg-[var(--color-surface-2)]"}`}>
                         <Icon aria-hidden className="w-[18px] h-[18px] shrink-0 text-[var(--color-text-muted)]" />
                         <div className="min-w-0 flex-1">

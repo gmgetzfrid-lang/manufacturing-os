@@ -3,8 +3,8 @@
 // Customizable Home: a control-room overview.
 //
 // The header answers "what needs me": the date as the kicker (no
-// greeting), the answer as the title, ONE large number (overdue when
-// anything is, else what waits on you) and the rest small. Under it: a new
+// greeting), the answer as the title (the one big thing on the screen), the
+// first item named, and the counts behind it as one quiet line. Under it: a new
 // workspace's setup checklist (admins, until the essentials are done), the
 // "Needs you" table, the libraries (wide, about 62%) beside your projects
 // (narrow, about 38%), then the widgets, each a full-width section (its
@@ -31,6 +31,7 @@ import { PageHero, PageBody, heroPrimary, heroQuiet } from "@/components/ui/Page
 import { useTicketNotifications } from "@/hooks/useTicketNotifications";
 import { buildNeeds, needsFacts } from "@/components/cockpit/needsYou";
 import HomeStrips from "@/components/cockpit/HomeStrips";
+import { FactLine } from "@/components/cockpit/ui";
 import type { DashboardConfig, DashboardWidget, WidgetType } from "@/lib/dashboard/types";
 import {
   loadDashboardConfig, saveDashboardConfig, newWidgetId, GRID_COLS, localDashboardConfig,
@@ -307,7 +308,7 @@ export default function DashboardGrid() {
       : attnCount > 0
         ? `${attnCount.toLocaleString()} ${attnCount === 1 ? "thing needs" : "things need"} you.`
         : "Nothing needs you right now.";
-  const sub = (() => {
+  const firstUp = (() => {
     if (failed) return <>The list of what waits on you didn&apos;t load. {friendlyError(attnError)}</>;
     if (!lead) return attnLoading ? null : "No requests, reviews or alerts are waiting on you.";
     const todo = lead.todo && !/^[A-Z]{2}/.test(lead.todo) ? lead.todo.charAt(0).toLowerCase() + lead.todo.slice(1) : lead.todo;
@@ -316,20 +317,34 @@ export default function DashboardGrid() {
     return <>First up: {lead.ref ? <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{lead.ref} </span> : null}<span className="text-[var(--color-text)]">{lead.name}</span>{todo ? `, ${todo}` : ""}{when}.</>;
   })();
   const showFacts = !failed && !(attnLoading && attnCount === 0);
+  // Something late: its count is the one big red number (contrast pulls the
+  // eye to it), the rest small, zeros left out. Nothing late: the answer is
+  // the one big thing and the counts are one quiet line under "First up".
+  const lateHero = showFacts && facts.overdue > 0;
+  const heroFacts = lateHero ? [
+    { label: "Overdue", value: facts.overdue, tone: "bad" as const, hero: true },
+    ...(facts.yourTurn > 0 ? [{ label: "Waiting on you", value: facts.yourTurn }] : []),
+    ...(facts.dueSoon > 0 ? [{ label: "Due this week", value: facts.dueSoon }] : []),
+  ] : undefined;
+  const sub = firstUp || showFacts ? (
+    <>
+      {firstUp}
+      {showFacts && !lateHero && (
+        <FactLine className="mt-2" facts={[
+          { label: "Overdue", value: facts.overdue, bad: true },
+          { label: "Waiting on you", value: facts.yourTurn },
+          { label: "Due this week", value: facts.dueSoon },
+        ]} />
+      )}
+    </>
+  ) : null;
 
   const band = (
     <PageHero
       kicker={dateLine || "Home"}
       title={answer}
       sub={sub}
-      // One large number: what is late when anything is, else what waits
-      // on you. The others small; zeros muted.
-      facts={showFacts ? [
-        { label: "Overdue", value: facts.overdue, tone: facts.overdue > 0 ? "bad" : undefined, hero: facts.overdue > 0 },
-        { label: "Waiting on you", value: facts.yourTurn, hero: facts.overdue === 0 && facts.yourTurn > 0 },
-        { label: "Due this week", value: facts.dueSoon, tone: facts.dueSoon > 0 ? "warn" : undefined },
-      ] : undefined}
-      factsHero={showFacts && facts.overdue + facts.yourTurn > 0 ? "auto" : "none"}
+      facts={heroFacts}
       tools={loaded && config ? (
         <>
           <button type="button" onClick={() => setAddOpen(true)} className={heroQuiet} aria-label="Add widget">

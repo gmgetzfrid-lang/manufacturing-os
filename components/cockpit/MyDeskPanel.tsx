@@ -1,6 +1,7 @@
 "use client";
 
-// MyDeskPanel: "what am I sitting on right now?" in one ruled table.
+// MyDeskPanel: "what am I sitting on right now?" on one sheet: short lists
+// under a band each, spaced rather than ruled.
 //
 //   * Everything I have checked out (with its clock and a one-click release)
 //   * Downloaded copies of mine that have since gone stale (re-pull links)
@@ -210,11 +211,11 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
         {checkouts.length > 0 && (
           <>
             <h3 className={band}>Your checkouts {count(checkouts.length)}</h3>
-            <ul className="divide-y divide-[var(--color-border)]">
+            <ul className="py-1.5">
               {checkouts.map((c) => {
                 const k = clock(c);
                 return (
-                  <li key={c.sessionId} className="relative flex items-center gap-3 px-4 py-2.5">
+                  <li key={c.sessionId} className="relative flex items-center gap-3 px-4 py-2">
                     {k.hot && <span aria-hidden className="absolute left-0 inset-y-0 w-[3px] bg-[var(--state-held)]" />}
                     <Link href={docHref(c.libraryId, c.documentId)} className="min-w-0 flex-1">
                       <span className="ui-id block text-reading truncate hover:text-[var(--color-accent-text)]">{c.docLabel}</span>
@@ -243,17 +244,17 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
         {staleCopies.length > 0 && (
           <>
             <h3 className={band}>Your copies that are out of date {count(staleCopies.length)}</h3>
-            <ul className="divide-y divide-[var(--color-border)]">
+            <ul className="py-1.5">
               {staleCopies.slice(0, 5).map((s) => (
                 <li key={s.documentId}>
-                  <Link href={docHref(s.libraryId, s.documentId)} className="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-2)]">
+                  <Link href={docHref(s.libraryId, s.documentId)} className="flex items-center gap-3 px-4 py-2 hover:bg-[var(--color-surface-2)]">
                     <span className="ui-id min-w-0 flex-1 text-reading truncate">{s.docLabel}</span>
                     <StatusTag tone="held">You have Rev {s.downloadedRev ?? "?"}, now Rev {s.currentRev ?? "?"}</StatusTag>
                   </Link>
                 </li>
               ))}
               {staleCopies.length > 5 && (
-                <li className="px-4 py-2.5 text-body text-[var(--color-text-muted)]">and {staleCopies.length - 5} more</li>
+                <li className="px-4 py-2 text-body text-[var(--color-text-muted)]">and {staleCopies.length - 5} more</li>
               )}
             </ul>
           </>
@@ -262,10 +263,10 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
         {branches.length > 0 && (
           <>
             <h3 className={band}>Your branches to reconcile {count(branches.length)}</h3>
-            <ul className="divide-y divide-[var(--color-border)]">
+            <ul className="py-1.5">
               {branches.map((b) => (
                 <li key={b.id}>
-                  <Link href={docHref(b.libraryId, b.documentId)} className="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-2)]">
+                  <Link href={docHref(b.libraryId, b.documentId)} className="flex items-center gap-3 px-4 py-2 hover:bg-[var(--color-surface-2)]">
                     <span className="ui-id min-w-0 flex-1 text-reading truncate">{b.docLabel}</span>
                     <span className="shrink-0 text-body text-[var(--color-text-muted)]">
                       Since {new Date(b.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}

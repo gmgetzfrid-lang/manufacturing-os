@@ -15,7 +15,8 @@ import { loadOpenRequests } from "@/lib/dashboard/widgetLoads";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
 import { TrendChip, MiniBars, Sparkline, SegmentBar, dayBuckets, type Segment } from "../viz";
-import { StatusTag, LateEdge, WorkBar, rowBtn, link, thead, th, humanDate, humanTime } from "@/components/cockpit/ui";
+import { StatusTag, LateEdge, WorkBar, rowBtn, link, thead, th, humanDate } from "@/components/cockpit/ui";
+import Timeline, { type TimelineItem } from "@/components/ui/Timeline";
 import { useProjectProgress } from "@/components/cockpit/projectProgress";
 import {
   useWidget, useSetting, useWidgetData, Tabs, SearchField, useDebounced, Skeleton, Empty, timeAgo,
@@ -181,7 +182,8 @@ export function DraftingRequestsBody() {
                     <td className={`${td} whitespace-nowrap`}>
                       {t.assigned_drafter_name || t.assigned_drafter_id
                         ? <span className="text-[var(--color-text)]">{t.assigned_drafter_id === uid ? "You" : t.assigned_drafter_name}</span>
-                        : <StatusTag tone="held">Unassigned</StatusTag>}
+                        // The Status column already flags it: no second amber word here.
+                        : <span className="text-[var(--color-text-muted)]">Unassigned</span>}
                     </td>
                     <td className={`${td} whitespace-nowrap`}>
                       {t.priority === 1 ? <StatusTag tone="overdue">Urgent, {st.label.toLowerCase()}</StatusTag> : <StatusTag tone={st.tone}>{st.label}</StatusTag>}
@@ -397,10 +399,6 @@ const KIND_OF = (r: AuditRow): Exclude<ActKind, "all"> => {
   return "admin";
 };
 
-const KIND_WORD: Record<Exclude<ActKind, "all">, string> = {
-  documents: "Document", requests: "Request", projects: "Project", knowledge: "Knowledge", admin: "Admin",
-};
-
 /** "DOCUMENT_REV_UP" → "Document rev up". */
 const humanize = (a: string | null) => {
   const s = (a ?? "activity").replace(/_/g, " ").toLowerCase();
@@ -409,7 +407,6 @@ const humanize = (a: string | null) => {
 
 function ActivityFeed({ adminView }: { adminView: boolean }) {
   const { uid } = useRole();
-  const router = useRouter();
   const { expanded } = useWidget();
   const [kind, setKind] = useState<ActKind>("all");
   const [onlyMine, setOnlyMine] = useSetting<boolean>("onlyMine", false);
@@ -451,11 +448,6 @@ function ActivityFeed({ adminView }: { adminView: boolean }) {
     if (t === "library") return { href: `/documents/${id}`, label: name ?? null };
     return { href: null, label: name ?? null };
   };
-  const when = (iso: string | null) => {
-    if (!iso) return "–";
-    const d = new Date(iso);
-    return d.toDateString() === new Date().toDateString() ? humanTime(iso) : `${humanDate(iso)}, ${humanTime(iso)}`;
-  };
   return (
     <div className={FILL}>
       <div className="shrink-0 flex items-end gap-x-4 gap-y-2 flex-wrap">
@@ -482,61 +474,23 @@ function ActivityFeed({ adminView }: { adminView: boolean }) {
       {shown.length === 0 ? (
         <Empty>No {kind === "all" ? "" : `${kind} `}activity{onlyMine ? " of yours" : ""} yet.</Empty>
       ) : (
-        <div className="@container -mx-4 -mb-4 mt-3 flex-1 min-h-0 overflow-y-auto border-t border-[var(--color-border)]">
-          <table className={`hidden @[40rem]:table ${wTable}`}>
-            <thead className={`${thead} sticky top-0 z-[1]`}>
-              <tr>
-                <th className={th}>When</th>
-                <th className={th}>Who</th>
-                <th className={th}>What</th>
-                <th className={th}>Item</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--color-border)]">
-              {shown.map((r) => {
-                const { href, label } = linkFor(r);
-                const who = r.user_id === uid ? "You" : (r.user_email ?? "").split("@")[0] || "Someone";
-                return (
-                  <tr key={r.id} className={href ? wRow : ""} onClick={href ? () => router.push(href) : undefined}>
-                    <td className={`${td} whitespace-nowrap text-[var(--color-text-muted)] tabular-nums`} title={r.timestamp ? new Date(r.timestamp).toLocaleString("en-US") : undefined}>{when(r.timestamp)}</td>
-                    <td className={`${td} whitespace-nowrap text-[var(--color-text)]`}>{who}</td>
-                    <td className={`${td} whitespace-nowrap text-[var(--color-text)]`}>
-                      <span className="inline-flex items-center gap-2"><span className="ui-tag is-more !h-6 !text-caption">{KIND_WORD[KIND_OF(r)]}</span>{humanize(r.action)}</span>
-                    </td>
-                    <td className={`${td} max-w-0 w-full`}>
-                      {href
-                        ? <Link href={href} onClick={(e) => e.stopPropagation()} className="ui-id block truncate">{label ?? "Open"}</Link>
-                        : <span className="block truncate text-[var(--color-text-muted)]">{label ?? "–"}</span>}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          <ul className="@[40rem]:hidden divide-y divide-[var(--color-border)]">
-            {shown.map((r) => {
-              const { href, label } = linkFor(r);
-              const who = r.user_id === uid ? "You" : (r.user_email ?? "").split("@")[0] || "Someone";
-              const inner = (
-                <>
-                  <span className="flex items-baseline gap-3">
-                    <span className="min-w-0 flex-1 truncate text-reading text-[var(--color-text)]">
-                      {humanize(r.action)}{label ? <span className="ui-id"> {label}</span> : null}
-                    </span>
-                    <span className="shrink-0 text-body text-[var(--color-text-muted)] tabular-nums">{when(r.timestamp)}</span>
-                  </span>
-                  <span className="mt-0.5 block text-body text-[var(--color-text-muted)]">{who}</span>
-                </>
-              );
-              return (
-                <li key={r.id}>
-                  {href
-                    ? <Link href={href} className="block px-4 py-2.5 hover:bg-[var(--color-surface-2)]">{inner}</Link>
-                    : <div className="px-4 py-2.5">{inner}</div>}
-                </li>
-              );
-            })}
-          </ul>
+        // A history reads as a timeline: by day, newest first, what was done
+        // and to which item (a link), who as a small avatar.
+        <div className="mt-3 flex-1 min-h-0 overflow-y-auto">
+          <Timeline items={shown.map((r): TimelineItem => {
+            const { href, label } = linkFor(r);
+            return {
+              id: r.id,
+              at: r.timestamp ?? 0,
+              kind: humanize(r.action),
+              title: href
+                ? <Link href={href} className="ui-id">{label ?? "Open"}</Link>
+                : label ? <span className="ui-id">{label}</span> : null,
+              who: r.user_id || r.user_email
+                ? { uid: r.user_id, email: r.user_email, name: r.user_id === uid ? "You" : (r.user_email ?? "").split("@")[0] || null }
+                : null,
+            };
+          })} />
         </div>
       )}
     </div>

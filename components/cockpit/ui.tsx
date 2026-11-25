@@ -113,6 +113,29 @@ export function humanizeDates(text: string): string {
   return text.replace(/\b(\d{4}-\d{2}-\d{2})(?:T[\d:.]+Z?)?\b/g, (m, day: string) => humanDate(day) || m);
 }
 
+/** The counts behind an answer as one quiet line, label then figure at the
+ *  detail size ("Overdue 1   Waiting on you 8"), so they back the answer up
+ *  without competing with it. A zero isn't news, so it is left out; a late
+ *  count reads red. Nothing at all when every count is zero. Spans only, so
+ *  it can sit inside a paragraph (a header's short line). */
+export function FactLine({ facts, className = "" }: {
+  facts: Array<{ label: string; value: number; bad?: boolean }>;
+  className?: string;
+}) {
+  const shown = facts.filter((f) => f.value > 0);
+  if (shown.length === 0) return null;
+  return (
+    <span className={`flex flex-wrap gap-x-4 gap-y-1 text-body ${className}`}>
+      {shown.map((f) => (
+        <span key={f.label} className="inline-flex items-baseline gap-1.5">
+          <span className="text-[var(--color-text-muted)]">{f.label}</span>
+          <span className={`font-semibold tabular-nums ${f.bad ? "text-[var(--state-overdue-text)]" : "text-[var(--color-text)]"}`}>{f.value.toLocaleString()}</span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
 /** A small ruled row of counts (label over figure), for a section's footer
  *  or a body's head. Each cell can open what it counts. */
 export function FactRow({ cells, className = "" }: {

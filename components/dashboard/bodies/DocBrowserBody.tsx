@@ -166,7 +166,8 @@ export default function DocBrowserBody() {
       <div className="shrink-0">{search}</div>
       <div className="mt-3 flex-1 min-h-0 @container">
         <div className="h-full flex flex-col @min-[34rem]:flex-row gap-4">
-          <div className="flex-1 min-h-0 min-w-0 overflow-y-auto overscroll-contain rounded-md border border-[var(--color-border)]" data-widget-list>{left}</div>
+          {/* On the widget's sheet itself: no second box inside it. */}
+          <div className="-mx-4 @min-[34rem]:mr-0 flex-1 min-h-0 min-w-0 overflow-y-auto overscroll-contain" data-widget-list>{left}</div>
           <div className="h-56 shrink-0 @min-[34rem]:h-auto @min-[34rem]:w-[44%]">{map}</div>
         </div>
       </div>
@@ -191,8 +192,9 @@ export default function DocBrowserBody() {
       // edge.
       <div className="mb-3 flex flex-wrap items-end justify-between gap-x-4 gap-y-1 shrink-0">
         <span className="whitespace-nowrap text-body text-[var(--color-text-muted)]">
-          {/* Small: the page has its one large number already. */}
-          <span className={`font-display text-section font-semibold tabular-nums ${(top?.totalDocs ?? 0) === 0 ? "text-[var(--color-text-faint)]" : "text-[var(--color-heading)]"}`}>{(top?.totalDocs ?? 0).toLocaleString()}</span> controlled documents
+          {/* A count in words at the detail size: the page has its one big
+              thing already, and a zero isn't news. */}
+          {(top?.totalDocs ?? 0) === 0 ? "No controlled documents yet" : <><span className="font-semibold tabular-nums text-[var(--color-text)]">{(top?.totalDocs ?? 0).toLocaleString()}</span> controlled documents</>}
         </span>
         <div className="flex items-center gap-3 min-w-0">
           <TrendChip current={wk.cur} previous={wk.prev} what="new" />
@@ -201,7 +203,8 @@ export default function DocBrowserBody() {
       </div>
     );
     return shell(head, results ?? (
-      <ul className="divide-y divide-[var(--color-border)]">
+      // A short list (the libraries): spaced, not ruled.
+      <ul>
         {chosen.map((l) => (
           <li key={l.id}>
             <button type="button" onClick={() => go(l.id)} data-widget-lib={l.id}
@@ -211,7 +214,8 @@ export default function DocBrowserBody() {
                     className="w-9 h-9 shrink-0" rounded="rounded-lg" iconSize="w-4 h-4" />
                 : <span className="ui-icon-tile is-solid"><Library className="w-[18px] h-[18px]" /></span>}
               <span className="min-w-0 flex-1 text-reading font-medium text-[var(--color-text)] truncate">{l.name}</span>
-              {l.count != null && <span className="shrink-0 inline-flex items-center gap-1.5 text-body text-[var(--color-text-muted)]"><span className="ui-count">{l.count.toLocaleString()}</span> doc{l.count === 1 ? "" : "s"}</span>}
+              {/* An empty library shows no "0 docs": a zero isn't news. */}
+              {l.count != null && l.count > 0 && <span className="shrink-0 inline-flex items-center gap-1.5 text-body text-[var(--color-text-muted)]"><span className="ui-count">{l.count.toLocaleString()}</span> doc{l.count === 1 ? "" : "s"}</span>}
               <ChevronRight className="w-4 h-4 shrink-0 text-[var(--color-text-faint)]" />
             </button>
           </li>

@@ -1,8 +1,8 @@
 "use client";
 
 // /inbox: everything that waits on you, in one place. The header says how
-// many things need you, with ONE large number (overdue when anything is,
-// else what waits on you); then the "Needs you" table (the same feed as
+// many things need you, the first one named and the counts behind it in
+// one quiet line; then the "Needs you" table (the same feed as
 // the bell; what came in since you last looked reads as new), suggested
 // next steps, your queue (one ruled table: markups, requests, holds,
 // transmittals, reviews, sign-offs, acknowledgments, access
@@ -35,7 +35,7 @@ import { AttentionFeed, type AttnFilter } from "@/components/cockpit/AttentionFe
 import GroupedTable, { type Group } from "@/components/cockpit/GroupedTable";
 import { buildNeeds, needsFacts } from "@/components/cockpit/needsYou";
 import { withAsk, plainDate } from "@/lib/asks";
-import { StatusTag, rowBtn, iconBtn, link, humanDate, sheet, SectionHead } from "@/components/cockpit/ui";
+import { StatusTag, rowBtn, iconBtn, link, humanDate, sheet, SectionHead, FactLine } from "@/components/cockpit/ui";
 import { useNotificationsSeen, readSeen } from "@/components/notifications/seen";
 
 export default function InboxPage() {
@@ -342,15 +342,14 @@ export default function InboxPage() {
       <PageHero
         kicker="Home · Inbox"
         title={answer}
-        sub={lead ? <>First up: {lead.ref ? <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{lead.ref} </span> : null}<span className="text-[var(--color-text)]">{lead.name}</span>{lead.todo ? `, ${/^[A-Z]{2}/.test(lead.todo) ? lead.todo : lead.todo.charAt(0).toLowerCase() + lead.todo.slice(1)}` : ""}{lead.due ? (lead.overdue ? `, overdue since ${plainDate(lead.due)}` : `, due ${plainDate(lead.due)}`) : ""}.</> : null}
-        // One large number: what is late when anything is, else what waits
-        // on you. The others small; zeros muted.
-        facts={[
-          { label: "Overdue", value: facts.overdue, tone: facts.overdue > 0 ? "bad" : undefined, hero: facts.overdue > 0 },
-          { label: "Waiting on you", value: facts.yourTurn, hero: facts.overdue === 0 && facts.yourTurn > 0 },
-          { label: "Due this week", value: facts.dueSoon, tone: facts.dueSoon > 0 ? "warn" : undefined },
-        ]}
-        factsHero={facts.overdue + facts.yourTurn > 0 ? "auto" : "none"}
+        // The answer is the one big thing; the counts behind it are one
+        // quiet line under "First up" (zeros left out).
+        sub={lead ? <>First up: {lead.ref ? <span className="font-display font-semibold tabular-nums text-[var(--color-text)]">{lead.ref} </span> : null}<span className="text-[var(--color-text)]">{lead.name}</span>{lead.todo ? `, ${/^[A-Z]{2}/.test(lead.todo) ? lead.todo : lead.todo.charAt(0).toLowerCase() + lead.todo.slice(1)}` : ""}{lead.due ? (lead.overdue ? `, overdue since ${plainDate(lead.due)}` : `, due ${plainDate(lead.due)}`) : ""}.
+          <FactLine className="mt-2" facts={[
+            { label: "Overdue", value: facts.overdue, bad: true },
+            { label: "Waiting on you", value: facts.yourTurn },
+            { label: "Due this week", value: facts.dueSoon },
+          ]} /></> : null}
         tools={
           <>
             <button type="button" onClick={() => void refresh({ fresh: true })} disabled={loading || refreshing} className={heroQuiet} aria-label="Refresh">
@@ -388,11 +387,12 @@ export default function InboxPage() {
         {nudges.length > 0 && (
           <section aria-label="Suggested next steps">
             <SectionHead title="Suggested next steps" count={nudges.length} />
-            <ul className={`${sheet} divide-y divide-[var(--color-border)]`}>
+            {/* A short list: space between the rows, no rule under each. */}
+            <ul className={`${sheet} py-2`}>
               {nudges.map((n) => (
-                <li key={n.id} className="px-4 py-3 flex items-baseline gap-3 text-reading text-[var(--color-text)]">
+                <li key={n.id} className="px-4 py-2 flex items-baseline gap-3 text-reading text-[var(--color-text)]">
                   <span aria-hidden className={`w-[7px] h-[7px] shrink-0 rounded-full -translate-y-px ${n.severity === "high" ? "bg-[var(--state-overdue)]" : "bg-[var(--state-held)]"}`} />
-                  {n.severity === "high" && <span className="shrink-0 text-body font-medium text-[var(--state-overdue-text)]">Urgent</span>}
+                  {n.severity === "high" && <span className="shrink-0 text-body font-medium text-[var(--color-text)]">Urgent</span>}
                   <span className="flex-1 min-w-0">{n.message}</span>
                   {n.actionLabel && n.href && <Link href={n.href} className={`ui-hit shrink-0 text-body font-medium ${link}`}>{n.actionLabel}</Link>}
                 </li>

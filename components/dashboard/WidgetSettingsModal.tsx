@@ -93,7 +93,7 @@ export default function WidgetSettingsModal({ widget, onClose, onSave }: Props) 
         return docLibs === null ? <Skeleton className="h-24 w-full rounded-lg" /> : docLibs.length === 0 ? (
           <p className="text-body text-[var(--color-text-muted)]">No libraries yet.</p>
         ) : (
-          <div className="max-h-52 overflow-y-auto rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+          <div className="max-h-52 overflow-y-auto rounded-lg border border-[var(--color-border)] py-1">
             {docLibs.map((l) => (
               <label key={l.id} className="flex items-center gap-2.5 px-3 py-2 hover:bg-[var(--color-surface-2)] cursor-pointer">
                 <input type="checkbox" checked={sel.has(l.id)} className="w-4 h-4 accent-[var(--color-text)]"
@@ -135,7 +135,7 @@ export default function WidgetSettingsModal({ widget, onClose, onSave }: Props) 
         </div>
         <div className="px-5 py-3 border-t border-[var(--color-border)] flex items-center gap-2">
           <button type="button" onClick={() => setDraft({})} title="Back to this widget's defaults"
-            className={`mr-auto ${btnLink}`}>
+            className={`mr-auto ${btnLink} !text-[var(--color-text-muted)] hover:!text-[var(--color-text)]`}>
             <RotateCcw className="w-3.5 h-3.5" /> Reset
           </button>
           <button type="button" onClick={onClose} className={heroQuiet}>Cancel</button>

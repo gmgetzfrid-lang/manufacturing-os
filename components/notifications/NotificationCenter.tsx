@@ -23,6 +23,7 @@ import { friendlyError } from "@/lib/friendlyError";
 import { useTicketNotifications } from "@/hooks/useTicketNotifications";
 import { AttentionFeed, type AttnFilter } from "@/components/cockpit/AttentionFeed";
 import { buildNeeds, needsFacts } from "@/components/cockpit/needsYou";
+import { FactLine } from "@/components/cockpit/ui";
 import { heroPrimary, heroQuiet } from "@/components/ui/PageHero";
 import { useNotificationsSeen } from "./seen";
 
@@ -165,19 +166,13 @@ function CenterPanel({
             </button>
           </div>
           <h2 className="font-display text-title font-semibold text-[var(--color-text)]">{answer}</h2>
+          {/* The counts behind it, zeros left out. */}
           {counts.all > 0 && (
-            <dl className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-body">
-              {[
-                { label: "Overdue", value: nf.overdue, bad: true },
-                { label: "Waiting on you", value: nf.yourTurn, bad: false },
-                { label: "Updates", value: nf.news, bad: false },
-              ].map((f) => (
-                <div key={f.label} className="inline-flex items-baseline gap-1.5">
-                  <dt className="text-[var(--color-text-muted)]">{f.label}</dt>
-                  <dd className={`tabular-nums ${f.value === 0 ? "text-[var(--color-text-faint)]" : f.bad ? "font-semibold text-[var(--state-overdue-text)]" : "font-semibold text-[var(--color-text)]"}`}>{f.value.toLocaleString()}</dd>
-                </div>
-              ))}
-            </dl>
+            <FactLine className="mt-2" facts={[
+              { label: "Overdue", value: nf.overdue, bad: true },
+              { label: "Waiting on you", value: nf.yourTurn },
+              { label: "Updates", value: nf.news },
+            ]} />
           )}
           {leadRow && (
             <Link href={leadRow.link} onClick={() => { if (leadRow.notificationId) void markRead(leadRow.notificationId).catch(() => {}); onClose(); }}

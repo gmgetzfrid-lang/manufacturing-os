@@ -111,9 +111,9 @@ export function DailyBrief({ data }: { data: InboxSnapshot }) {
         </Link>
       )}
       {sentences.length > 0 && (
-        <ul className="mt-3 divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
+        <ul className="mt-3 space-y-1">
           {sentences.map((line, i) => (
-            <li key={i} className="py-2 text-body text-[var(--color-text)]">{line.charAt(0).toUpperCase() + line.slice(1)}</li>
+            <li key={i} className="py-1 text-reading text-[var(--color-text)]">{line.charAt(0).toUpperCase() + line.slice(1)}</li>
           ))}
         </ul>
       )}

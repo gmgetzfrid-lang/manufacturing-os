@@ -20,10 +20,11 @@ export const QUICK_ACTIONS: Array<{ label: string; sub: string; href?: string; i
 export function QuickLaunch() {
   const openSearch = () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
   return (
-    <ul className="divide-y divide-[var(--color-border)]">
+    // Four rows: spaced, not ruled.
+    <ul className="py-1.5">
       {QUICK_ACTIONS.map((a) => {
         const inner = (
-          <span className="flex items-center gap-3 px-4 py-3 hover:bg-[var(--color-surface-2)] transition-colors">
+          <span className="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors">
             {/* A plain muted icon, no tile: the words say what it is. */}
             <a.icon aria-hidden className="w-[18px] h-[18px] shrink-0 text-[var(--color-text-muted)]" />
             <span className="min-w-0 flex-1">
