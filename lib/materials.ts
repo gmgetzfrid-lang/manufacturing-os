@@ -33,10 +33,42 @@ export const closed = (s: MaterialStatus) => s === "used" || s === "cancelled";
 export type OwnerRole = "warehouse" | "crew";
 export const OWNER_WORD: Record<OwnerRole, string> = { warehouse: "Warehouse", crew: "Crew" };
 
+/** What was wrong with what was ordered, and whose miss it was: logged on
+ *  the line when it's corrected, counted at the end of the job. */
+export type CorrectionKind = "wrong_item" | "wrong_size" | "wrong_spec" | "wrong_qty" | "damaged" | "short" | "other";
+export type CorrectionCause = "ordered_wrong" | "vendor_wrong" | "spec_wrong" | "scope_change" | "other";
+export const CORRECTION_KIND_WORD: Record<CorrectionKind, string> = {
+  wrong_item: "Wrong item", wrong_size: "Wrong size", wrong_spec: "Wrong material or rating", wrong_qty: "Wrong quantity", damaged: "Damaged", short: "Came short", other: "Something else",
+};
+export const CORRECTION_CAUSE_WORD: Record<CorrectionCause, string> = {
+  ordered_wrong: "We ordered it wrong", vendor_wrong: "The vendor sent it wrong", spec_wrong: "The spec was wrong", scope_change: "The scope changed", other: "Something else",
+};
+/** The fields a correction changes (what it was, what it is now). */
+export type CorrectedFields = Partial<Pick<MaterialFields, "item" | "spec" | "size" | "qty" | "vendor">>;
+export interface Correction {
+  id: string;
+  /** ISO time it was logged, and by whom. */
+  at: string; by: string | null;
+  kind: CorrectionKind; cause: CorrectionCause;
+  before: CorrectedFields; after: CorrectedFields;
+  /** Days the job lost to it, and what it cost (dollars), when known. */
+  daysLost: number | null; cost: number | null;
+  note: string;
+}
+
+/** A new correction's id. */
+export const newCorrectionId = () => `c_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
 export interface MaterialFields {
   kind: MaterialKind;
   item: string;
   spec: string;
+  /** "2\"", "3/4 x 3": the BOM's SIZE column (column `size`). */
+  size: string;
+  /** Its line number on the work order's bill of materials (column `line_no`); empty: in the order added. */
+  lineNo: number | null;
+  /** What was corrected on it after it was ordered (column `corrections`). */
+  corrections: Correction[];
   /** What the specification still lacks ("length"). Empty: complete. */
   specMissing: string;
   qty: string;
@@ -68,7 +100,7 @@ export interface Material extends MaterialFields {
 }
 
 export const blankMaterial = (phaseId: string | null): MaterialFields => ({
-  kind: "material", item: "", spec: "", specMissing: "", qty: "", workOrder: "", owner: "", crewOwner: "", vendor: "", status: "to_specify",
+  kind: "material", item: "", spec: "", size: "", lineNo: null, corrections: [], specMissing: "", qty: "", workOrder: "", owner: "", crewOwner: "", vendor: "", status: "to_specify",
   needBy: null, verifyBy: null, eta: null, etaNote: "", question: "", questionAt: null, questionBy: null, answer: "", note: "", phaseId,
 });
 
@@ -155,7 +187,7 @@ export const ageWord = (h: number) => (h < 1 ? "under 1 h" : h < 48 ? `${Math.ro
 /** The register in counts. `lines` leaves out cancelled lines; `received`
  *  is in hand and not yet used; `used` is done on the job; `noOwner` is
  *  open lines missing either owner. */
-export interface RegisterSummary { lines: number; materials: number; offsite: number; specIncomplete: number; openQuestions: number; late: number; received: number; used: number; noOwner: number; needAttention: number }
+export interface RegisterSummary { lines: number; materials: number; offsite: number; specIncomplete: number; openQuestions: number; late: number; received: number; used: number; noOwner: number; needAttention: number; corrections: number }
 export function summarize(rows: MaterialFields[], now: number): RegisterSummary {
   const live = rows.filter((r) => r.status !== "cancelled");
   return {
@@ -167,7 +199,34 @@ export function summarize(rows: MaterialFields[], now: number): RegisterSummary 
     used: live.filter((r) => r.status === "used").length,
     noOwner: live.filter((r) => r.status !== "used" && (!r.owner.trim() || !r.crewOwner.trim())).length,
     needAttention: live.filter((r) => attention(r, now).length > 0).length,
+    corrections: rows.reduce((a, r) => a + (r.corrections?.length ?? 0), 0),
   };
+}
+
+/** What had to be corrected on what was ordered, for the end of the job:
+ *  how many, whose miss, what kind, the days and money it cost, each one. */
+export interface CorrectionStats {
+  count: number; lines: number;
+  byCause: Partial<Record<CorrectionCause, number>>; byKind: Partial<Record<CorrectionKind, number>>;
+  days: number; cost: number;
+  items: Array<{ item: string; workOrder: string; kind: CorrectionKind; cause: CorrectionCause; change: string; days: number | null; cost: number | null; note: string }>;
+}
+export function correctionStats(rows: Array<Pick<MaterialFields, "item" | "workOrder" | "corrections">>): CorrectionStats {
+  const out: CorrectionStats = { count: 0, lines: 0, byCause: {}, byKind: {}, days: 0, cost: 0, items: [] };
+  for (const r of rows) {
+    if (!r.corrections?.length) continue;
+    out.lines++;
+    for (const c of r.corrections) {
+      out.count++;
+      out.byCause[c.cause] = (out.byCause[c.cause] ?? 0) + 1;
+      out.byKind[c.kind] = (out.byKind[c.kind] ?? 0) + 1;
+      out.days += c.daysLost ?? 0;
+      out.cost += c.cost ?? 0;
+      const change = Object.keys(c.after ?? {}).map((k) => `${k === "qty" ? "qty" : k} ${(c.before as Record<string, string>)[k] || "none"} to ${(c.after as Record<string, string>)[k] || "none"}`).join(", ");
+      out.items.push({ item: r.item, workOrder: r.workOrder, kind: c.kind, cause: c.cause, change, days: c.daysLost, cost: c.cost, note: c.note });
+    }
+  }
+  return out;
 }
 
 // ─── Lines typed or pasted like a spreadsheet ──────────────────────
@@ -232,14 +291,16 @@ const missingTable = (e: DbError | null | undefined) =>
 
 interface Row {
   id: string; org_id: string; project_id: string; phase_id: string | null; kind: string; item: string; spec: string | null; spec_missing: string | null;
-  qty: string | null; work_order: string | null; owner: string | null; crew_owner?: string | null; vendor: string | null; status: string; need_by: string | null; verify_by?: string | null; eta: string | null; eta_note: string | null;
+  qty: string | null; size?: string | null; line_no?: number | null; corrections?: unknown; work_order: string | null; owner: string | null; crew_owner?: string | null; vendor: string | null; status: string; need_by: string | null; verify_by?: string | null; eta: string | null; eta_note: string | null;
   question: string | null; question_at: string | null; question_by: string | null; answer: string | null; note: string | null;
   created_by_name: string | null; created_at: string; updated_by_name: string | null; updated_at: string;
 }
 export function materialFromRow(r: Row): Material {
   return {
     id: r.id, orgId: r.org_id, projectId: r.project_id, phaseId: r.phase_id, kind: r.kind === "offsite" ? "offsite" : "material",
-    item: r.item ?? "", spec: r.spec ?? "", specMissing: r.spec_missing ?? "", qty: r.qty ?? "", workOrder: r.work_order ?? "", owner: r.owner ?? "", crewOwner: r.crew_owner ?? "", vendor: r.vendor ?? "",
+    item: r.item ?? "", spec: r.spec ?? "", size: r.size ?? "", lineNo: typeof r.line_no === "number" ? r.line_no : null,
+    corrections: Array.isArray(r.corrections) ? (r.corrections as Correction[]).filter((c) => c && typeof c === "object" && typeof c.kind === "string") : [],
+    specMissing: r.spec_missing ?? "", qty: r.qty ?? "", workOrder: r.work_order ?? "", owner: r.owner ?? "", crewOwner: r.crew_owner ?? "", vendor: r.vendor ?? "",
     status: (STATUSES as string[]).includes(r.status) ? (r.status as MaterialStatus) : "to_specify",
     needBy: r.need_by, verifyBy: r.verify_by ?? null, eta: r.eta, etaNote: r.eta_note ?? "", question: r.question ?? "", questionAt: r.question_at ? Date.parse(r.question_at) : null, questionBy: r.question_by,
     answer: r.answer ?? "", note: r.note ?? "",
@@ -291,7 +352,7 @@ const t = (s: string) => noEmDash(s.trim()) || null;
 /** What a save left out because the database is older than this code: the
  *  crew owner (no crew_owner column) and "Used on the job" (a status check
  *  without 'used'). Empty when everything was saved. */
-export type HeldBack = Array<"crewOwner" | "used" | "verifyBy">;
+export type HeldBack = Array<"crewOwner" | "used" | "verifyBy" | "size" | "lineNo" | "corrections">;
 export interface SavedMaterial extends Material { heldBack: HeldBack }
 
 export async function saveMaterial(input: { id?: string; orgId: string; projectId: string; fields: MaterialFields; was?: MaterialFields | null; actor: { id: string | null; name: string | null } }): Promise<SavedMaterial> {
@@ -303,6 +364,7 @@ export async function saveMaterial(input: { id?: string; orgId: string; projectI
   const answered = f.answer.trim() && f.answer.trim() !== (input.was?.answer ?? "").trim();
   const row: Record<string, unknown> = {
     org_id: input.orgId, project_id: input.projectId, phase_id: f.phaseId, kind: f.kind, item: noEmDash(f.item.trim()), spec: t(f.spec), spec_missing: t(f.specMissing), qty: t(f.qty),
+    size: t(f.size ?? ""), line_no: f.lineNo ?? null, corrections: f.corrections ?? [],
     work_order: t(f.workOrder), owner: t(f.owner), crew_owner: t(f.crewOwner), vendor: t(f.vendor), status: f.status, need_by: f.needBy || null, verify_by: f.verifyBy || null, eta: f.eta || null, eta_note: t(f.etaNote),
     question: t(f.question), answer: t(f.answer), note: t(f.note), updated_by_name: input.actor.name, updated_at: now,
     ...(asked ? { question_at: now, question_by: input.actor.name } : !f.question.trim() ? { question_at: null, question_by: null } : {}),
@@ -315,12 +377,21 @@ export async function saveMaterial(input: { id?: string; orgId: string; projectI
   // A database without 20261125 turns down the crew owner or "used": the
   // line is saved without them, and the caller says so.
   const heldBack: HeldBack = [];
-  for (let attempt = 0; attempt < 4; attempt++) {
+  // The BOM's size and line number and the corrections log need
+  // 20261127_materials_bom.sql: without it the line saves without them.
+  const newCols: Array<[string, HeldBack[number], boolean]> = [["size", "size", !!f.size?.trim()], ["line_no", "lineNo", f.lineNo != null], ["corrections", "corrections", !!f.corrections?.length]];
+  for (let attempt = 0; attempt < 8; attempt++) {
     const q = input.id
       ? supabase.from("project_materials").update(row).eq("id", input.id).select("*").single()
       : supabase.from("project_materials").insert({ ...row, created_by: input.actor.id, created_by_name: input.actor.name }).select("*").single();
     const { data, error } = await q;
     if (!error) return { ...materialFromRow(data as Row), heldBack };
+    const col = newCols.find(([c]) => c in row && new RegExp(`\\b${c}\\b`, "i").test(words(error)) && (error.code === "PGRST204" || error.code === "42703" || /column/i.test(words(error))));
+    if (col) {
+      delete row[col[0]];
+      if (col[2]) heldBack.push(col[1]);
+      continue;
+    }
     if ("verify_by" in row && /verify_by/i.test(words(error)) && (error.code === "PGRST204" || error.code === "42703" || /column/i.test(words(error)))) {
       delete row.verify_by;
       if (f.verifyBy) heldBack.push("verifyBy");

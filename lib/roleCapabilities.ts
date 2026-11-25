@@ -27,7 +27,8 @@ export type Capability =
   | "doc_control"          // issue-for-construction / final document control
   | "manage_users"         // add/remove members, change roles
   | "manage_org_config"    // edit org/drafting configuration
-  | "audit";               // read audit trails
+  | "audit"                // read audit trails
+  | "edit_materials";      // edit a project's materials register (the warehouse)
 
 export const CAPABILITY_LABELS: Record<Capability, string> = {
   view_requests: "View the requests queue",
@@ -40,6 +41,7 @@ export const CAPABILITY_LABELS: Record<Capability, string> = {
   manage_users: "Manage members & roles",
   manage_org_config: "Manage org & drafting settings",
   audit: "View audit trails",
+  edit_materials: "Edit project materials (the warehouse)",
 };
 
 // Role → the capabilities it grants. Derived from the role checks already in
@@ -62,6 +64,7 @@ export const ROLE_CAPABILITIES: Record<Role, Capability[]> = {
   HR: ["create_requests"],
   Maintenance: ["create_requests"],
   Operations: ["create_requests"],
+  Warehouse: ["edit_materials"],
   Contractor: ["create_requests"],
   Auditor: ["audit", "view_requests"],
   Viewer: [],
@@ -83,6 +86,7 @@ const ROLE_RANK: Record<Role, number> = {
   "Engineer-1": 61,
   Drafter: 50,
   Requester: 40,
+  Warehouse: 36,
   Operations: 35,
   Maintenance: 34,
   Safety: 33,

@@ -244,7 +244,9 @@ function ProjectDetail() {
   const started = !!stepRows && stepRows.some((r) => r.actual_start_at || Number(r.percent_complete ?? 0) > 0 || r.status === "in_progress" || r.status === "completed");
   // Done with what's scheduled, a phase still to schedule: Plan, to import it.
   const nextToSchedule = !!state && state.scheduledDone && state.unscheduled.length > 0;
-  const tab: Tab | null = asked ?? (project && stepRows ? (workDone ? "closeout" : nextToSchedule ? "plan" : started ? "today" : "plan") : null);
+  // The warehouse works the materials register: it opens there.
+  const warehouseOnly = hasAnyRole(["Warehouse"]) && !hasAnyRole(["Admin", "DocCtrl", "Manager", "Supervisor"]);
+  const tab: Tab | null = asked ?? (project && warehouseOnly ? "materials" : project && stepRows ? (workDone ? "closeout" : nextToSchedule ? "plan" : started ? "today" : "plan") : null);
   const [commentDraft, setCommentDraft] = useState("");
   const [posting, setPosting] = useState(false);
   // A comment being written comes back after a reload.
@@ -1023,7 +1025,7 @@ function ProjectDetail() {
         )}
         {tab === "closeout" && !uid && <SkeletonRows rows={5} what="close-out" />}
         {tab === "materials" && project.id && project.orgId && uid && (
-          <MaterialsRegister orgId={project.orgId} projectId={project.id} phases={phases} canManage={!!canManage || access.canEdit} actor={{ uid, email: userEmail }} />
+          <MaterialsRegister orgId={project.orgId} projectId={project.id} phases={phases} canManage={!!canManage || access.canEdit || hasAnyRole(["Warehouse"])} actor={{ uid, email: userEmail }} />
         )}
         {tab === "quality" && project.id && project.orgId && uid && (
           <ScheduleTzProvider timeZone={project.timezone}>

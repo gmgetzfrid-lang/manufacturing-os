@@ -16,6 +16,9 @@ import { publicOrigin } from "@/lib/publicOrigin";
 import { assemblePackage, suggestFileName, type CoverPhoto, type PackPart, type KitTemplates } from "@/lib/packagePdf";
 import { coverPhotos, workingPaths, type PackageKit, type PkgItem, type WoPackage } from "@/lib/woPackagesCore";
 import { letterheadFor } from "@/lib/letterheadStore";
+import { listMaterials, type Material } from "@/lib/materials";
+import { bomLinesFor, bomRows } from "@/lib/bom";
+import { fillBom } from "@/lib/bomForm";
 
 type Mime = PackPart["mime"];
 const mimeOf = (m?: string | null, path?: string): Mime =>
@@ -132,6 +135,8 @@ export async function buildPackagePdf(input: BuildInput): Promise<Built> {
   // cover sheet has no room for them: they print as pages then).
   const onCover = kit.cover ? [] : coverPhotos(pkg.items);
   const coverIds = new Set(onCover.map((i) => i.id));
+  // The materials register, read once for the bill of materials.
+  let register: Material[] | null = null;
   const cover: CoverPhoto[] = [];
   for (const it of onCover) {
     try { cover.push({ bytes: await fetchStored(it.path!), mime: mimeOf(it.mime, it.path!) === "image/png" ? "image/png" : "image/jpeg", caption: it.title }); }
@@ -152,6 +157,14 @@ export async function buildPackagePdf(input: BuildInput): Promise<Built> {
         if (!f) { problems.push(`${it.title}: the blank is no longer in the kit`); continue; }
         // A reference sheet never comes back, so it carries no code.
         const back = !it.ref && f.returns !== false;
+        // The bill of materials: the register's lines for these work orders, as the register stands now.
+        if (f.bom) {
+          register ??= await listMaterials(input.projectId).then((r) => r.rows).catch((e) => { problems.push(`${it.title}: the materials register didn't load (${(e as Error).message}); printed blank`); return [] as Material[]; });
+          const when = new Date().toLocaleDateString("en-US", { timeZone: input.tz, month: "short", day: "numeric", year: "numeric" });
+          const filled = await fillBom(await fetchStored(f.path), { wo: pkg.wos.join(", "), equipment: pkg.equipment, project: input.projectName, date: when, by: input.who.email ?? "" }, bomRows(bomLinesFor(register, pkg.wos))).catch(() => null);
+          if (filled) { parts.push({ id: it.id, title: it.title, kind: "form", bytes: filled.bytes, mime: "application/pdf", ...(back ? { qr: `pkgform:${pkg.key}:${it.id}` } : {}) }); continue; }
+          problems.push(`${it.title}: no rows the app can fill on it; printed blank`);
+        }
         parts.push({ id: it.id, title: it.title, kind: "form", bytes: await fetchStored(f.path), mime: "application/pdf", fields: f.fields, ...(back ? { qr: `pkgform:${pkg.key}:${it.id}` } : {}) });
       } else if (it.kind === "drawing" && it.documentId) {
         const d = await currentDrawing(it.documentId, input.who);

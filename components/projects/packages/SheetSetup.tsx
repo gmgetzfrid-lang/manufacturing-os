@@ -16,19 +16,22 @@ import { ErrorNote } from "@/components/ui/ErrorNote";
 import { field as fieldCls } from "@/components/admin/kit";
 import { sayError } from "@/components/projects/sayError";
 import { fetchStored } from "@/lib/packageOps";
+import { PDFDocument } from "pdf-lib";
+import { bomLayoutOf } from "@/lib/bomForm";
 import { openSheet, type SheetDoc } from "@/lib/readSheet";
 import { FILL_KEYS, FILL_WORDS, findLabels, findListArea, type FillKey, type FoundLabel } from "@/lib/formLabels";
 import type { FieldPlacement, TocCols } from "@/lib/packagePdf";
 
-export type SheetKind = "cover" | "toc" | "form" | "ref";
+export type SheetKind = "cover" | "toc" | "form" | "ref" | "bom";
 export type Region = { x: number; y: number; w: number; h: number; cols?: TocCols };
-export interface SheetResult { kind: SheetKind; title: string; fields: FieldPlacement[]; region: Region | null }
+export interface SheetResult { kind: SheetKind; title: string; fields: FieldPlacement[]; region: Region | null; bomRows?: number }
 
 const KINDS: Array<{ k: SheetKind; title: string; what: string }> = [
   { k: "cover", title: "Cover sheet", what: "First page of every package" },
   { k: "toc", title: "Contents page", what: "What's in it, with page numbers" },
   { k: "form", title: "Form", what: "Filled in by hand; the signed copy is swapped in" },
   { k: "ref", title: "Reference sheet", what: "Printed with it; doesn't come back" },
+  { k: "bom", title: "Bill of materials", what: "Its rows filled from the materials register" },
 ];
 
 /** A first guess at what a sheet is, from its file name. */
@@ -36,6 +39,7 @@ export function guessKind(name: string): SheetKind {
   const n = name.toLowerCase();
   if (/cover/.test(n)) return "cover";
   if (/contents|\btoc\b|index/.test(n)) return "toc";
+  if (/\bbom\b|bill of mat/.test(n)) return "bom";
   return "form";
 }
 
@@ -65,6 +69,22 @@ export default function SheetSetup({
   const [labels, setLabels] = useState<Label[]>([]);
   const [placed, setPlaced] = useState<FieldPlacement[]>([]);
   const [blank, setBlank] = useState(false);
+  // A bill of materials: the rows and header the app finds on it (null: none it can fill).
+  const [bomFound, setBomFound] = useState<{ rows: number; cols: string[]; header: string[] } | null | undefined>(undefined);
+  useEffect(() => {
+    if (kind !== "bom" || bomFound !== undefined) return;
+    let on = true;
+    void (async () => {
+      try {
+        const d = await PDFDocument.load(await fetchStored(path), { ignoreEncryption: true });
+        const l = bomLayoutOf(d.getForm());
+        const WORD: Record<string, string> = { no: "No.", qty: "QTY", size: "SIZE", desc: "DESCRIPTION", status: "STATUS", used: "USED" };
+        const HEAD: Record<string, string> = { wo: "work order", equipment: "equipment", project: "project", date: "date", by: "prepared by" };
+        if (on) setBomFound(l ? { rows: l.rows.length, cols: ["no", "qty", "size", "desc", "status", "used"].filter((c) => l.rows.some((r) => (r as Record<string, string | undefined>)[c])).map((c) => WORD[c]), header: Object.keys(l.header).map((k) => HEAD[k]) } : null);
+      } catch { if (on) setBomFound(null); }
+    })();
+    return () => { on = false; };
+  }, [kind, path, bomFound]);
   const [placing, setPlacing] = useState<FillKey | null>(null);
   const [page, setPage] = useState(0);
   const [view, setView] = useState<{ w: number; h: number } | null>(null);
@@ -143,7 +163,7 @@ export default function SheetSetup({
     ...labels.filter((l) => l.use).map((l) => ({ key: l.use!, page: l.page, x: l.at.x, y: l.at.y, size: l.at.size, maxWidth: l.at.maxWidth, label: l.text })),
     ...placed,
   ], [labels, placed]);
-  const fillsOn = kind !== "toc" && !((kind === "form" || kind === "ref") && blank);
+  const fillsOn = kind !== "toc" && kind !== "bom" && !((kind === "form" || kind === "ref") && blank);
 
   const pointAt = (e: React.MouseEvent) => {
     if (!view || !canvas.current) return null;
@@ -176,16 +196,17 @@ export default function SheetSetup({
 
   const save = async () => {
     if (kind === "toc" && !region) { setErr("Mark where the list goes: click its top-left corner, then its bottom-right."); return; }
+    if (kind === "bom" && !bomFound) { setErr("The app can't find rows to fill on it. A bill of materials needs to be a fillable PDF with a box in each cell."); return; }
     setSaving(true); setErr(null);
     try {
       const area = region ? { x: region.x, y: region.y, w: region.w, h: region.h, ...(cols ? { cols } : {}) } : null;
-      await onSave({ kind, title: title.trim() || name, fields: fillsOn ? fills : [], region: kind === "toc" ? area : null });
+      await onSave({ kind, title: title.trim() || name, fields: fillsOn ? fills : [], region: kind === "toc" ? area : null, ...(kind === "bom" && bomFound ? { bomRows: bomFound.rows } : {}) });
     } catch (e) { setErr(sayError(e)); } finally { setSaving(false); }
   };
 
   const pct = (x: number, y: number) => (view ? { left: `${(x / view.w) * 100}%`, top: `${((view.h - y) / view.h) * 100}%` } : {});
   const scale = view && canvas.current ? canvas.current.clientWidth / view.w : 1;
-  const kindsShown = isNew ? KINDS : kind === "form" || kind === "ref" ? KINDS.filter((k) => k.k === "form" || k.k === "ref") : [];
+  const kindsShown = isNew ? KINDS : kind === "form" || kind === "ref" || kind === "bom" ? KINDS.filter((k) => k.k === "form" || k.k === "ref" || k.k === "bom") : [];
   const onPage = (p?: number) => (p ?? 0) === page;
   const hint = kind === "toc"
     ? (corners.length === 1 ? "Now click the bottom-right corner of the list area." : region ? (regionFound ? "Found the list area under its headings. Click two corners to mark it differently." : "Click two corners to mark it again.") : "Click the top-left corner of the list area, then the bottom-right.")
@@ -220,14 +241,22 @@ export default function SheetSetup({
             </section>
           )}
 
-          {(kind === "form" || kind === "ref") && (
+          {(kind === "form" || kind === "ref" || kind === "bom") && (
             <div>
               <label htmlFor="ss-name" className="block text-body font-medium text-[var(--color-text)] mb-1.5">Name in the contents</label>
               <input id="ss-name" value={title} onChange={(e) => setTitle(e.target.value)} className={fieldCls} />
             </div>
           )}
 
-          {kind === "toc" ? (
+          {kind === "bom" ? (
+            <section className="grid gap-1.5">
+              <h3 className="text-body font-semibold text-[var(--color-text)]">What the app fills in</h3>
+              {bomFound === undefined ? <p role="status" className="text-body text-[var(--color-text-muted)]">Finding its rows…</p>
+                : bomFound ? (
+                  <p className="text-body text-[var(--color-text)]">{bomFound.rows} rows ({bomFound.cols.join(", ")}){bomFound.header.length ? `, and the ${bomFound.header.join(", ")}` : ""}. Each package gets the lines on its work orders from the materials register, filled in when it&apos;s printed, so it&apos;s always the register as it stands; more lines than rows add another copy. It goes in every package and comes back with the rest.</p>
+                ) : <p className="text-body text-[var(--state-held-text)]">No rows the app can fill on it. It needs to be a fillable PDF with a box in each cell (the No., QTY, SIZE and DESCRIPTION of each line).</p>}
+            </section>
+          ) : kind === "toc" ? (
             <section className="grid gap-1.5">
               <h3 className="text-body font-semibold text-[var(--color-text)]">Where the list goes</h3>
               <p className="text-body text-[var(--color-text-muted)]">The app writes each item and the page it starts on there, and adds more copies of this page when the list is long.</p>

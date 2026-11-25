@@ -19,6 +19,8 @@ export type Role =
   | "HR"
   | "Maintenance"
   | "Operations"
+  /** The warehouse: edits a project's materials register (and nothing else on the project). */
+  | "Warehouse"
   | "Contractor"
   | "Viewer"
   | "Auditor";
@@ -40,6 +42,7 @@ export const ALL_ROLES: Role[] = [
   "HR",
   "Maintenance",
   "Operations",
+  "Warehouse",
   "Contractor",
   "Viewer",
   "Auditor",

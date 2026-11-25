@@ -12,7 +12,7 @@ import { Role } from "@/types/schema";
 export const ROLE_HIERARCHY: { name: string; roles: Role[] }[] = [
   { name: "Leadership", roles: ["Admin", "DocCtrl", "Manager", "Supervisor"] },
   { name: "Engineering", roles: ["Engineer-1", "Engineer-2", "Engineer-3", "Engineer-4", "Drafter"] },
-  { name: "Operations", roles: ["Operations", "Maintenance", "Safety"] },
+  { name: "Operations", roles: ["Operations", "Maintenance", "Safety", "Warehouse"] },
   { name: "Business", roles: ["Accounting", "HR", "Auditor", "Requester"] },
   { name: "External", roles: ["Contractor", "Viewer"] },
 ];

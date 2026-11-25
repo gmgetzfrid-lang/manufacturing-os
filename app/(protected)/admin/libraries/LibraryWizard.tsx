@@ -50,7 +50,7 @@ const FIELD_TYPES: Array<{ value: MetadataFieldDefinition["type"]; label: string
 const ROLE_GROUPS = [
   { title: "Leadership", roles: ["Admin", "DocCtrl", "Manager", "Supervisor"] as Role[] },
   { title: "Engineering", roles: ["Engineer-1", "Engineer-2", "Engineer-3", "Engineer-4"] as Role[] },
-  { title: "Operations", roles: ["Operations", "Maintenance", "Safety"] as Role[] },
+  { title: "Operations", roles: ["Operations", "Maintenance", "Safety", "Warehouse"] as Role[] },
   { title: "Business", roles: ["Accounting", "HR", "Auditor"] as Role[] },
   { title: "Other", roles: ["Requester", "Drafter", "Contractor", "Viewer"] as Role[] },
 ];

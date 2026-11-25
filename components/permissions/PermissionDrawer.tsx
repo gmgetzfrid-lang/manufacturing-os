@@ -63,6 +63,7 @@ const ROLES: Role[] = [
   "Accounting",
   "Auditor",
   "Maintenance",
+  "Warehouse",
   "Operations",
   "Contractor",
   "Viewer",

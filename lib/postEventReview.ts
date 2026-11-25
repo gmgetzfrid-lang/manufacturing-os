@@ -413,7 +413,7 @@ export interface ReviewInput {
   tz: string;
   saved?: ReviewSaved | null;
   /** The materials register, when it is in use. */
-  materials?: { lines: number; specIncomplete: number; openQuestions: number; late: number } | null;
+  materials?: { lines: number; specIncomplete: number; openQuestions: number; late: number; corrections?: import("@/lib/materials").CorrectionStats } | null;
   /** The event organization recorded on the project (lib/eventOrganization). */
   organization?: OrgStanding | null;
   /** Each step's predecessors, from the schedule's links (for lib/crewFlow). */
@@ -990,6 +990,34 @@ function draftFindings(x: { reporting: Reporting | null; metrics: ReviewMetrics;
         next: "List every part each job needs on the materials register, with who owns it and when it is due. Before the unit comes down, check each line against what was ordered and close any shortfall.",
         ask: "Count each job's parts against the order before the unit comes down.",
         because: short ? `${orderWord(top!.order)} ran short of parts and set the finish: ${costOf(top!.order) ? `${costOf(top!.order)} of the ${fin!.lateH} h late` : `${fin!.lateH} h late`}.` : waited.length ? `${names(waited.map((w) => w.j))} waited on materials.` : "The materials register has open items.",
+      }));
+    }
+    // What was ordered and had to be corrected (the register's corrections log).
+    const cs = x.materials?.corrections;
+    if (cs && cs.count > 0) {
+      const CAUSE: Record<string, string> = { ordered_wrong: "ordered wrong", vendor_wrong: "sent wrong by the vendor", spec_wrong: "a wrong spec", scope_change: "a scope change", other: "something else" };
+      const KIND: Record<string, string> = { wrong_item: "wrong item", wrong_size: "wrong size", wrong_spec: "wrong material or rating", wrong_qty: "wrong quantity", damaged: "damaged", short: "came short", other: "other" };
+      const causes = (Object.entries(cs.byCause) as Array<[string, number]>).sort((p, q) => q[1] - p[1]);
+      const main = causes[0]?.[0] ?? "other";
+      const NEXT: Record<string, string> = {
+        ordered_wrong: "Check each order against the job's drawing and bill of materials before it goes out: size, rating and material, line by line.",
+        vendor_wrong: "Check every delivery against its order when it arrives, before the line is marked received.",
+        spec_wrong: "Confirm each specification against the equipment's drawings and data sheet before ordering.",
+        scope_change: "Freeze the scope before long-lead materials are ordered, and order what a likely find-and-fix needs ahead of time.",
+        other: "Look at each correction below and fix the step where it went wrong.",
+      };
+      const money = cs.cost ? `$${Math.round(cs.cost).toLocaleString("en-US")}` : "";
+      const days = cs.days ? `${cs.days} day${cs.days === 1 ? "" : "s"}` : "";
+      const lines = [
+        `${plural(cs.count, "correction")} on ${plural(cs.lines, "line")}: ${causes.map(([k, n]) => `${n} ${CAUSE[k] ?? k}`).join(", ")}.`,
+        ...(days || money ? [`${[days, money].filter(Boolean).join(" and ")} lost to them.`] : []),
+        ...cs.items.slice(0, 12).map((c) => `${c.item}${c.workOrder ? ` (WO ${c.workOrder})` : ""}: ${KIND[c.kind] ?? c.kind}${c.change ? `, ${c.change}` : ""}; ${CAUSE[c.cause] ?? c.cause}${c.days ? `; ${c.days} d` : ""}${c.cost ? `; $${Math.round(c.cost).toLocaleString("en-US")}` : ""}${c.note ? `. ${c.note}` : ""}`),
+      ];
+      out.push(make("materials:corrections", cs.days >= 1 || cs.count >= 3 ? "opportunity" : "none", `${plural(cs.count, "order")} had to be corrected, most ${CAUSE[main] ?? main}`, lines, [], {
+        gap: "What was ordered didn't match what the job needed.",
+        next: NEXT[main] ?? NEXT.other,
+        ask: "Before an order goes out, check it against the job's drawing and bill of materials.",
+        because: `${plural(cs.count, "order")} had to be corrected${days ? `, ${days} lost` : ""}${money ? `, ${money}` : ""}.`,
       }));
     }
     if (overdue.length) {

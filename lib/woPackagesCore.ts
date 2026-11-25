@@ -21,6 +21,12 @@ export interface KitForm extends KitFile {
    *  back (no QR, not counted, nothing to swap). Default: it comes back
    *  filled in and signed. */
   returns?: boolean;
+  /** The bill of materials: its rows are filled from the materials register
+   *  (the package's work orders' lines) each time the package is printed,
+   *  as many copies as the lines need (lib/bomForm). */
+  bom?: boolean;
+  /** Rows on one copy of the bill of materials (for the page count). */
+  bomRows?: number;
 }
 export interface PackageKit {
   cover: (KitFile & { fields?: FieldPlacement[] }) | null;

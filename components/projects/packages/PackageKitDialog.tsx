@@ -114,7 +114,7 @@ export default function PackageKitDialog({ orgId, kit, actorEmail, workspace, pr
       }));
       if (old && old !== s.path) void deleteFile(old).catch(() => undefined);
     } else {
-      const form: KitForm = { id: `f_${Math.random().toString(36).slice(2, 9)}`, title: r.title, path: s.path, name: s.name, pages: s.pages, size: s.size, for: guessFor(r.title), fields: r.fields, ...(r.kind === "ref" ? { returns: false } : {}) };
+      const form: KitForm = { id: `f_${Math.random().toString(36).slice(2, 9)}`, title: r.title, path: s.path, name: s.name, pages: s.pages, size: s.size, for: r.kind === "bom" ? [] : guessFor(r.title), fields: r.fields, ...(r.kind === "ref" ? { returns: false } : {}), ...(r.kind === "bom" ? { bom: true, bomRows: r.bomRows } : {}) };
       onSaved(await updateKit(orgId, actorEmail, (k) => ({ ...k, forms: [...k.forms, form] })));
     }
     nextSheet();
@@ -202,13 +202,14 @@ export default function PackageKitDialog({ orgId, kit, actorEmail, workspace, pr
           onSave={async (r) => { onSaved(await updateKit(orgId, actorEmail, (k) => (k.toc && r.region ? { ...k, toc: { ...k.toc, region: r.region } } : k))); setEditing(null); }} />
       )}
       {!current && editForm && (
-        <SheetSetup path={editForm.path} name={editForm.name} isNew={false} kind={editForm.returns === false ? "ref" : "form"} title={editForm.title} fields={editForm.fields} samples={samples} onCancel={() => setEditing(null)}
+        <SheetSetup path={editForm.path} name={editForm.name} isNew={false} kind={editForm.bom ? "bom" : editForm.returns === false ? "ref" : "form"} title={editForm.title} fields={editForm.fields} samples={samples} onCancel={() => setEditing(null)}
           onSave={async (r) => {
             onSaved(await updateKit(orgId, actorEmail, (k) => ({ ...k, forms: k.forms.map((x) => {
               if (x.id !== editForm.id) return x;
               const rest: KitForm = { ...x, title: r.title, fields: r.fields };
               delete rest.returns;
-              return r.kind === "ref" ? { ...rest, returns: false } : rest;
+              delete rest.bom;
+              return r.kind === "ref" ? { ...rest, returns: false } : r.kind === "bom" ? { ...rest, bom: true, bomRows: r.bomRows ?? x.bomRows, for: [] } : rest;
             }) })));
             setEditing(null);
           }} />
@@ -242,7 +243,7 @@ function FormRow({ f, disabled, onSetUp, onFor, onRemove }: { f: KitForm; disabl
         <div className="min-w-0 flex-1 basis-48">
           <div className="text-body font-semibold text-[var(--color-text)] break-words">{f.title}</div>
           <div className="text-caption text-[var(--color-text-muted)]">
-            {f.returns === false ? "Reference sheet, doesn't come back" : "Form, comes back signed"} · {f.pages} page{f.pages === 1 ? "" : "s"} · {fillsSay(f.fields)}
+            {f.bom ? "Bill of materials, filled from the materials register on every package" : <>{f.returns === false ? "Reference sheet, doesn't come back" : "Form, comes back signed"} · {f.pages} page{f.pages === 1 ? "" : "s"} · {fillsSay(f.fields)}</>}
           </div>
         </div>
         <Button variant="secondary" onClick={onSetUp} disabled={disabled}>Set up</Button>

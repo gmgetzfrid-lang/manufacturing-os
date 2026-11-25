@@ -34,7 +34,7 @@ import { useManpowerSettings } from "@/components/projects/ManpowerSetup";
 import { loadNextPlanSettings } from "@/lib/nextPlanStore";
 import type { StaffingPlans } from "@/lib/staffingPlan";
 import { dayKey, fmtInTz } from "@/lib/scheduleTz";
-import { listMaterials, summarize } from "@/lib/materials";
+import { correctionStats, listMaterials, summarize, type CorrectionStats } from "@/lib/materials";
 import { loadOrg, orgStanding } from "@/lib/eventOrganization";
 import {
   AREAS, areaOf, basisOf, buildReview, emptySaved, pointOf,
@@ -105,7 +105,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
   const [plans, setPlans] = useState<StaffingPlans | null>(null);
   const [saved, setSaved] = useState<ReviewSaved | null>(null);
   const [atOnce, setAtOnce] = useState<Record<string, number>>({});
-  const [register, setRegister] = useState<{ lines: number; specIncomplete: number; openQuestions: number; late: number } | null>(null);
+  const [register, setRegister] = useState<{ lines: number; specIncomplete: number; openQuestions: number; late: number; corrections?: CorrectionStats } | null>(null);
   const [organization, setOrganization] = useState<OrgStanding | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -142,7 +142,7 @@ export default function PostEventReview({ orgId, projectId, projectName, tz, tim
         setSaved(s); setPlans(np?.staffing ?? null); setOrganization(orgStanding(org)); setAtOnce(n);
         const mine = mats.rows.filter((r) => !phases.length || !r.phaseId || r.phaseId === phaseId);
         const sum = summarize(mine, Date.now());
-        setRegister(!sum.lines ? null : { lines: sum.lines, specIncomplete: sum.specIncomplete, openQuestions: sum.openQuestions, late: sum.late });
+        setRegister(!sum.lines ? null : { lines: sum.lines, specIncomplete: sum.specIncomplete, openQuestions: sum.openQuestions, late: sum.late, corrections: correctionStats(mine) });
       } catch (e) { if (live) { setErr(sayError(e)); setSaved(emptySaved()); } }
     })();
     return () => { live = false; };

@@ -32,6 +32,8 @@ import AddFromApp from "@/components/projects/packages/AddFromApp";
 import FileToAsset, { type Filed } from "@/components/projects/packages/FileToAsset";
 import CoverRow from "@/components/projects/packages/CoverRow";
 import { useLetterheadFor } from "@/lib/letterheadStore";
+import { listMaterials, type Material } from "@/lib/materials";
+import { bomLinesFor, changedSince } from "@/lib/bom";
 import { printsPointAtPreview } from "@/lib/publicOrigin";
 import { assetDocs, findPackageAsset, type PackageAsset } from "@/lib/equipmentFiles";
 import type { FindDoc } from "@/lib/findEverywhere";
@@ -102,6 +104,19 @@ export default function PackageBuilder({
   const signedIn = useRef<HTMLInputElement>(null);
   // The project's letterhead: the cover is printed on it.
   const coverLh = useLetterheadFor(orgId, projectId);
+  // The materials register, for the bill of materials (its lines, its pages, and what changed since printing).
+  const hasBom = kit.forms.some((f) => f.bom);
+  const [register, setRegister] = useState<Material[] | null>(null);
+  useEffect(() => {
+    if (!hasBom) return;
+    let on = true;
+    const read = () => void listMaterials(projectId).then((r) => { if (on) setRegister(r.rows); }, () => { if (on) setRegister([]); });
+    read();
+    // Back on the tab after changing the register elsewhere: read it again.
+    const again = () => { if (document.visibilityState === "visible") read(); };
+    document.addEventListener("visibilitychange", again);
+    return () => { on = false; document.removeEventListener("visibilitychange", again); };
+  }, [hasBom, projectId]);
   const signedFor = useRef<string | null>(null);
 
   // A package that isn't there yet is drafted from the kit as it opens:
@@ -177,7 +192,10 @@ export default function PackageBuilder({
   // The contents as it prints: the page each item starts on, renumbered
   // whenever the order changes (cover 1, then the contents page, then the
   // items). Unknown only while a drawing's pages are still being counted.
-  const formPages = new Map(kit.forms.map((f) => [f.id, f.pages]));
+  const bomLines = register && pkg ? bomLinesFor(register, pkg.wos) : null;
+  const bomStale = bomLines && pkg?.issuedAt ? changedSince(bomLines, pkg.issuedAt) : [];
+  const formPages = new Map(kit.forms.map((f) => [f.id, f.bom ? Math.max(1, Math.ceil((bomLines?.length ?? 0) / (f.bomRows || 26))) : f.pages]));
+  const bomForm = new Set(kit.forms.filter((f) => f.bom).map((f) => f.id));
   // Photos on the cover don't take pages of their own (a kit's own cover has no room: they do then).
   const onCover = new Set(kit.cover ? [] : coverPhotos(items).map((i) => i.id));
   const listed = items.map((it, i) => ({ it, i })).filter((x) => !onCover.has(x.it.id));
@@ -453,8 +471,11 @@ export default function PackageBuilder({
                   <span className="block text-reading text-[var(--color-text)] truncate" title={it.title}>{it.title}</span>
                 )}
                 <span className="block text-caption text-[var(--color-text-muted)]">
-                  {it.ref ? "Reference sheet, doesn't come back" : KIND_WORD[it.kind]}{it.kind === "drawing" && it.rev ? `, rev ${it.rev} when added (prints at the current one)` : ""}{it.pages ? ` · ${it.pages} page${it.pages === 1 ? "" : "s"}` : ""}{starts[i] != null ? ` · starts on page ${starts[i]}` : it.kind === "drawing" ? " · counting its pages" : ""}
+                  {it.formId && bomForm.has(it.formId) ? `Bill of materials, ${bomLines == null ? "reading the materials register" : `${bomLines.length} line${bomLines.length === 1 ? "" : "s"} from the materials register`}` : it.ref ? "Reference sheet, doesn't come back" : KIND_WORD[it.kind]}{it.kind === "drawing" && it.rev ? `, rev ${it.rev} when added (prints at the current one)` : ""}{it.pages ? ` · ${it.pages} page${it.pages === 1 ? "" : "s"}` : ""}{starts[i] != null ? ` · starts on page ${starts[i]}` : it.kind === "drawing" ? " · counting its pages" : ""}
                 </span>
+                {it.formId && bomForm.has(it.formId) && bomLines && (bomStale.length > 0 && (pkg.status === "issued" || pkg.status === "approved") && pkg.issuedAt
+                  ? <span className="block text-caption font-medium text-[var(--state-held-text)]">The materials register changed after it was printed ({bomStale.length} line{bomStale.length === 1 ? "" : "s"}). Print again so the crew has the list as it stands.</span>
+                  : bomLines.length === 0 ? <span className="block text-caption text-[var(--color-text-muted)]">No lines in the materials register for {pkg.wos.length === 1 ? `WO ${pkg.wos[0]}` : "these work orders"} yet: it prints with the header filled and the rows blank.</span> : null)}
               </span>
               {it.kind === "form" && !it.ref && (
                 <span className="shrink-0 inline-flex items-center gap-1.5 text-caption text-[var(--color-text-muted)]">
