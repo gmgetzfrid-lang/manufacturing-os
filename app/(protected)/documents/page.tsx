@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { lastLoaded, keepLoaded } from "@/lib/warmLoads";
 import { useRole } from "@/components/providers/RoleContext";
 import { LibraryConfig, Role } from "@/types/schema";
 import {
@@ -64,22 +65,28 @@ function computeIsPublicRead(lib: Partial<LibraryConfig>) {
 
 export default function DocumentsHomePage() {
   const router = useRouter();
-  const { activeRole, userEmail, activeOrgId } = useRole();
+  const { activeRole, userEmail, activeOrgId, uid } = useRole();
+  // Opened again in this sign-in: the libraries and their facts as last
+  // read, at once, while they are read afresh (lib/warmLoads). Kept per
+  // workspace, account and role.
+  const keep = (part: string) => `docs-home:${part}:${activeOrgId ?? ""}|${uid ?? ""}|${activeRole}`;
+  const [kept] = useState(() => lastLoaded<UiLibrary[]>(keep("libs")));
 
   // Start false — only flip to true once we actually have everything we need
   // to fetch. This avoids "Loading libraries..." showing up forever when the
   // useEffect bails out before calling fetchLibraries.
   const [loading, setLoading] = useState(false);
   // "No libraries" is only true once a load has answered.
-  const [loadedOnce, setLoadedOnce] = useState(false);
+  const [loadedOnce, setLoadedOnce] = useState(!!kept);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [libraries, setLibraries] = useState<UiLibrary[]>([]);
+  const [libraries, setLibraries] = useState<UiLibrary[]>(kept ?? []);
   // Documents per library (current ones — archived excluded), counted on the
   // server without fetching rows.
-  const [libCounts, setLibCounts] = useState<Map<string, number>>(new Map());
   const libIdsKey = libraries.map((l) => l._id).join(",");
+  const keptFor = <T,>(part: string) => lastLoaded<T>(`${keep(part)}|${libIdsKey}`);
+  const [libCounts, setLibCounts] = useState<Map<string, number>>(() => keptFor<Map<string, number>>("counts") ?? new Map());
   useEffect(() => {
     if (!activeOrgId || !libIdsKey) return;
     let alive = true;
@@ -87,12 +94,17 @@ export default function DocumentsHomePage() {
       const { count } = await supabase.from("documents").select("id", { count: "exact", head: true })
         .eq("org_id", activeOrgId).eq("library_id", id).neq("status", "Archived");
       return [id, count ?? 0] as const;
-    })).then((pairs) => { if (alive) setLibCounts(new Map(pairs)); }).catch(() => undefined);
+    })).then((pairs) => {
+      const m = new Map(pairs);
+      keepLoaded(`${keep("counts")}|${libIdsKey}`, m);
+      if (alive) setLibCounts(m);
+    }).catch(() => undefined);
     return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- `keep` is the workspace, account and role
   }, [activeOrgId, libIdsKey]);
   // Two facts that say how the files stand today: how many are checked out
   // right now, and how many changed in the last seven days.
-  const [orgFacts, setOrgFacts] = useState<{ out: number; week: number } | null>(null);
+  const [orgFacts, setOrgFacts] = useState<{ out: number; week: number } | null>(() => keptFor<{ out: number; week: number }>("facts") ?? null);
   useEffect(() => {
     if (!activeOrgId || !libIdsKey) return;
     let alive = true;
@@ -103,13 +115,17 @@ export default function DocumentsHomePage() {
       base().not("checked_out_by", "is", null),
       base().gte("updated_at", since),
     ]).then(([a, b]) => {
-      if (alive && !a.error && !b.error) setOrgFacts({ out: a.count ?? 0, week: b.count ?? 0 });
+      if (a.error || b.error) return;
+      const f = { out: a.count ?? 0, week: b.count ?? 0 };
+      keepLoaded(`${keep("facts")}|${libIdsKey}`, f);
+      if (alive) setOrgFacts(f);
     }).catch(() => undefined);
     return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- `keep` is the workspace, account and role
   }, [activeOrgId, libIdsKey]);
   // What changed last in each library: the most recently updated document,
   // its number and rev, and when (so a row says more than a count).
-  const [lastChange, setLastChange] = useState<Map<string, { number: string; rev: string | null; at: string }>>(new Map());
+  const [lastChange, setLastChange] = useState<Map<string, { number: string; rev: string | null; at: string }>>(() => keptFor<Map<string, { number: string; rev: string | null; at: string }>>("last") ?? new Map());
   useEffect(() => {
     if (!activeOrgId || !libIdsKey) return;
     let alive = true;
@@ -120,16 +136,18 @@ export default function DocumentsHomePage() {
       const r = (data?.[0] ?? null) as { document_number?: string | null; title?: string | null; name?: string | null; rev?: string | null; updated_at?: string | null } | null;
       return [id, r?.updated_at ? { number: r.document_number || r.title || r.name || "A document", rev: r.rev ?? null, at: r.updated_at } : null] as const;
     })).then((pairs) => {
-      if (!alive) return;
       const m = new Map<string, { number: string; rev: string | null; at: string }>();
       for (const [id, v] of pairs) if (v) m.set(id, v);
+      keepLoaded(`${keep("last")}|${libIdsKey}`, m);
+      if (!alive) return;
       setLastChange(m);
     }).catch(() => undefined);
     return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- `keep` is the workspace, account and role
   }, [activeOrgId, libIdsKey]);
   // The map under the list: each library and its top folders, named as in
   // the libraries' own lists. Hidden folders stay hidden from who can't see them.
-  const [topFolders, setTopFolders] = useState<Map<string, Array<{ id: string; name: string }>>>(new Map());
+  const [topFolders, setTopFolders] = useState<Map<string, Array<{ id: string; name: string }>>>(() => keptFor<Map<string, Array<{ id: string; name: string }>>>("folders") ?? new Map());
   const controllerHere = isControllerRole(activeRole);
   useEffect(() => {
     if (!activeOrgId || !libIdsKey) return;
@@ -138,15 +156,18 @@ export default function DocumentsHomePage() {
       .eq("org_id", activeOrgId).is("parent_id", null);
     if (!controllerHere) q = q.eq("visibility", "normal");
     void q.then(({ data }) => {
-      if (!alive || !data) return;
+      if (!data) return;
       const m = new Map<string, Array<{ id: string; name: string }>>();
       for (const r of data as Array<{ id: string; name: string | null; library_id: string; deleted_at?: string | null }>) {
         if (r.deleted_at) continue;
         m.set(r.library_id, [...(m.get(r.library_id) ?? []), { id: r.id, name: r.name ?? "Folder" }]);
       }
+      keepLoaded(`${keep("folders")}|${libIdsKey}`, m);
+      if (!alive) return;
       setTopFolders(m);
     });
     return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- `keep` is the workspace, account and role
   }, [activeOrgId, libIdsKey, controllerHere]);
   const mapLibraries = useMemo(
     () => libraries.map((l) => ({ id: l._id, name: l.name, folders: topFolders.get(l._id) ?? [] })),
@@ -262,6 +283,7 @@ export default function DocumentsHomePage() {
 
       const visible = isController ? libs : libs.filter((l) => l._canRead);
       setLibraries(visible);
+      keepLoaded(keep("libs"), visible);
     } catch (e: unknown) {
       console.error("DocumentsHomePage: failed to load libraries", e);
       setError("Couldn't load the libraries.");
@@ -276,7 +298,8 @@ export default function DocumentsHomePage() {
     // Only fetch once we have both the user identity and a workspace.
     // Missing either is a benign empty state, not a loading state.
     if (!userEmail || !activeOrgId) return;
-    fetchLibraries();
+    // Opened again with the list on screen: read it afresh behind it.
+    fetchLibraries(kept ? { silent: true } : undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userEmail, activeRole, activeOrgId]);
 
