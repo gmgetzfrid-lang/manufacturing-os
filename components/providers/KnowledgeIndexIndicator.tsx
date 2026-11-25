@@ -168,7 +168,7 @@ export default function KnowledgeIndexIndicator() {
     } else {
       publishRunning("reading", [{
         id: "reading", kind: "reading",
-        title: state.heldBack > 0 ? `${state.heldBack} couldn't finish` : "Library read",
+        title: state.heldBack > 0 ? `${state.heldBack} document${state.heldBack === 1 ? "" : "s"} couldn't be read` : "Library read",
         detail: state.heldBack > 0 ? "Tried again in 30 minutes. Library health shows why." : `${state.finished} document${state.finished === 1 ? "" : "s"} read`,
         pct: null, state: state.heldBack > 0 ? "error" : "done", dismiss: () => setHidden(true),
       }]);

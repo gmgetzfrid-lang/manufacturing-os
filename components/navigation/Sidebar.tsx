@@ -195,8 +195,10 @@ export default function Sidebar({
     return () => window.removeEventListener('keydown', onKey);
   }, [mobileOpen, onMobileClose]);
 
-  // On a desktop this menu shows running work; the corner cards stand down.
-  useEffect(() => { setRunningDock(!isMobile); return () => setRunningDock(false); }, [isMobile]);
+  // This menu shows running work whenever it's on screen (a desktop, or the
+  // phone's drawer while open); the corner cards stand down meanwhile.
+  const menuShown = !isMobile || mobileOpen;
+  useEffect(() => { setRunningDock(menuShown); return () => setRunningDock(false); }, [menuShown]);
 
   useEffect(() => {
     if (!uid) return;
@@ -337,7 +339,7 @@ export default function Sidebar({
       const head = el.querySelector<HTMLElement>('[data-side-head]')?.offsetHeight ?? 0;
       const foot = el.querySelector<HTMLElement>('[data-side-foot]')?.offsetHeight ?? 0;
       const work = el.querySelector<HTMLElement>('[data-side-work]')?.offsetHeight ?? 0;
-      setRoom(el.clientHeight - head - foot - work - box.offsetHeight - 24);
+      setRoom(el.clientHeight - head - foot - work - box.offsetHeight - 36);
     };
     measure();
     const ro = new ResizeObserver(measure);
@@ -365,7 +367,7 @@ export default function Sidebar({
     router.push('/');
   };
 
-  const shownWork = isMobile ? [] : running;
+  const shownWork = menuShown ? running : [];
 
   return (
     <>
@@ -411,7 +413,9 @@ export default function Sidebar({
 
       {logoModalOpen && <LogoUploadModal onClose={() => setLogoModalOpen(false)} />}
 
-      <nav className="relative flex-1 min-h-0 overflow-y-auto overflow-x-hidden custom-scrollbar px-3 pb-2">
+      {/* A long list (the admin toolbar on a short screen) fades out at the
+          bottom edge, so it reads as "more below", not cut off. */}
+      <nav className="relative flex-1 min-h-0 overflow-y-auto overflow-x-hidden custom-scrollbar px-3 pb-5 [mask-image:linear-gradient(to_bottom,black_calc(100%-20px),transparent)]">
         <div ref={navBox} className="relative">
           {/* The current page: a white pill that slides to it. */}
           <div ref={pill} aria-hidden style={{ opacity: 0 }}
