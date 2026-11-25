@@ -7,7 +7,16 @@
 
 import { supabase } from "@/lib/supabase";
 
-export function recordDocView(orgId: string, userId: string, documentId: string): void {
+/** Said on this page when a document opens, so the side menu's "Jump back
+ *  in" shows it at once, without reading the database again. */
+export const DOC_VIEWED = "mfgos:doc-viewed";
+export interface DocViewed { orgId: string; documentId: string; libraryId: string | null; number: string | null; title: string | null; at: number }
+
+export function recordDocView(orgId: string, userId: string, documentId: string, about?: { libraryId?: string | null; number?: string | null; title?: string | null }): void {
+  if (about && typeof window !== "undefined") {
+    const detail: DocViewed = { orgId, documentId, libraryId: about.libraryId ?? null, number: about.number ?? null, title: about.title ?? null, at: Date.now() };
+    window.dispatchEvent(new CustomEvent<DocViewed>(DOC_VIEWED, { detail }));
+  }
   void supabase.from("recently_viewed_docs")
     .upsert(
       { org_id: orgId, user_id: userId, document_id: documentId, viewed_at: new Date().toISOString() },

@@ -1,37 +1,36 @@
 "use client";
 
-// Sidebar — navigation rail.
+// Sidebar - the side menu.
 //
-// Design contract (matches the code — keep it that way):
+// Design contract (matches the code; keep it that way):
 //
-//   * FLAT nav: two sections, Work and (for controllers) Admin. No nested
-//     groups — every item is a single-click leaf. Alternate views of a tool
-//     (Board / Locks / Packages / …) live behind the in-page ViewTabs
-//     switcher, never as extra nav items. That consolidation is what keeps
-//     this rail short; guard it.
+//   * The daily tools in sight, four of them (docs/design-rules.md A6):
+//     Home, Documents, Projects, Drafting requests. The other tools sit
+//     under More, one tap away; More opens by itself while one of them is
+//     the page, and remembers being left open. Alternate views of a tool
+//     live behind the in-page ViewTabs, never as extra items.
 //
 //   * Tool highlighting is DERIVED from the same ViewTabs arrays the pages
-//     use (TOOL_ALIASES below) — one source of truth, so adding a view tab
-//     automatically keeps the sidebar highlight correct.
+//     use (TOOL_ALIASES below), so a new view tab keeps the highlight right.
 //
-//   * Sections are collapsible (state persisted); the section holding the
-//     current route always renders open so you can see where you are.
-//     Admin starts closed.
+//   * The current item's tab is one shape that slides to the item and runs
+//     into the page edge (nav-joined in globals.css).
 //
-//   * Rows are one line (icon + label). Hints are title tooltips.
-//     Badges: red = waiting on your decision, a quiet count = unread news,
-//     absent = clear.
-//     The header bell owns the org-wide total; rows badge only their own
-//     section's count.
+//   * Under the tools, only when there is something: "Checked out to you"
+//     (others wait on those, with when each is due) and "Jump back in"
+//     (starred documents first, then what was opened last). No empty
+//     headings (B7).
 //
-//   * Collapsible to a 64px icon rail via ⌘B / Ctrl+B (persisted). On
-//     mobile the rail is an off-canvas drawer that closes on navigation
-//     and Escape.
+//   * Badges: red = waiting on your decision, a quiet count = unread news,
+//     absent = clear. The header bell owns the org-wide total.
 //
-//   * The footer avatar is the USER (photo, or initials from their display
-//     name — see components/ui/UserAvatar), never a role letter.
+//   * Admin is a separate fold, closed until wanted. In the 64 px rail
+//     (Cmd+B / Ctrl+B, remembered) More and Admin are one menu each. On a
+//     phone the menu is a drawer that closes on navigation and Escape.
+//
+//   * The footer avatar is the USER (photo, or initials), never a role.
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { AppMark } from '@/components/brand/AppMark';
 import { usePathname, useRouter } from 'next/navigation';
@@ -46,7 +45,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown,
   FolderKanban, ShieldCheck, UsersRound, FileStack, Palette,
   Check, Image as ImageIcon, X, Bot, CreditCard, DatabaseBackup, ArchiveRestore, Compass,
-  HardHat,
+  HardHat, Lock, Star,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 import { useNotificationCenter } from '@/components/notifications/NotificationCenter';
@@ -54,7 +53,7 @@ import { useIsMobile } from '@/hooks/useIsMobile';
 import LogoUploadModal from '@/components/branding/LogoUploadModal';
 import UserAvatar from '@/components/ui/UserAvatar';
 import MoreMenu, { type MoreItem } from '@/components/ui/MoreMenu';
-import { useRecentProjects } from '@/lib/recentProjects';
+import { useSideUtility } from '@/lib/sideUtility';
 import { badgeText } from '@/lib/badge';
 import { onTransitionClick } from '@/lib/viewTransition';
 import {
@@ -76,6 +75,15 @@ const TOOL_ALIASES: Record<string, string[]> = {
 
 const COLLAPSED_KEY  = 'mfg-os.sidebar.collapsed';
 const SECTIONS_KEY   = 'mfg-os.sidebar.closedSections';
+const MORE_KEY       = 'mfg-os.sidebar.moreOpen';
+
+// The tools in sight: what most people open every day (docs/design-rules.md
+// A6, three to five). The rest sit under More, one tap away.
+const DAILY = new Set(['/dashboard', '/documents', '/projects', '/requests']);
+
+// A row in the lists under the tools: one step quieter than a tool (14 px,
+// muted), the same height and icon column, 44 px on touch.
+const SIDE_ROW = 'flex items-center gap-2.5 h-9 pointer-coarse:h-11 px-2.5 rounded-lg text-body text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)] transition-colors';
 
 type Tone = 'orange' | 'blue' | 'indigo' | 'amber' | 'emerald' | 'violet' | 'rose' | 'slate' | 'purple' | 'cyan';
 type IconType = React.ComponentType<{ className?: string; style?: React.CSSProperties }>;
@@ -149,6 +157,7 @@ export default function Sidebar({
   // empty set — leaves them open, except Admin which we close by default).
   const [closedSections, setClosedSections] = useState<Set<string>>(new Set(['admin']));
   const [orgs, setOrgs] = useState<Array<{ id: string; name: string }>>([]);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   // Hydrate persisted prefs.
   useEffect(() => {
@@ -158,11 +167,13 @@ export default function Sidebar({
       if (c === '1') setRailCollapsed(true);
       const s = localStorage.getItem(SECTIONS_KEY);
       if (s) setClosedSections(new Set(JSON.parse(s) as string[]));
+      if (localStorage.getItem(MORE_KEY) === '1') setMoreOpen(true);
     } catch {}
   }, []);
 
   useEffect(() => { try { localStorage.setItem(COLLAPSED_KEY, railCollapsed ? '1' : '0'); } catch {} }, [railCollapsed]);
   useEffect(() => { try { localStorage.setItem(SECTIONS_KEY, JSON.stringify([...closedSections])); } catch {} }, [closedSections]);
+  useEffect(() => { try { localStorage.setItem(MORE_KEY, moreOpen ? '1' : '0'); } catch {} }, [moreOpen]);
 
   // ⌘B toggle.
   useEffect(() => {
@@ -212,7 +223,8 @@ export default function Sidebar({
 
   const orgOptions = useMemo(() => orgs.slice().sort((a, b) => a.name.localeCompare(b.name)), [orgs]);
   const orgName = orgOptions.find((o) => o.id === activeOrgId)?.name ?? null;
-  const recentProjects = useRecentProjects(activeOrgId);
+  // Under the tools: what this person holds, and where they left off.
+  const side = useSideUtility(activeOrgId, uid);
   const isAdmin = activeRole === 'Admin' || activeRole === 'DocCtrl';
 
   // The workspace menu: switch workspace, the logo, settings (only what this
@@ -295,11 +307,41 @@ export default function Sidebar({
     ];
   }, [sectionCounts, badgeOf, isAdmin, activeRole]);
 
-  // Per-section "does any item match the current route?"
-  const sectionIsActive = useCallback(
-    (s: NavSection): boolean => s.items.some((n) => isPathActive(n.href)),
-    [isPathActive],
-  );
+  const workItems = sections.find((x) => x.id === 'work')?.items ?? [];
+  const daily = workItems.filter((leaf) => DAILY.has(leaf.href));
+  const more = workItems.filter((leaf) => !DAILY.has(leaf.href));
+  // More opens by itself while one of its tools is the page.
+  const moreHot = more.some((leaf) => isPathActive(leaf.href));
+  const moreShown = moreOpen || moreHot;
+  const adminItems = sections.find((x) => x.id === 'admin')?.items ?? [];
+  const adminHot = adminItems.some((leaf) => isPathActive(leaf.href));
+  const adminShown = adminHot || !closedSections.has('admin');
+
+  // The current item's tab: one shape behind the list that slides to the
+  // current item (and its text takes the page's color). Set on the element
+  // itself, not through state: no extra render, nothing to flash.
+  const navBox = useRef<HTMLDivElement | null>(null);
+  const tabEl = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const box = navBox.current;
+    const tab = tabEl.current;
+    if (!box || !tab) return;
+    const place = () => {
+      const cur = box.querySelector<HTMLElement>('a[data-navleaf][aria-current="page"]');
+      if (!cur) { tab.style.opacity = '0'; return; }
+      const y = cur.getBoundingClientRect().top - box.getBoundingClientRect().top;
+      tab.style.transform = `translateY(${Math.round(y)}px)`;
+      tab.style.height = `${cur.offsetHeight}px`;
+      tab.style.opacity = '1';
+    };
+    place();
+    // Glide only after it has a place (the first paint just shows it there).
+    const raf = requestAnimationFrame(() => tab.classList.add('is-ready'));
+    // The list above it can change height (More opening, a list loading).
+    const ro = new ResizeObserver(place);
+    ro.observe(box);
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); };
+  }, [pathname, collapsed, moreShown, adminShown, side]);
 
   const toggleSection = (id: string) => {
     setClosedSections((prev) => {
@@ -356,7 +398,7 @@ export default function Sidebar({
           ) : (orgName ? <OrgInitials name={orgName} /> : <AppMark size={28} ring />)
         ) : workspaceItems.length > 0 ? (
           <MoreMenu items={workspaceItems} label={`Workspace: ${orgName ?? 'Manufacturing OS'}. Switch, logo and settings`} boxClass="w-full"
-            triggerClass="w-full text-left rounded-xl transition-shadow hover:shadow-[var(--shadow-float)] focus-visible:shadow-[var(--shadow-float)]"
+            triggerClass="group w-full text-left rounded-xl"
             trigger={<WorkspaceCard logoUrl={logoUrl} name={orgName} menu />} />
         ) : (
           <WorkspaceCard logoUrl={logoUrl} name={orgName} />
@@ -368,57 +410,135 @@ export default function Sidebar({
       {logoModalOpen && <LogoUploadModal onClose={() => setLogoModalOpen(false)} />}
 
       <nav className="flex-1 overflow-y-auto overflow-x-hidden py-3 custom-scrollbar min-h-0">
-        {sections.map((section) => {
-          const isHot = sectionIsActive(section);
-          // Open when not explicitly closed, or when it holds the active
-          // route (so you always see where you are).
-          const open = isHot || !closedSections.has(section.id);
-          return (
-            <div key={section.id} className={collapsed ? 'mb-1' : 'mb-3 px-2'}>
-              {/* The work menu needs no title; Admin, a different place, keeps
-                  its own (closed until wanted). Space splits them, not lines. */}
-              {section.id !== 'work' && (collapsed ? (
-                <div aria-hidden className="h-4" />
-              ) : (
-                <SectionHeader section={section} open={open} active={isHot} onToggle={() => toggleSection(section.id)} />
+        {/* Everything in the menu sits in one positioned box, so the current
+            item's tab can slide from item to item (docs/design-rules.md,
+            ideas: a sliding current-item marker). */}
+        <div ref={navBox} className="relative">
+          <div ref={tabEl} aria-hidden style={{ opacity: 0 }}
+            className="nav-joined !absolute left-2 right-0 top-0 rounded-l-lg pointer-events-none [&.is-ready]:transition-[transform,height] [&.is-ready]:duration-200 [&.is-ready]:ease-out motion-reduce:!transition-none">
+            <span className="absolute left-1 top-2 bottom-2 w-[3px] rounded-full bg-[var(--color-current)]" />
+          </div>
+
+          {/* The daily tools, in sight (docs/design-rules.md A6: three to five). */}
+          <div className="px-2 space-y-0.5">
+            {daily.map((leaf) => (
+              <SidebarLeaf key={leaf.href} leaf={leaf} active={isPathActive(leaf.href)} collapsed={collapsed} />
+            ))}
+          </div>
+
+          {/* The rest, one tap away; open by itself while one of them is the page. */}
+          {more.length > 0 && (collapsed ? (
+            <div className="px-2 mt-1 space-y-0.5">
+              {more.filter((leaf) => isPathActive(leaf.href)).map((leaf) => (
+                <SidebarLeaf key={leaf.href} leaf={leaf} active collapsed />
               ))}
-              {(collapsed || open || section.id === 'work') && (
-                <div className={collapsed ? 'px-2 space-y-0.5' : 'mt-1 space-y-0.5'}>
-                  {section.items.map((leaf) => (
-                    <div key={leaf.href} className={leaf.startsGroup ? (collapsed ? 'pt-3' : 'pt-4') : undefined}>
-                      <SidebarLeaf
-                        leaf={leaf}
-                        active={isPathActive(leaf.href)}
-                        collapsed={collapsed}
-                      />
-                    </div>
+              <div className="flex justify-center">
+                <MoreMenu label="More tools" iconOnly
+                  triggerClass="w-10 h-10 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)] transition-colors"
+                  items={more.map((leaf) => ({ icon: <leaf.icon className="w-4 h-4" />, label: leaf.label, current: isPathActive(leaf.href), onClick: () => router.push(leaf.href) }))} />
+              </div>
+            </div>
+          ) : (
+            <div className="px-2 mt-0.5">
+              <button type="button" onClick={() => setMoreOpen((v) => !v)} aria-expanded={moreShown}
+                className="w-full flex items-center gap-2.5 h-9 pointer-coarse:h-11 px-2.5 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)] transition-colors">
+                <ChevronDown aria-hidden className={`ui-chevron w-[17px] h-[17px] ${moreShown ? '' : '-rotate-90'}`} />
+                <span className="text-reading leading-none">More</span>
+              </button>
+              {moreShown && (
+                <div className="mt-0.5 space-y-0.5">
+                  {more.map((leaf) => (
+                    <SidebarLeaf key={leaf.href} leaf={leaf} active={isPathActive(leaf.href)} collapsed={false} />
                   ))}
                 </div>
               )}
-              {/* The projects this person opened last: straight back in. */}
-              {section.id === 'work' && !collapsed && recentProjects.length > 0 && (
-                <div className="mt-6">
-                  <div className="px-2.5 mb-1.5 text-caption font-medium text-[var(--color-text-muted)]">Recent projects</div>
-                  {/* A second list in its own card, apart from the menu. */}
-                  <ul className="rounded-xl bg-[var(--color-surface)] p-1 space-y-0.5">
-                    {recentProjects.map((p) => {
-                      const here = pathname?.startsWith(`/projects/${p.id}`) ?? false;
-                      return (
-                        <li key={p.id}>
-                          <Link href={`/projects/${p.id}`} aria-current={here ? 'page' : undefined} title={p.name}
-                            className={`flex items-center gap-2.5 h-9 pointer-coarse:h-11 px-2 rounded-lg text-body transition-colors ${here ? 'bg-[var(--color-canvas)] text-[var(--color-text)] font-medium' : 'text-[var(--color-text-muted)] hover:bg-[var(--color-canvas)] hover:text-[var(--color-text)]'}`}>
-                            <span aria-hidden className={`shrink-0 w-[17px] flex justify-center`}><span className={`w-1.5 h-1.5 rounded-full ${here ? 'bg-[var(--color-current)]' : 'bg-[var(--color-text-faint)]'}`} /></span>
-                            <span className="truncate">{p.name}</span>
-                          </Link>
-                        </li>
-                      );
-                    })}
-                  </ul>
+            </div>
+          ))}
+
+          {/* What this person holds, and where they left off: plain rows
+              like the tools above (no box), each list only when it has
+              something (B7). */}
+          {!collapsed && side && side.held.length > 0 && (
+            <div className="px-2 mt-6">
+              <div className="px-2.5 mb-1 flex items-baseline gap-1.5 text-caption font-medium text-[var(--color-text-muted)]">
+                Checked out to you <span className="tabular-nums">{side.held.length}</span>
+              </div>
+              <ul className="space-y-0.5">
+                {side.held.slice(0, 3).map((h) => {
+                  const due = dueWords(h.dueAt);
+                  return (
+                    <li key={h.documentId}>
+                      <Link href={h.libraryId ? `/documents/${h.libraryId}?doc=${h.documentId}` : `/documents?doc=${h.documentId}`} title={`${h.label}${due ? `, ${due.words.toLowerCase()}` : ''}`}
+                        className={SIDE_ROW}>
+                        <Lock aria-hidden className="shrink-0 w-4 h-4" />
+                        <span className="ui-id truncate flex-1 min-w-0 !text-[color:inherit]">{h.label}</span>
+                        {due && (
+                          <span className={`shrink-0 inline-flex items-center gap-1.5 text-caption ${due.late ? 'text-[var(--color-text)] font-medium' : ''}`}>
+                            {due.late && <span aria-hidden className="w-1.5 h-1.5 rounded-full bg-[var(--state-overdue)]" />}{due.words}
+                          </span>
+                        )}
+                      </Link>
+                    </li>
+                  );
+                })}
+                {side.held.length > 3 && (
+                  <li><Link href="/checkouts" className={SIDE_ROW}><span aria-hidden className="w-4 shrink-0" /><span className="text-caption font-medium">All {side.held.length}</span></Link></li>
+                )}
+              </ul>
+            </div>
+          )}
+          {!collapsed && side && side.jump.length > 0 && (
+            <div className="px-2 mt-6">
+              <div className="px-2.5 mb-1 text-caption font-medium text-[var(--color-text-muted)]">Jump back in</div>
+              <ul className="space-y-0.5">
+                {side.jump.map((j) => {
+                  const here = j.kind === 'project' ? (pathname?.startsWith(`/projects/${j.id}`) ?? false) : false;
+                  const KindIcon = j.starred ? Star : j.kind === 'project' ? Briefcase : FileText;
+                  // The title, without the number it already starts with.
+                  const rest = j.code && j.title.startsWith(j.code) ? j.title.slice(j.code.length).trim() : j.title;
+                  return (
+                    <li key={`${j.kind}:${j.id}`}>
+                      <Link href={j.href} aria-current={here ? 'page' : undefined} title={j.code && rest ? `${j.code}, ${rest}` : j.title}
+                        className={`${SIDE_ROW} ${here ? '!text-[var(--color-text)] bg-[var(--color-surface)]' : ''}`}>
+                        <KindIcon aria-hidden className={`shrink-0 w-4 h-4 ${j.starred ? 'fill-current' : ''}`} />
+                        {j.starred && <span className="sr-only">Starred: </span>}
+                        {j.code && <span className="ui-id truncate min-w-0 max-w-[60%] shrink-0 !text-[color:inherit]">{j.code}</span>}
+                        {rest && <span className="truncate min-w-0 flex-1">{rest}</span>}
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+
+          {/* Admin: a different place, kept closed until wanted. In the rail,
+              one menu instead of a dozen icons. */}
+          {adminItems.length > 0 && (collapsed ? (
+            <div className="px-2 mt-4 space-y-0.5">
+              {adminItems.filter((leaf) => isPathActive(leaf.href)).map((leaf) => (
+                <SidebarLeaf key={leaf.href} leaf={leaf} active collapsed />
+              ))}
+              <div className="flex justify-center">
+                <MoreMenu label="Admin" iconOnly
+                  triggerClass="w-10 h-10 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)] transition-colors"
+                  trigger={<ShieldCheck aria-hidden className="w-[17px] h-[17px]" />}
+                  items={adminItems.map((leaf) => ({ icon: <leaf.icon className="w-4 h-4" />, label: leaf.label, current: isPathActive(leaf.href), onClick: () => router.push(leaf.href) }))} />
+              </div>
+            </div>
+          ) : (
+            <div className="px-2 mt-6">
+              <SectionHeader section={{ id: 'admin', title: 'Admin', hint: 'Org configuration', icon: ShieldCheck, tone: 'slate', items: adminItems }} open={adminShown} active={adminHot} onToggle={() => toggleSection('admin')} />
+              {adminShown && (
+                <div className="mt-1 space-y-0.5">
+                  {adminItems.map((leaf) => (
+                    <SidebarLeaf key={leaf.href} leaf={leaf} active={isPathActive(leaf.href)} collapsed={false} />
+                  ))}
                 </div>
               )}
             </div>
-          );
-        })}
+          ))}
+        </div>
       </nav>
 
       {/* USER FOOTER — the person, not the role. */}
@@ -508,16 +628,18 @@ function SidebarLeaf({
       aria-label={collapsed ? `${leaf.label}${hasBadge ? `, ${badgeWords}` : ''}` : undefined}
       aria-current={active ? 'page' : undefined}
       onClick={active ? undefined : (e) => onTransitionClick(e, () => router.push(leaf.href))}
+      data-navleaf=""
       style={active ? { color: 'var(--side-current-text, var(--color-text))' } : undefined}
-      className={`relative flex items-center gap-2.5 transition-colors ${
-        collapsed ? 'h-10 justify-center' : 'h-9 px-2.5'
+      // The current item's tab is drawn once behind the list and slides to it
+      // (Sidebar's navBox); the item itself only takes its text color.
+      className={`relative z-[1] flex items-center gap-2.5 transition-colors ${
+        collapsed ? 'h-10 pointer-coarse:h-11 justify-center' : 'h-9 pointer-coarse:h-11 px-2.5'
       } ${
         active
-          ? 'nav-joined -mr-2 rounded-l-lg font-medium'
+          ? 'rounded-l-lg font-medium'
           : 'rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)]'
       }`}
     >
-      {active && <span aria-hidden className="side-marker absolute left-1 top-2 bottom-2 w-[3px] rounded-full bg-[var(--color-current)]" />}
       <span className="relative shrink-0 inline-flex">
         <Icon className={`w-[17px] h-[17px] ${active ? '' : TONE_ICON[leaf.tone]}`} />
         {collapsed && hasBadge && (
@@ -551,6 +673,20 @@ function SidebarLeaf({
   );
 }
 
+/** When a checked-out document is due back, in two words: "Overdue",
+ *  "Due today", "Due Fri", "Due Dec 3". */
+function dueWords(at: string | null): { words: string; late: boolean } | null {
+  const t = at ? Date.parse(at) : NaN;
+  if (!Number.isFinite(t)) return null;
+  if (t < Date.now()) return { words: 'Overdue', late: true };
+  const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const d = new Date(t);
+  const days = Math.round((day(d) - day(new Date())) / 86_400_000);
+  if (days === 0) return { words: 'Due today', late: false };
+  if (days < 7) return { words: `Due ${d.toLocaleDateString('en-US', { weekday: 'short' })}`, late: false };
+  return { words: `Due ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`, late: false };
+}
+
 // ─── The workspace card at the top ───────────────────────────
 // With a logo: the logo on a white plate (logos are drawn for white), as big
 // as the menu is wide; the logo already says the name, so it isn't repeated.
@@ -559,7 +695,7 @@ function SidebarLeaf({
 function WorkspaceCard({ logoUrl, name, menu = false }: { logoUrl: string | null | undefined; name: string | null; menu?: boolean }) {
   if (logoUrl) {
     return (
-      <span className="flex items-center gap-2 w-full h-14 pl-3 pr-2.5 rounded-xl shadow-[var(--shadow-control)]" style={{ background: 'var(--side-logo-plate, var(--color-surface))' }}>
+      <span className="flex items-center gap-2 w-full h-14 pl-3 pr-2.5 rounded-xl border border-[var(--color-border)]" style={{ background: 'var(--side-logo-plate, var(--color-surface))' }}>
         <span className="flex-1 min-w-0 h-full flex items-center">
           {/* eslint-disable-next-line @next/next/no-img-element -- org logo is a signed storage URL */}
           <img src={logoUrl} alt={name ? `${name} logo` : 'Workspace logo'} className="max-h-10 w-auto max-w-full object-contain" draggable={false} />

@@ -1,14 +1,14 @@
 // lib/recentProjects.ts - the projects this person opened last, per
-// workspace, kept on this device (no database read): the side menu's
-// "Recent projects" jumps straight back into them.
+// workspace, kept on this device (no database read), with when: the side
+// menu's "Jump back in" mixes them with recent documents (lib/sideUtility).
 
 import { useSyncExternalStore } from "react";
 
-export interface RecentProject { id: string; name: string }
+export interface RecentProject { id: string; name: string; /** When it was opened (ms). */ at?: number }
 
 const KEY = (orgId: string) => `mfgos.recentProjects:${orgId}`;
 const EVENT = "recent-projects:changed";
-const MAX = 3;
+const MAX = 5;
 
 function read(orgId: string): RecentProject[] {
   try {
@@ -22,7 +22,7 @@ function read(orgId: string): RecentProject[] {
 /** Put a project first in this workspace's recent list (its name refreshed). */
 export function rememberProject(orgId: string, p: RecentProject): void {
   try {
-    const next = [p, ...read(orgId).filter((x) => x.id !== p.id)].slice(0, MAX);
+    const next = [{ ...p, at: Date.now() }, ...read(orgId).filter((x) => x.id !== p.id)].slice(0, MAX);
     localStorage.setItem(KEY(orgId), JSON.stringify(next));
     window.dispatchEvent(new CustomEvent(EVENT));
   } catch { /* private mode: nothing remembered */ }

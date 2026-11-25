@@ -18,6 +18,11 @@ export async function listFavoriteDocIds(orgId: string, userId: string): Promise
   return (data as Array<{ document_id: string }>).map((r) => r.document_id);
 }
 
+/** Said on this page when a star is added or taken off (the side menu's
+ *  "Jump back in" lists starred documents first). */
+export const FAVORITES_CHANGED = "mfgos:favorites-changed";
+const said = () => { if (typeof window !== "undefined") window.dispatchEvent(new Event(FAVORITES_CHANGED)); };
+
 export async function favoriteDoc(orgId: string, userId: string, documentId: string): Promise<void> {
   const { error } = await supabase.from("document_favorites").upsert({
     org_id: orgId,
@@ -25,6 +30,7 @@ export async function favoriteDoc(orgId: string, userId: string, documentId: str
     document_id: documentId,
   });
   if (error) throw new Error(error.message);
+  said();
 }
 
 export async function unfavoriteDoc(userId: string, documentId: string): Promise<void> {
@@ -34,6 +40,7 @@ export async function unfavoriteDoc(userId: string, documentId: string): Promise
     .eq("user_id", userId)
     .eq("document_id", documentId);
   if (error) throw new Error(error.message);
+  said();
 }
 
 export function useFavorites(orgId: string | null | undefined, userId: string | null | undefined) {
