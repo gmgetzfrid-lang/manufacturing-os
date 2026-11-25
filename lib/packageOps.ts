@@ -15,7 +15,7 @@ import { applyStampToPdfDoc } from "@/lib/stamping";
 import { publicOrigin } from "@/lib/publicOrigin";
 import { assemblePackage, suggestFileName, type CoverPhoto, type PackPart, type KitTemplates } from "@/lib/packagePdf";
 import { coverPhotos, workingPaths, type PackageKit, type PkgItem, type WoPackage } from "@/lib/woPackagesCore";
-import { loadLetterhead } from "@/lib/letterheadStore";
+import { letterheadFor } from "@/lib/letterheadStore";
 
 type Mime = PackPart["mime"];
 const mimeOf = (m?: string | null, path?: string): Mime =>
@@ -172,7 +172,8 @@ export async function buildPackagePdf(input: BuildInput): Promise<Built> {
   if (kit.cover) templates.cover = { bytes: await fetchStored(kit.cover.path), fields: kit.cover.fields };
   if (kit.toc) templates.toc = { bytes: await fetchStored(kit.toc.path), region: kit.toc.region };
   // The generated cover sits on the project's letterhead when it has one.
-  const letterhead = kit.cover ? null : await loadLetterhead(input.projectId).catch(() => null);
+  // The project's own, else the workspace's (the company's letterhead, saved on another of its projects).
+  const letterhead = kit.cover ? null : (await letterheadFor(input.orgId, input.projectId).catch(() => ({ lh: null }))).lh;
   let logo: { bytes: Uint8Array; mime: "image/png" | "image/jpeg" } | null = null;
   if (input.logoUrl && !kit.cover && !letterhead) {
     try {

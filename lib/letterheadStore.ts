@@ -62,3 +62,37 @@ export function useLetterhead(projectId?: string | null): { lh: Letterhead | nul
   // Another project, or read already by another view: straight from the cache.
   return same && state.loaded ? { lh: state.lh, loaded: true } : { lh: projectId ? cache.get(projectId) ?? null : null, loaded: !!projectId && cache.has(projectId) };
 }
+
+/** The letterhead a project's printouts sit on: its own, else the
+ *  workspace's (the company's letterhead is the same on every job: the one
+ *  saved most recently on any of the workspace's projects). `from` names the
+ *  project it was saved on when it isn't this one. */
+export async function letterheadFor(orgId: string, projectId: string): Promise<{ lh: Letterhead | null; from: string | null }> {
+  const own = await loadLetterhead(projectId).catch(() => null);
+  if (own) return { lh: own, from: null };
+  const { data } = await supabase.from("projects").select("id, name, saved:shift_times->letterhead->>savedAt").eq("org_id", orgId).neq("id", projectId);
+  const withOne = ((data ?? []) as Array<{ id: string; name: string | null; saved: string | null }>).filter((p) => p.saved)
+    .sort((a, b) => String(b.saved).localeCompare(String(a.saved)));
+  for (const p of withOne.slice(0, 3)) {
+    const lh = await loadLetterhead(p.id).catch(() => null);
+    if (lh) return { lh, from: p.name ?? "another project" };
+  }
+  return { lh: null, from: null };
+}
+
+/** letterheadFor as a hook (undefined while it's read). */
+export function useLetterheadFor(orgId: string | null | undefined, projectId: string | null | undefined): { lh: Letterhead | null; from: string | null } | undefined {
+  const [state, setState] = useState<{ key: string; v: { lh: Letterhead | null; from: string | null } } | null>(null);
+  const key = `${orgId ?? ""}|${projectId ?? ""}`;
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (!orgId || !projectId) return;
+    let live = true;
+    void letterheadFor(orgId, projectId).then((v) => { if (live) setState({ key, v }); }, () => { if (live) setState({ key, v: { lh: null, from: null } }); });
+    // A letterhead saved anywhere: read again.
+    const on = () => setTick((t) => t + 1);
+    window.addEventListener(EVENT, on);
+    return () => { live = false; window.removeEventListener(EVENT, on); };
+  }, [orgId, projectId, key, tick]);
+  return state?.key === key ? state.v : undefined;
+}

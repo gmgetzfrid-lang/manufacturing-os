@@ -31,7 +31,7 @@ import DocScanner from "@/components/scan/DocScanner";
 import AddFromApp from "@/components/projects/packages/AddFromApp";
 import FileToAsset, { type Filed } from "@/components/projects/packages/FileToAsset";
 import CoverRow from "@/components/projects/packages/CoverRow";
-import { useLetterhead } from "@/lib/letterheadStore";
+import { useLetterheadFor } from "@/lib/letterheadStore";
 import { printsPointAtPreview } from "@/lib/publicOrigin";
 import { assetDocs, findPackageAsset, type PackageAsset } from "@/lib/equipmentFiles";
 import type { FindDoc } from "@/lib/findEverywhere";
@@ -101,7 +101,7 @@ export default function PackageBuilder({
   const fileIn = useRef<HTMLInputElement>(null);
   const signedIn = useRef<HTMLInputElement>(null);
   // The project's letterhead: the cover is printed on it.
-  const { lh: letterhead, loaded: lhLoaded } = useLetterhead(projectId);
+  const coverLh = useLetterheadFor(orgId, projectId);
   const signedFor = useRef<string | null>(null);
 
   // A package that isn't there yet is drafted from the kit as it opens:
@@ -415,7 +415,7 @@ export default function PackageBuilder({
 
       {/* The contents, in print order. */}
       <ol aria-label="What's in the package" className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
-        <CoverRow orgId={orgId} projectId={projectId} pkgKey={key} items={items} kit={kit} asset={asset} letterhead={lhLoaded ? letterhead : undefined}
+        <CoverRow orgId={orgId} projectId={projectId} pkgKey={key} items={items} kit={kit} asset={asset} letterhead={coverLh ? coverLh.lh : undefined} letterheadFrom={coverLh?.from ?? null}
           withQr={pkg.status !== "draft"} canEdit={canManage && !filed} change={change} />
         <Fixed icon={FileText} title="Contents" meta={`Page${tocN > 1 ? `s 2 to ${1 + tocN}` : " 2"} · every item below and the page it starts on`} />
         {listed.map(({ it, i }, k) => {

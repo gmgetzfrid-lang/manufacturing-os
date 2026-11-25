@@ -18,11 +18,13 @@ import type { Letterhead } from "@/lib/letterhead";
 
 const link = "min-h-9 pointer-coarse:min-h-11 inline-flex items-center gap-1.5 text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2";
 
-export default function CoverRow({ orgId, projectId, pkgKey, items, kit, asset, letterhead, withQr, canEdit, change }: {
+export default function CoverRow({ orgId, projectId, pkgKey, items, kit, asset, letterhead, letterheadFrom, withQr, canEdit, change }: {
   orgId: string; projectId: string; pkgKey: string; items: PkgItem[]; kit: PackageKit;
   asset: PackageAsset | null | undefined;
   /** The project's letterhead (undefined while it's read). */
   letterhead: Letterhead | null | undefined;
+  /** The project it was saved on, when it's the workspace's (this project has none of its own). */
+  letterheadFrom?: string | null;
   withQr: boolean; canEdit: boolean;
   change: (words: string, fn: (p: WoPackage) => WoPackage) => Promise<void>;
 }) {
@@ -45,7 +47,7 @@ export default function CoverRow({ orgId, projectId, pkgKey, items, kit, asset, 
   const own = !kit.cover;
   const what = kit.cover
     ? `your kit's cover, with the work order filled in${withQr ? " and the package's QR" : ""}`
-    : letterhead ? `on the project's letterhead, with the job${withQr ? ", the package's QR" : ""}${on.length ? ` and ${on.length === 1 ? "a photo" : "two photos"}` : ""}`
+    : letterhead ? `on the ${letterheadFrom ? "company" : "project's"} letterhead, with the job${withQr ? ", the package's QR" : ""}${on.length ? ` and ${on.length === 1 ? "a photo" : "two photos"}` : ""}`
       : `made for it, with your logo${withQr ? " and the package's QR" : ""}${on.length ? ` and ${on.length === 1 ? "a photo" : "two photos"}` : ""}`;
   const pkgPhotos = items.filter((i) => i.kind === "photo" && !i.cover && i.path);
 
@@ -160,7 +162,8 @@ export default function CoverRow({ orgId, projectId, pkgKey, items, kit, asset, 
               <input ref={fileIn} type="file" accept="image/jpeg,image/png" className="sr-only" tabIndex={-1} aria-hidden onChange={(e) => { void upload(e.target.files?.[0]); e.target.value = ""; }} />
             </div>
           )}
-          {letterhead === null && <p className="text-caption text-[var(--color-text-muted)]">This project has no letterhead yet: add it in the schedule setup&apos;s Printed reports and the cover is printed on it.</p>}
+          {letterhead && letterheadFrom && <p className="text-caption text-[var(--color-text-muted)]">The letterhead saved on {letterheadFrom} ({letterhead.name}). Give this project its own in the schedule setup&apos;s Printed reports to use another.</p>}
+          {letterhead === null && <p className="text-caption text-[var(--color-text-muted)]">No letterhead in this workspace yet: add it in a project&apos;s schedule setup, Printed reports, and every cover is printed on it.</p>}
         </div>
       )}
       {kit.cover && items.some((i) => i.cover) && <p className="pl-[calc(1rem+1.5rem+1rem+1.875rem)] max-sm:pl-0 text-caption text-[var(--color-text-muted)]">The kit has its own cover sheet, so photos print on their own pages.</p>}
