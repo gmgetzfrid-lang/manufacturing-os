@@ -50,7 +50,7 @@ export async function GET(req: NextRequest) {
     scope: only ? "package" : "project",
     packages: pkgs.map((p) => ({
       key: p.key, wos: p.wos, equipment: p.equipment, description: p.description,
-      forms: p.items.filter((i) => i.kind === "form").map((i) => ({ id: i.id, title: i.title, signed: i.signed ? { at: i.signed.at, via: i.signed.via } : null })),
+      forms: p.items.filter((i) => i.kind === "form" && !i.ref).map((i) => ({ id: i.id, title: i.title, signed: i.signed ? { at: i.signed.at, via: i.signed.via } : null })),
       added: p.items.filter((i) => i.kind === "file" && i.signed).map((i) => ({ id: i.id, title: i.title, at: i.signed?.at ?? null })),
       drawings: p.items.filter((i) => i.kind === "drawing").map((i) => {
         const c = i.documentId ? current.get(i.documentId) : undefined;

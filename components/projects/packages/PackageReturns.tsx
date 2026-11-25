@@ -198,6 +198,11 @@ export default function PackageReturns({ code, token }: { code?: string; token?:
             </div>
             <div className="mt-3">
               <label htmlFor="pr-add" className={kitLabel}>Or add it as new pages, named</label>
+              <div className="mb-2 flex flex-wrap gap-1.5">
+                {["Inspection photos", "Torque record", "Hydro test chart", "Punch list", "Material certs", "Field sketch"].map((n) => (
+                  <button key={n} type="button" aria-pressed={addTitle === n} onClick={() => setAddTitle(n)} className="ui-chip">{n}</button>
+                ))}
+              </div>
               <div className="flex gap-2">
                 <input id="pr-add" value={addTitle} onChange={(e) => setAddTitle(e.target.value)} placeholder="e.g. Hydro test chart" className={kitField} />
                 <Button variant="secondary" disabled={busy || !addTitle.trim()} onClick={() => void send({ itemId: "add", title: addTitle.trim() }, pdfFile(pending.pdf, addTitle))}>Add</Button>

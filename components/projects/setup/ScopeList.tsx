@@ -593,7 +593,7 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
         ) : null;
       })()}
       {kitOpen && kit && (
-        <PackageKitDialog orgId={orgId} kit={kit} actorEmail={actorEmail} onClose={() => setKitOpen(false)} onSaved={setKit} />
+        <PackageKitDialog orgId={orgId} kit={kit} actorEmail={actorEmail} workspace={workspace} projectName={projectName} onClose={() => setKitOpen(false)} onSaved={setKit} />
       )}
       {makeOpen && uid && (
         <JobsScheduleDialog orgId={orgId} projectId={projectId} uid={uid} actorName={actorEmail} tz={tz} items={sc.items}

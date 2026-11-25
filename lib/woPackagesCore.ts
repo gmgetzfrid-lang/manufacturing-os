@@ -3,7 +3,7 @@
 // contractors' returns go through. The story is in lib/woPackages.ts.
 
 import { isTypedItem, type ScopeWO } from "@/lib/woIntake";
-import type { FieldPlacement } from "@/lib/packagePdf";
+import type { FieldPlacement, TocCols } from "@/lib/packagePdf";
 
 // ── The kit ──────────────────────────────────────────────────
 
@@ -14,10 +14,17 @@ export interface KitForm extends KitFile {
   title: string;
   /** Equipment words it's for ("exchanger", "vessel"); empty: every package. */
   for: string[];
+  /** What the app writes on it (its header: WO, equipment, date), read
+   *  from its labels and checked by the owner. None: printed blank. */
+  fields?: FieldPlacement[];
+  /** false: a reference sheet, printed with the package and never coming
+   *  back (no QR, not counted, nothing to swap). Default: it comes back
+   *  filled in and signed. */
+  returns?: boolean;
 }
 export interface PackageKit {
   cover: (KitFile & { fields?: FieldPlacement[] }) | null;
-  toc: (KitFile & { region?: { x: number; y: number; w: number; h: number } }) | null;
+  toc: (KitFile & { region?: { x: number; y: number; w: number; h: number; cols?: TocCols } }) | null;
   forms: KitForm[];
   updatedAt?: string;
   updatedBy?: string;
@@ -48,6 +55,8 @@ export interface PkgItem {
   pages?: number;
   /** The signed form that came back, in the blank's place. */
   signed?: SignedCopy;
+  /** A reference sheet from the kit: printed, never comes back. */
+  ref?: boolean;
 }
 export type PackageStatus = "draft" | "approved" | "issued" | "filed";
 export interface WoPackage {
@@ -113,15 +122,23 @@ export function draftPackage(group: ScopeWO[], kit: PackageKit, at = new Date().
     wos,
     equipment: [first.tag, first.equipmentName || first.equipment].filter(Boolean).join(" ") || first.what,
     description: [...new Set(group.map((x) => x.what))].join("; "),
-    items: formsFor(kit, group).map((f) => ({ id: newItemId(), kind: "form" as const, title: f.title, formId: f.id, pages: f.pages })),
+    items: formsFor(kit, group).map((f) => kitItem(f)),
     status: "draft",
     updatedAt: at,
   };
 }
 
+/** A kit form as a package item. */
+export function kitItem(f: KitForm): PkgItem {
+  return { id: newItemId(), kind: "form", title: f.title, formId: f.id, pages: f.pages, ...(f.returns === false ? { ref: true } : {}) };
+}
+
+/** Forms that come back signed (not reference sheets). */
+export const returnsForms = (items: PkgItem[]) => items.filter((i) => i.kind === "form" && !i.ref);
+
 /** Where a package stands, in numbers. */
 export function packageStage(p: WoPackage | undefined) {
-  const forms = p?.items.filter((i) => i.kind === "form") ?? [];
+  const forms = p ? returnsForms(p.items) : [];
   return {
     built: !!p,
     approved: !!p && p.status !== "draft",

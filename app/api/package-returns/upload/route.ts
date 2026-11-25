@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
   const { data: all } = await readPackagesAdmin(link.org_id, link.project_id);
   const pkg = visiblePackages(all, only).find((p) => p.key === key);
   if (!pkg) return bad("That package isn't open for returns.", 404);
-  const target = itemId === "add" ? null : pkg.items.find((i) => i.id === itemId && i.kind === "form");
+  const target = itemId === "add" ? null : pkg.items.find((i) => i.id === itemId && i.kind === "form" && !i.ref);
   if (itemId !== "add" && !target) return bad("That form isn't in the package.", 404);
 
   const bytes = new Uint8Array(await file.arrayBuffer());

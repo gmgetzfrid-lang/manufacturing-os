@@ -35,6 +35,8 @@ export interface PackPart {
   signed?: boolean;
   /** Text for a small QR code printed on each page of a FORM (so a scan of it can be matched back), e.g. "pkgform:400101:it_3". Omit for no QR. */
   qr?: string;
+  /** Values the app writes on a blank form (its header: WO, equipment, date). */
+  fields?: FieldPlacement[];
 }
 
 export interface PackMeta {
@@ -50,19 +52,25 @@ export interface PackMeta {
   landingUrl?: string | null;
   /** "Draft", "Approved", "Issued", "Filed": a small word in the cover's corner. */
   status?: string;
+  /** Who printed it, for a sheet's "Prepared by". */
+  preparedBy?: string;
 }
 
-/** PDF points on the template's first page, origin bottom-left. */
+/** Where a value is written on a sheet: PDF points, origin bottom-left, on
+ *  page `page` (0, the first, when not given). */
 export interface FieldPlacement {
-  key: "wo" | "equipment" | "description" | "project" | "date" | "status";
+  key: "wo" | "equipment" | "description" | "project" | "date" | "status" | "workspace" | "by";
   x: number; y: number; size: number; maxWidth?: number;
+  page?: number;
+  /** The label it was read from ("W/O No.:"), to show on the setup screen. */
+  label?: string;
 }
 
 export interface KitTemplates {
   /** The workspace's own cover sheet: its first page is used; fields filled by AcroForm field name when it has fields (names matched loosely), else written at `fields` positions; filled forms are flattened. */
   cover?: { bytes: Uint8Array; fields?: FieldPlacement[] } | null;
   /** The workspace's own contents page: its first page is the background; rows are written inside `region` (default: x 54..558, y 90..640 on letter) and it repeats onto more copies of that page when rows don't fit. */
-  toc?: { bytes: Uint8Array; region?: { x: number; y: number; w: number; h: number } } | null;
+  toc?: { bytes: Uint8Array; region?: { x: number; y: number; w: number; h: number; cols?: TocCols } } | null;
 }
 
 export interface Assembled {
@@ -428,6 +436,33 @@ async function qrMaker(): Promise<MakeQr> {
 
 /** A QR on a white square at (x, y), `size` wide including a 2-module quiet
  *  zone. Dark runs in a row are one rectangle each, all filled at once. */
+/** A clickable area on the page that opens `url` (a PDF read on a
+ *  computer: the package's QR and link open its page). */
+function linkTo(page: PDFPage, url: string, x: number, y: number, w: number, h: number): void {
+  try {
+    const ctx = page.doc.context;
+    const annot = ctx.register(ctx.obj({
+      Type: "Annot", Subtype: "Link", Rect: [x, y, x + w, y + h], Border: [0, 0, 0],
+      A: { Type: "Action", S: "URI", URI: PDFString.of(url) },
+    }));
+    const annots = page.node.lookupMaybe(PDFName.of("Annots"), PDFArray);
+    if (annots) annots.push(annot); else page.node.set(PDFName.of("Annots"), ctx.obj([annot]));
+  } catch { /* the QR still works on paper */ }
+}
+
+/** A long link cut to lines that fit (it has no spaces to wrap on). */
+function urlLines(font: PDFFont, url: string, size: number, maxW: number, maxLines: number): string[] {
+  const out: string[] = [];
+  let rest = url;
+  while (rest && out.length < maxLines) {
+    let n = rest.length;
+    while (n > 1 && font.widthOfTextAtSize(rest.slice(0, n), size) > maxW) n -= 1;
+    out.push(rest.slice(0, n));
+    rest = rest.slice(n);
+  }
+  return out;
+}
+
 function drawQr(page: PDFPage, q: QrCode, x: number, y: number, size: number): void {
   const quiet = 2;
   const m = size / (q.n + quiet * 2);
@@ -480,7 +515,11 @@ function drawFooter(page: PDFPage, fonts: Fonts, f: Frame, left: string, center:
 
 // ─── Contents ────────────────────────────────────────────────────────────
 
-interface Region { x: number; y: number; w: number; h: number }
+/** Where the list goes. `cols`: the page has its own column headings (its
+ *  "Item … Description … Page" row), so no heading row is drawn and each
+ *  column is written under its heading when its place is known. */
+export interface TocCols { no?: number; item?: number; kind?: number; pageR?: number }
+interface Region { x: number; y: number; w: number; h: number; cols?: TocCols }
 interface Row { idx: number; lines: string[]; note: "" | "signed" | "missing"; kind: string; h: number }
 
 const GEN_REGION: Region = { x: 54, y: 72, w: 504, h: 600 };
@@ -490,18 +529,30 @@ const LINE2 = 13;           // each extra line of a wrapped title
 const TITLE_PT = 10.5;
 const NOTE: Record<"signed" | "missing", string> = { signed: "(signed)", missing: "(couldn't be added)" };
 
+/** Pages the contents will take for n items (one line each), on the
+ *  app's page or on a workspace's own with a list area `regionH` tall. The
+ *  builder numbers each item's first page with it, as printed. */
+export function contentsPages(n: number, regionH?: number | null, ownHead = false): number {
+  const room = (regionH && regionH >= HEAD_H + ROW_H ? regionH : GEN_REGION.h) - (ownHead ? 0 : HEAD_H);
+  return Math.max(1, Math.ceil(Math.max(1, n) / Math.max(1, Math.floor(room / ROW_H))));
+}
+
 function columns(r: Region) {
-  const itemX = r.x + 30;
-  const pageR = r.x + r.w;
-  const kindX = pageR - 40 - 62;
-  return { noX: r.x, itemX, itemW: Math.max(40, kindX - 10 - itemX), kindX, pageR };
+  const c = r.cols;
+  const pageR = c?.pageR ?? r.x + r.w;
+  // Under the page's own headings, a column it has no heading for is left out.
+  const noX: number | null = c ? (c.no ?? (c.item != null ? null : r.x)) : r.x;
+  const itemX = c?.item ?? (noX != null ? noX + 30 : r.x);
+  const kindX: number | null = c ? (c.kind ?? null) : pageR - 40 - 62;
+  const end = kindX != null && kindX > itemX ? kindX : pageR - 40;
+  return { noX, itemX, itemW: Math.max(40, end - 10 - itemX), kindX, pageR };
 }
 
 /** The contents region on a workspace's own contents page. */
 function tocRegion(f: Frame, g: Region | null | undefined): Region {
   const fallback: Region = { x: 54, y: 90, w: f.w - 108, h: f.h - 242 };
   if (g && [g.x, g.y, g.w, g.h].every((n) => Number.isFinite(n)) && g.w >= 160 && g.h >= HEAD_H + ROW_H) {
-    return { x: g.x, y: g.y, w: g.w, h: g.h };
+    return { x: g.x, y: g.y, w: g.w, h: g.h, ...(g.cols ? { cols: g.cols } : {}) };
   }
   return fallback.w >= 160 && fallback.h >= HEAD_H + ROW_H ? fallback : { x: 18, y: 36, w: Math.max(160, f.w - 36), h: Math.max(HEAD_H + ROW_H, f.h - 72) };
 }
@@ -540,26 +591,29 @@ function drawRows(page: PDFPage, fonts: Fonts, r: Region, rows: Row[], starts: n
   const { reg, bold } = fonts;
   const c = columns(r);
   let top = r.y + r.h;
-  const hb = top - 14;
-  text(page, "#", c.noX, hb, 9, bold, GRAY);
-  text(page, "Item", c.itemX, hb, 9, bold, GRAY);
-  text(page, "Kind", c.kindX, hb, 9, bold, GRAY);
-  textRight(page, "Page", c.pageR, hb, 9, bold, GRAY);
-  top -= HEAD_H;
-  rule(page, r.x, c.pageR, top, 0.75, BLACK);
+  // The page's own headings stand in for the app's.
+  if (!r.cols) {
+    const hb = top - 14;
+    text(page, "#", r.x, hb, 9, bold, GRAY);
+    text(page, "Item", c.itemX, hb, 9, bold, GRAY);
+    if (c.kindX != null) text(page, "Kind", c.kindX, hb, 9, bold, GRAY);
+    textRight(page, "Page", c.pageR, hb, 9, bold, GRAY);
+    top -= HEAD_H;
+    rule(page, r.x, c.pageR, top, 0.75, BLACK);
+  }
   for (const row of rows) {
     const base = top - 15;
     if (row.idx < 0) {
       text(page, row.lines[0], c.itemX, base, TITLE_PT, reg, GRAY);
     } else {
-      text(page, String(row.idx + 1), c.noX, base, TITLE_PT, reg, GRAY);
+      if (c.noX != null) text(page, String(row.idx + 1), c.noX, base, TITLE_PT, reg, GRAY);
       row.lines.forEach((line, i) => text(page, line, c.itemX, base - i * LINE2, TITLE_PT, reg));
       if (row.note) {
         const last = row.lines[row.lines.length - 1] ?? "";
         const x = c.itemX + reg.widthOfTextAtSize(`${last} `, TITLE_PT);
         text(page, NOTE[row.note], x, base - (row.lines.length - 1) * LINE2, TITLE_PT, bold, row.note === "missing" ? GRAY : BLACK);
       }
-      text(page, row.kind, c.kindX, base, TITLE_PT, reg);
+      if (c.kindX != null) text(page, row.kind, c.kindX, base, TITLE_PT, reg);
       textRight(page, String(starts[row.idx] ?? ""), c.pageR, base, TITLE_PT, bold);
     }
     top -= row.h;
@@ -664,15 +718,72 @@ function drawCover(
     let ty = M + qrSize - 14;
     text(page, "Scan for this package", tx, ty, 11, bold);
     ty -= 16;
-    for (const line of wrap(reg, "Check the drawings are current and return signed forms.", 10.5, tw, 4)) {
+    for (const line of wrap(reg, "Check the drawings are current and return signed forms.", 10.5, tw, 3)) {
       text(page, line, tx, ty, 10.5, reg);
       ty -= 14;
+    }
+    // The same page as a link: a contractor sent this file clicks it.
+    const url = String(meta.landingUrl ?? "").trim();
+    if (url) {
+      ty -= 2;
+      const lines = urlLines(reg, url, 8, tw, 3);
+      lines.forEach((line, i) => text(page, line, tx, ty - i * 10, 8, reg, GRAY));
+      linkTo(page, url, M, M, qrSize, qrSize);
+      linkTo(page, url, tx, ty - (lines.length - 1) * 10 - 3, tw, lines.length * 10 + 2);
     }
   }
   const bx = landing ? R - boxW : M;
   page.drawRectangle({ x: bx, y: M, width: boxW, height: boxH, borderColor: BLACK, borderWidth: 1 });
   text(page, "Contents", bx + 12, M + 32, 10, bold, GRAY);
   text(page, `${count(items, "item", "items")}, ${count(total, "page", "pages")}`, bx + 12, M + 14, 12, reg);
+}
+
+/** What each fill writes, from the package. */
+function fillValues(font: PDFFont, meta: PackMeta, when: { date: string }): Record<FieldKey, string> {
+  return {
+    wo: plain(font, cleanWos(meta.wos).join(", ")),
+    equipment: plain(font, meta.equipment),
+    description: plain(font, meta.description, 4000),
+    project: plain(font, meta.project),
+    date: when.date,
+    status: plain(font, meta.status),
+    workspace: plain(font, meta.workspace),
+    by: plain(font, meta.preparedBy),
+  };
+}
+
+/** Write the fills on a sheet's page; `to` maps the sheet's own points to
+ *  the page (a form drawn a little smaller). Skips what has no value. */
+function writeFills(page: PDFPage, font: PDFFont, fields: FieldPlacement[], pageIndex: number, values: Record<FieldKey, string>, to: { x: number; y: number; s: number }, room: number): number {
+  let n = 0;
+  for (const p of fields) {
+    if (!p || (p.page ?? 0) !== pageIndex || !values[p.key]) continue;
+    if (![p.x, p.y, p.size].every((v) => Number.isFinite(v))) continue;
+    const size = Math.min(72, Math.max(5, p.size)) * to.s;
+    const maxW = (p.maxWidth && p.maxWidth > 0 ? p.maxWidth : Math.max(24, room - p.x - 36)) * to.s;
+    const lines = p.key === "description" ? wrap(font, values[p.key], size, maxW, 8) : [clip(font, values[p.key], size, maxW)];
+    lines.forEach((line, i) => text(page, line, to.x + p.x * to.s, to.y + p.y * to.s - i * size * 1.25, size, font));
+    n += 1;
+  }
+  return n;
+}
+
+/** A fillable form's own fields: the ones the app knows get their values,
+ *  then the form is flattened so it prints as one page of ink. */
+function fillAcro(doc: PDFDocument, values: Record<FieldKey, string>, font: PDFFont): Set<FieldKey> {
+  const filled = new Set<FieldKey>();
+  if (!hasAcroForm(doc)) return filled;
+  try {
+    const fields = doc.getForm().getFields();
+    for (const field of fields) {
+      if (!(field instanceof PDFTextField)) continue;
+      const key = keyForField(field);
+      if (!key || !values[key]) continue;
+      try { field.setText(fitField(field, values[key], font)); filled.add(key); } catch { /* leave it blank */ }
+    }
+    if (fields.length) flattenForm(doc);
+  } catch { /* print it as it is */ }
+  return filled;
 }
 
 const KEY_RULES: Array<[FieldKey, RegExp]> = [
@@ -683,6 +794,8 @@ const KEY_RULES: Array<[FieldKey, RegExp]> = [
   ["project", /project|\bjob\b|turnaround|\bta\b/],
   ["date", /\bdate|(print|issue|start|due)date/],
   ["status", /\bstatus\b/],
+  ["by", /prepared ?by|issued ?by|planner|originator/],
+  ["workspace", /\bcompany\b|\bclient\b|\bowner\b|refinery|facility/],
 ];
 
 /** Which value a cover field wants, from its name ("Work Order No",
@@ -769,14 +882,7 @@ async function addTemplateCover(
   if (!("doc" in read)) return false;
   const tpl = read.doc;
   const font = fonts.reg;
-  const values: Record<FieldKey, string> = {
-    wo: plain(font, cleanWos(meta.wos).join(", ")),
-    equipment: plain(font, meta.equipment),
-    description: plain(font, meta.description, 4000),
-    project: plain(font, meta.project),
-    date: when.date,
-    status: plain(font, meta.status),
-  };
+  const values = fillValues(font, meta, when);
   const filled = new Set<FieldKey>();
   try {
     if (hasAcroForm(tpl)) {
@@ -809,16 +915,8 @@ async function addTemplateCover(
   page.setFont(font);
 
   const mb = box(page.getMediaBox());
-  let wrote = filled.size > 0;
-  for (const p of cover.fields ?? []) {
-    if (!p || filled.has(p.key) || !values[p.key]) continue;
-    if (![p.x, p.y, p.size].every((n) => Number.isFinite(n))) continue;
-    const size = Math.min(72, Math.max(5, p.size));
-    const maxW = p.maxWidth && p.maxWidth > 0 ? p.maxWidth : Math.max(24, mb.x1 - mb.x0 - p.x - 36);
-    const lines = p.key === "description" ? wrap(font, values[p.key], size, maxW, 8) : [clip(font, values[p.key], size, maxW)];
-    lines.forEach((line, i) => text(page, line, mb.x0 + p.x, mb.y0 + p.y - i * size * 1.25, size, font));
-    wrote = true;
-  }
+  const placedFields = (cover.fields ?? []).filter((p) => p && !filled.has(p.key));
+  const wrote = filled.size > 0 || writeFills(page, font, placedFields, 0, values, { x: mb.x0, y: mb.y0, s: 1 }, mb.x1 - mb.x0) > 0;
 
   // A cover with nothing to fill still has to say which job it's for; and
   // the package QR goes on whatever the cover is.
@@ -832,6 +930,7 @@ async function addTemplateCover(
       const qx = f.w - Math.min(36 * f.k, f.w * 0.06) - qs;
       const qy = 34 * f.k;
       drawQr(page, landing, qx, qy, qs);
+      if (meta.landingUrl) linkTo(page, meta.landingUrl, qx, qy, qs, qs);
       const label = "Scan for this package";
       const lw = fonts.bold.widthOfTextAtSize(label, 9 * f.k);
       page.drawRectangle({ x: qx + qs - lw - 2 * f.k, y: qy + qs, width: lw + 2 * f.k, height: 13 * f.k, color: WHITE });
@@ -945,13 +1044,18 @@ function addPlaceholder(out: PDFDocument, fonts: Fonts, title: string, why: "loc
 
 /** Copy one part's pages onto the end of `out`. False when the file
  *  couldn't be read and a placeholder page went in instead. */
-async function addPart(out: PDFDocument, fonts: Fonts, part: PackPart): Promise<boolean> {
+async function addPart(out: PDFDocument, fonts: Fonts, part: PackPart, values?: Record<FieldKey, string>): Promise<boolean> {
   const bytes = toU8(part?.bytes);
   const title = itemTitle(part);
   const kind = bytes.length ? sniff(bytes, part.mime) : null;
   if (kind === "pdf") {
     const read = await readPdf(bytes, true);
     if ("doc" in read) {
+      // A blank form's header filled in: its own fillable fields first,
+      // then the spots set up in the kit (the rest is filled by hand).
+      const blank = part.kind === "form" && !part.signed && !!values;
+      const acro = blank ? fillAcro(read.doc, values!, fonts.reg) : new Set<FieldKey>();
+      const fills = blank ? (part.fields ?? []).filter((f) => f && !acro.has(f.key)) : [];
       // A blank form gets its code in the bottom corner. Forms often have
       // a signature box down there, so the form is drawn a little smaller
       // (top kept, centered) to leave a clear strip for the code and the
@@ -968,7 +1072,9 @@ async function addPart(out: PDFDocument, fonts: Fonts, part: PackPart): Promise<
               const band = 64 * k;
               const s = Math.min(1, (H - band - 6 * k) / H);
               const page = out.addPage([W, H]);
-              page.drawPage(ep, { x: (W - W * s) / 2, y: H - H * s - 6 * k, xScale: s, yScale: s });
+              const at = { x: (W - W * s) / 2, y: H - H * s - 6 * k };
+              page.drawPage(ep, { ...at, xScale: s, yScale: s });
+              if (fills.length) writeFills(page, fonts.reg, fills, i, values!, { ...at, s }, W);
             });
             return true;
           }
@@ -976,7 +1082,13 @@ async function addPart(out: PDFDocument, fonts: Fonts, part: PackPart): Promise<
       }
       try {
         const pages = await out.copyPages(read.doc, read.doc.getPageIndices());
-        for (const p of pages) out.addPage(p);
+        pages.forEach((p, i) => {
+          out.addPage(p);
+          if (!fills.length) return;
+          ownContents(p);
+          const mb = box(p.getMediaBox());
+          writeFills(p, fonts.reg, fills, i, values!, { x: mb.x0, y: mb.y0, s: 1 }, mb.x1 - mb.x0);
+        });
         return true;
       } catch { /* placeholder */ }
     }
@@ -1016,13 +1128,14 @@ export async function assemblePackage(meta: PackMeta, parts: PackPart[], kit?: K
   };
   const makeQr = await qrMaker();
   const when = printedWords(meta.printedAt, meta.timeZone);
+  const fillVals = fillValues(fonts.reg, meta, when);
 
   // 1. Every part's pages, in order. One source file is open at a time.
   const placed: Array<{ first: number; count: number; failed: boolean }> = [];
   const owner: number[] = [];   // part page index → part index
   for (let i = 0; i < list.length; i += 1) {
     const first = out.getPageCount();
-    const ok = await addPart(out, fonts, list[i]);
+    const ok = await addPart(out, fonts, list[i], fillVals);
     const n = out.getPageCount() - first;
     placed.push({ first, count: n, failed: !ok });
     for (let k = 0; k < n; k += 1) owner.push(i);
@@ -1038,7 +1151,7 @@ export async function assemblePackage(meta: PackMeta, parts: PackPart[], kit?: K
     if ("doc" in read) tocDoc = read.doc;
   }
   let region = tocDoc ? tocRegion(frameOf(tocDoc.getPage(0)), kit?.toc?.region) : GEN_REGION;
-  let tocPages = paginate(layoutRows(list, failed, fonts, region), region.h - HEAD_H);
+  let tocPages = paginate(layoutRows(list, failed, fonts, region), region.h - (region.cols ? 0 : HEAD_H));
   let copies: PDFPage[] | null = null;
   if (tocDoc) {
     try {

@@ -45,6 +45,7 @@ next-env.d.ts
 # every dev/build. Committing it would pin a specific worker
 # version that drifts from package-lock.json.
 /public/pdf.worker.min.mjs
+/public/ocr/
 
 # Java build output (MPXJ converter jar is rebuilt from source in Docker).
 docker/mpxj-converter/target/

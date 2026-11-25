@@ -28,18 +28,21 @@ import { field as fieldCls, label as labelCls } from "@/components/admin/kit";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { sayError } from "@/components/projects/sayError";
 import DocScanner from "@/components/scan/DocScanner";
+import { contentsPages } from "@/lib/packagePdf";
 import { supabase } from "@/lib/supabase";
 import { uploadToPath } from "@/lib/storage";
 import {
-  draftPackage, joinPath, moveItem, newItemId, packageFilePath, packageStage, sayPackagesChanged,
+  draftPackage, joinPath, kitItem, moveItem, newItemId, packageFilePath, packageStage, sayPackagesChanged,
   updatePackage, updatePackages, type PackageKit, type PkgItem, type ProjectPackages, type WoPackage,
 } from "@/lib/woPackages";
 import {
-  buildPackagePdf, canWriteToFolder, deleteWorkingCopies, download, openPdf, packageCodes, packageUrl,
+  buildPackagePdf, canWriteToFolder, deleteWorkingCopies, download, drawingPages, openPdf, packageCodes, packageUrl,
   pagesOf, projectFolder, rememberedFolderName, withDrawings, writeToFolder,
 } from "@/lib/packageOps";
 import type { ScopeWO } from "@/lib/woIntake";
 
+/** Quick names for scanned pages that aren't a kit form. */
+const SCAN_NAMES = ["Inspection photos", "Torque record", "Hydro test chart", "Punch list", "Material certs", "Field sketch"];
 const KIND_WORD: Record<PkgItem["kind"], string> = { form: "Kit form", drawing: "Drawing", photo: "Photo", file: "File" };
 const STATUS: Record<WoPackage["status"], { word: string; dot: string }> = {
   draft: { word: "Draft", dot: "bg-[var(--color-text-faint)]" },
@@ -72,6 +75,9 @@ export default function PackageBuilder({
   const [adding, setAdding] = useState<null | "forms" | "drawings">(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [scan, setScan] = useState<null | { for: "add" } | { for: "signed"; id: string; title: string }>(null);
+  // A scan back from "Scan pages" whose code didn't say which form it is: asked.
+  const [scanned, setScanned] = useState<null | { pdf: Uint8Array; pages: number; other?: string }>(null);
+  const [scanName, setScanName] = useState("");
   const [filing, setFiling] = useState(false);
   const [drag, setDrag] = useState<number | null>(null);
   const [over, setOver] = useState<number | null>(null);
@@ -110,6 +116,22 @@ export default function PackageBuilder({
     finally { setBusy(null); }
   }, [orgId, projectId, key]);
 
+  // Each drawing's page count, read once, so every item's page number is
+  // known before printing.
+  const counting = useRef(new Set<string>());
+  useEffect(() => {
+    if (!pkg || !canManage) return;
+    for (const it of pkg.items) {
+      if (it.kind !== "drawing" || !it.documentId || it.pages != null || counting.current.has(it.id)) continue;
+      counting.current.add(it.id);
+      void drawingPages(it.documentId).then((n) => {
+        if (!n) return;
+        void updatePackage(orgId, projectId, key, (p) => ({ ...p, items: p.items.map((x) => (x.id === it.id && x.pages == null ? { ...x, pages: n } : x)) }))
+          .then(() => sayPackagesChanged(projectId), () => undefined);
+      });
+    }
+  }, [pkg, canManage, orgId, projectId, key]);
+
   if (!pkg) {
     return (
       <Sheet onClose={onClose} title={group.some((x) => /^\d/.test(x.wo)) ? `WO ${group.map((x) => x.wo).join(", ")}` : group[0].what} sub="Drafting the package from the kit…">
@@ -121,7 +143,23 @@ export default function PackageBuilder({
   const st = packageStage(pkg);
   const filed = pkg.status === "filed";
   const items = pkg.items;
+  // Forms that come back signed, the blank ones first.
+  const returnable = items.filter((i) => i.kind === "form" && !i.ref).sort((a, b) => Number(!!a.signed) - Number(!!b.signed));
   const kitForms = kit.forms.filter((f) => !items.some((i) => i.formId === f.id));
+  // The contents as it prints: the page each item starts on, renumbered
+  // whenever the order changes (cover 1, then the contents page, then the
+  // items). Unknown only while a drawing's pages are still being counted.
+  const formPages = new Map(kit.forms.map((f) => [f.id, f.pages]));
+  const tocN = contentsPages(items.length, kit.toc ? (kit.toc.region?.h ?? 550) : null, !!kit.toc?.region?.cols);
+  const starts: Array<number | null> = [];
+  {
+    let at: number | null = 2 + tocN;
+    for (const it of items) {
+      starts.push(at);
+      const n = it.kind === "form" && it.formId ? formPages.get(it.formId) : it.kind === "photo" ? 1 : it.pages;
+      at = at != null && n ? at + n : null;
+    }
+  }
 
   // ── Adding ──
   const addFiles = async (files: FileList | null) => {
@@ -197,6 +235,17 @@ export default function PackageBuilder({
     for (const g of gone) void import("@/lib/storage").then((m) => m.deleteFile(g)).catch(() => undefined);
   };
   const move = (from: number, to: number) => change("Moving", (p) => ({ ...p, items: moveItem(p.items, from, to) }));
+  // Scanned pages that aren't a signed form: added under the name given.
+  const addScan = async (sc: { pdf: Uint8Array; pages: number }, title: string) => {
+    setBusy("Adding the scan"); setError(null);
+    try {
+      const path = packageFilePath(orgId, projectId, key, "pdf");
+      await uploadToPath(new Blob([sc.pdf as BlobPart], { type: "application/pdf" }), path, { contentType: "application/pdf" });
+      await updatePackage(orgId, projectId, key, (p) => ({ ...p, items: [...p.items, { id: newItemId(), kind: "file", title, path, mime: "application/pdf", pages: sc.pages }] }));
+      sayPackagesChanged(projectId);
+      setScanned(null); setNote(`${title} added.`);
+    } catch (e) { setError(sayError(e)); } finally { setBusy(null); }
+  };
 
   const primary = filed ? null
     : pkg.status === "draft" ? { label: "Approve", icon: Check, run: approve }
@@ -218,6 +267,35 @@ export default function PackageBuilder({
       )}>
       {error && <ErrorNote title={error} />}
       {note && <p role="status" className="text-body text-[var(--color-text)] flex items-start gap-1.5"><Check aria-hidden className="w-4 h-4 mt-0.5 shrink-0 text-[var(--state-released)]" />{note}</p>}
+
+      {/* A scan to place: a signed form swapped in, or something new, named. */}
+      {scanned && (
+        <section aria-label="What you scanned" className="rounded-lg border border-[var(--color-border-strong)] p-3 grid gap-2.5">
+          <p className="text-body font-semibold text-[var(--color-text)]">What did you scan? <span className="font-normal text-[var(--color-text-muted)]">{scanned.pages} page{scanned.pages === 1 ? "" : "s"}</span></p>
+          {scanned.other && <p className="text-body text-[var(--state-overdue-text)]">Its code is for another package (WO {scanned.other}). If it belongs there, scan it in that package.</p>}
+          {returnable.length > 0 && (
+            <div className="grid gap-1.5">
+              {returnable.map((f) => (
+                <Button key={f.id} variant="secondary" className="justify-start text-left" disabled={!!busy}
+                  onClick={() => { const sc = scanned; setScanned(null); void putSigned(f.id, f.title, sc.pdf, "application/pdf", "scan"); }}>
+                  The signed {f.title}{f.signed ? " (replaces the one in)" : ""}
+                </Button>
+              ))}
+            </div>
+          )}
+          <form onSubmit={(e) => { e.preventDefault(); const t = scanName.trim(); if (t) void addScan(scanned, t); }} className="grid gap-2">
+            <label htmlFor="pb-scan-name" className="text-body font-medium text-[var(--color-text)]">{returnable.length ? "Or something new, named" : "Name it"}</label>
+            <div className="flex flex-wrap gap-1.5">
+              {SCAN_NAMES.map((n) => <button key={n} type="button" aria-pressed={scanName === n} onClick={() => setScanName(n)} className="ui-chip">{n}</button>)}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <input id="pb-scan-name" value={scanName} onChange={(e) => setScanName(e.target.value)} placeholder="e.g. Torque record" className={`${fieldCls} flex-1 min-w-40`} />
+              <Button type="submit" variant="secondary" disabled={!scanName.trim() || !!busy}>Add it</Button>
+            </div>
+          </form>
+          <Button variant="ghost" className="justify-self-start" onClick={() => void (async () => { if (await appConfirm({ title: "Throw this scan away?", message: "It isn't saved anywhere yet.", confirmLabel: "Throw it away", tone: "danger" })) setScanned(null); })()}>Throw it away</Button>
+        </section>
+      )}
 
       {filed && pkg.filed && (
         <div className="rounded-lg border border-[var(--color-border)] p-3 grid gap-1">
@@ -242,14 +320,14 @@ export default function PackageBuilder({
 
       {/* The contents, in print order. */}
       <ol aria-label="What's in the package" className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
-        <Fixed icon={FileStack} title="Cover sheet" meta={kit.cover ? `Your cover, with the work order filled in${pkg.status !== "draft" ? " and the package's QR" : ""}` : "Made for it, with your logo and the package's QR"} />
-        <Fixed icon={FileText} title="Contents" meta="Numbered when it's printed" />
+        <Fixed icon={FileStack} title="Cover sheet" meta={`Page 1 · ${kit.cover ? `your cover, with the work order filled in${pkg.status !== "draft" ? " and the package's QR" : ""}` : "made for it, with your logo and the package's QR"}`} />
+        <Fixed icon={FileText} title="Contents" meta={`Page${tocN > 1 ? `s 2 to ${1 + tocN}` : " 2"} · every item below and the page it starts on`} />
         {items.map((it, i) => {
           const menu: MoreItem[] = [
             ...(i > 0 ? [{ icon: <MoveUp aria-hidden className="w-4 h-4" />, label: "Move up", onClick: () => move(i, i - 1) }] : []),
             ...(i < items.length - 1 ? [{ icon: <MoveDown aria-hidden className="w-4 h-4" />, label: "Move down", onClick: () => move(i, i + 1) }] : []),
             { icon: <Pencil aria-hidden className="w-4 h-4" />, label: "Rename", onClick: () => setRenaming(it.id) },
-            ...(it.kind === "form" ? [
+            ...(it.kind === "form" && !it.ref ? [
               { icon: <Camera aria-hidden className="w-4 h-4" />, label: it.signed ? "Rescan the signed copy" : "Scan the signed copy", line: true, onClick: () => setScan({ for: "signed", id: it.id, title: it.title }) },
               { icon: <Upload aria-hidden className="w-4 h-4" />, label: "Upload the signed copy", onClick: () => { signedFor.current = it.id; signedIn.current?.click(); } },
               ...(it.signed ? [{ icon: <X aria-hidden className="w-4 h-4" />, label: "Back to the blank", onClick: () => void change("Putting the blank back", (p) => ({ ...p, items: p.items.map((x) => (x.id === it.id ? { ...x, signed: undefined } : x)) })) }] : []),
@@ -276,10 +354,10 @@ export default function PackageBuilder({
                   <span className="block text-reading text-[var(--color-text)] truncate" title={it.title}>{it.title}</span>
                 )}
                 <span className="block text-caption text-[var(--color-text-muted)]">
-                  {KIND_WORD[it.kind]}{it.kind === "drawing" && it.rev ? `, rev ${it.rev} when added (prints at the current one)` : ""}{it.pages ? ` · ${it.pages} page${it.pages === 1 ? "" : "s"}` : ""}
+                  {it.ref ? "Reference sheet, doesn't come back" : KIND_WORD[it.kind]}{it.kind === "drawing" && it.rev ? `, rev ${it.rev} when added (prints at the current one)` : ""}{it.pages ? ` · ${it.pages} page${it.pages === 1 ? "" : "s"}` : ""}{starts[i] != null ? ` · starts on page ${starts[i]}` : it.kind === "drawing" ? " · counting its pages" : ""}
                 </span>
               </span>
-              {it.kind === "form" && (
+              {it.kind === "form" && !it.ref && (
                 <span className="shrink-0 inline-flex items-center gap-1.5 text-caption text-[var(--color-text-muted)]">
                   <span aria-hidden className={`w-2 h-2 rounded-full ${it.signed ? "bg-[var(--state-released)]" : "bg-[var(--color-text-faint)]"}`} />
                   {it.signed ? `Signed, ${when(it.signed.at, tz)}` : "Blank"}
@@ -313,7 +391,7 @@ export default function PackageBuilder({
 
       {adding === "forms" && (
         <AddForms kit={kit} inPkg={new Set(items.map((i) => i.formId).filter(Boolean) as string[])} onCancel={() => setAdding(null)} onOpenKit={onOpenKit}
-          onAdd={(ids) => { setAdding(null); void change("Adding forms", (p) => ({ ...p, items: [...p.items, ...kit.forms.filter((f) => ids.includes(f.id)).map((f) => ({ id: newItemId(), kind: "form" as const, title: f.title, formId: f.id, pages: f.pages }))] })); }} />
+          onAdd={(ids) => { setAdding(null); void change("Adding forms", (p) => ({ ...p, items: [...p.items, ...kit.forms.filter((f) => ids.includes(f.id)).map((f) => kitItem(f))] })); }} />
       )}
       {adding === "drawings" && (
         <AddDrawings orgId={orgId} start={group.map((x) => x.tag).find(Boolean) ?? ""} inPkg={new Set(items.map((i) => i.documentId).filter(Boolean) as string[])} onCancel={() => setAdding(null)}
@@ -332,16 +410,16 @@ export default function PackageBuilder({
           onDone={(out) => {
             const s = scan; setScan(null);
             if (s.for === "signed") { void putSigned(s.id, s.title, out.pdf, "application/pdf", "scan"); return; }
-            // Scanned pages: added as a file, named after this package.
-            void (async () => {
-              setBusy("Adding the scan"); setError(null);
-              try {
-                const path = packageFilePath(orgId, projectId, key, "pdf");
-                await uploadToPath(new Blob([out.pdf as BlobPart], { type: "application/pdf" }), path, { contentType: "application/pdf" });
-                await updatePackage(orgId, projectId, key, (p) => ({ ...p, items: [...p.items, { id: newItemId(), kind: "file", title: `Scanned pages (${out.pages})`, path, mime: "application/pdf", pages: out.pages }] }));
-                sayPackagesChanged(projectId);
-              } catch (e) { setError(sayError(e)); } finally { setBusy(null); }
-            })();
+            // The code printed on a blank says which form it is: a blank
+            // one is swapped in at once; anything else is asked.
+            const m = out.qr ? /^pkgform:(.+):(it_[a-z0-9]+)$/.exec(out.qr) : null;
+            const form = m && m[1] === key ? returnable.find((f) => f.id === m[2]) : undefined;
+            if (form && !form.signed) {
+              void putSigned(form.id, form.title, out.pdf, "application/pdf", "scan").then(() => setNote(`Its code says it's the ${form.title}: the signed copy is in.`));
+              return;
+            }
+            setScanName("");
+            setScanned({ pdf: out.pdf, pages: out.pages, ...(m && m[1] !== key ? { other: m[1] } : {}) });
           }} />
       )}
     </Sheet>

@@ -63,6 +63,21 @@ export async function currentDrawing(documentId: string, who: { email?: string |
   }
 }
 
+/** How many pages a library drawing's current file has (for the
+ *  package's page numbers before it's printed). */
+export async function drawingPages(documentId: string): Promise<number | null> {
+  try {
+    const { data: d } = await supabase.from("documents").select("current_version_id").eq("id", documentId).maybeSingle();
+    const vid = (d as { current_version_id: string | null } | null)?.current_version_id;
+    if (!vid) return null;
+    const { data: v } = await supabase.from("document_versions").select("file_url").eq("id", vid).maybeSingle();
+    const url = (v as { file_url: string | null } | null)?.file_url;
+    if (!url) return null;
+    const bytes = await fetchStored(url);
+    return /\.pdf$/i.test(url.split("?")[0]) || (bytes[0] === 0x25 && bytes[1] === 0x50) ? await pagesOf(bytes, "application/pdf") : 1;
+  } catch { return null; }
+}
+
 /** The QR codes for packages' covers (the project's printed-packages link). */
 export async function packageCodes(projectId: string, keys: string[]): Promise<Record<string, string>> {
   const res = await fetch("/api/package-returns/codes", {
@@ -122,7 +137,9 @@ export async function buildPackagePdf(input: BuildInput): Promise<Built> {
         }
         const f = it.formId ? formFile.get(it.formId) : undefined;
         if (!f) { problems.push(`${it.title}: the blank is no longer in the kit`); continue; }
-        parts.push({ id: it.id, title: it.title, kind: "form", bytes: await fetchStored(f.path), mime: "application/pdf", qr: `pkgform:${pkg.key}:${it.id}` });
+        // A reference sheet never comes back, so it carries no code.
+        const back = !it.ref && f.returns !== false;
+        parts.push({ id: it.id, title: it.title, kind: "form", bytes: await fetchStored(f.path), mime: "application/pdf", fields: f.fields, ...(back ? { qr: `pkgform:${pkg.key}:${it.id}` } : {}) });
       } else if (it.kind === "drawing" && it.documentId) {
         const d = await currentDrawing(it.documentId, input.who);
         if (d.versionId !== (it.versionId ?? null)) drawings.push({ id: it.id, versionId: d.versionId, rev: d.rev });
@@ -156,7 +173,7 @@ export async function buildPackagePdf(input: BuildInput): Promise<Built> {
   }
   const meta = {
     workspace: input.workspace, project: input.projectName, wos: pkg.wos, equipment: pkg.equipment, description: pkg.description,
-    printedAt: new Date(), timeZone: input.tz, logo, landingUrl,
+    printedAt: new Date(), timeZone: input.tz, logo, landingUrl, preparedBy: input.who.email ?? undefined,
     status: input.signed ? "Filed" : pkg.status === "draft" ? "Draft" : pkg.status === "approved" ? "Approved" : "Issued",
   };
   const out = await assemblePackage(meta, parts, templates);

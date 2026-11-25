@@ -1132,13 +1132,17 @@ html.vt-on .side-marker { view-transition-name: side-marker; }
 /* Text links (the ones that underline on hover) take taps over 44 px on
    a touch screen without moving anything: 12 px of padding above and
    below, cancelled by an equal negative margin (design rule T1). In the
-   base layer, so a link with its own padding or margin keeps it. */
+   base layer, so a link with its own padding or margin keeps it. A link
+   that sets its own touch height (pointer-coarse:min-h-*) takes its 44 px in the
+   layout: the trick would make it 44 tall in a 16 px row, and two such
+   links one under the other would overlap (a tap on the first landed on
+   the second). */
 @layer base {
   @media (pointer: coarse) {
-    :is(a, button)[class*="hover:underline"] { padding-block: 12px; margin-block: -12px; }
+    :is(a, button)[class*="hover:underline"]:not([class*="pointer-coarse:min-h-"]) { padding-block: 12px; margin-block: -12px; }
     /* A line shorter than 20 px (14 px text at 1.375) still adds up to 44. */
     @supports (padding-block: 1lh) {
-      :is(a, button)[class*="hover:underline"] { padding-block: max(12px, calc(22px - 0.5lh)); margin-block: min(-12px, calc(0.5lh - 22px)); }
+      :is(a, button)[class*="hover:underline"]:not([class*="pointer-coarse:min-h-"]) { padding-block: max(12px, calc(22px - 0.5lh)); margin-block: min(-12px, calc(0.5lh - 22px)); }
     }
     /* Document numbers and IDs drawn as links (.ui-id), the same way. */
     a.ui-id, button.ui-id { padding-block: 10px; margin-block: -10px; }

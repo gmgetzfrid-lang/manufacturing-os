@@ -220,7 +220,10 @@ describe("packagePdf", () => {
 
     const cover = doc.getPage(0);
     const annots = cover.node.Annots();
-    expect(annots ? annots.size() : 0).toBe(0); // flattened: no fields left
+    const subtypes = (annots?.asArray() ?? []).map((r) => String((doc.context.lookup(r) as PDFDict).get(PDFName.of("Subtype"))));
+    expect(subtypes.filter((t) => t === "/Widget")).toHaveLength(0); // flattened: no fields left
+    // The package's QR opens its page when the file is read on a computer.
+    if (meta.landingUrl) expect(subtypes).toContain("/Link");
     expect(doc.catalog.get(PDFName.of("AcroForm"))).toBeUndefined();
 
     // The filled values are now drawn on the page (flattened field art).
@@ -287,5 +290,46 @@ describe("packagePdf", () => {
       expect(text).toContain(hex(`Page ${t.page} of ${res.pages}`));
       expect(text).toContain(hex(t.title));
     }
+  });
+
+  it("writes a form's fills where the kit says: on the smaller form with its code, as is without one, never on a signed copy", async () => {
+    const fields = [
+      { key: "wo" as const, x: 120, y: 700, size: 10 },
+      { key: "equipment" as const, x: 120, y: 680, size: 10 },
+      { key: "date" as const, x: 400, y: 700, size: 10, page: 1 },
+      { key: "by" as const, x: 400, y: 660, size: 10 },
+    ];
+    const res = await assemblePackage({ ...meta, preparedBy: "planner@kern.test" }, [
+      pdfPart("a", "Flange log", await makePdf([[612, 792], [612, 792]]), "form", { fields, qr: "pkgform:400101:it_a" }),
+      pdfPart("b", "Hydro test", await makePdf([[612, 792]]), "form", { fields }),
+      pdfPart("c", "Closure, signed", await makePdf([[612, 792]]), "form", { fields, signed: true }),
+    ]);
+    const doc = await PDFDocument.load(res.pdf);
+    const start = (id: string) => res.toc.find((t) => t.id === id)!.page - 1;
+    // (The footer on every page already says the WO and equipment, so the
+    // fills are told apart by "printed by", the date and where they sit.)
+    const a1 = pageText(doc, start("a"));
+    expect(a1).toContain(hex("planner@kern.test"));
+    expect(a1).not.toContain(hex("Nov 25, 2026"));       // the date was set for page 2
+    const a2 = pageText(doc, start("a") + 1);
+    expect(a2).toContain(hex("Nov 25, 2026"));
+    expect(a2).not.toContain(hex("planner@kern.test"));
+    // Without a code the form is as it is: the WO sits exactly where it was set.
+    const b1 = pageText(doc, start("b"));
+    expect(b1).toContain(hex("planner@kern.test"));
+    expect(b1).toMatch(/1 0 0 1 120 700 TM/);
+    expect(pageText(doc, start("c"))).not.toContain(hex("planner@kern.test"));
+  });
+
+  it("writes the contents under a page's own column headings, without adding its own", async () => {
+    const tpl = await makePdf([[612, 792]]);
+    const parts = [pdfPart("a", "Flange log", await makePdf([[612, 792]]), "form"), pdfPart("b", "P&ID 3102-D", await makePdf([[612, 792]]))];
+    const own = await assemblePackage(meta, parts, { toc: { bytes: tpl, region: { x: 52, y: 54, w: 524, h: 600, cols: { no: 54, item: 110, pageR: 540 } } } });
+    const t = pageText(await PDFDocument.load(own.pdf), 1);
+    expect(t).toContain(hex("Flange log"));
+    expect(t).not.toContain(hex("Kind"));     // no heading row of the app's
+    expect(t).toMatch(/1 0 0 1 110 \d+(\.\d+)? TM/);   // titles under "Description"
+    const plainToc = await assemblePackage(meta, parts, { toc: { bytes: tpl, region: { x: 52, y: 54, w: 524, h: 600 } } });
+    expect(pageText(await PDFDocument.load(plainToc.pdf), 1)).toContain(hex("Kind"));
   });
 });
