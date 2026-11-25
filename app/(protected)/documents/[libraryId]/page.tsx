@@ -409,15 +409,11 @@ export default function LibraryExplorerPage() {
 
   // Recently viewed: opening a document records it (best-effort, cross-device)
   // so the dashboard's "Recently Viewed" widget can pick up where you left off.
-  // It also tells the side menu's "Jump back in" (number and title with it).
-  const viewedLib = selectedDoc?.libraryId ?? null;
-  const viewedNumber = selectedDoc?.documentNumber ?? null;
-  const viewedTitle = selectedDoc?.title || selectedDoc?.name || null;
   useEffect(() => {
     const docId = selectedDoc?.id;
     if (!docId || !activeOrgId || !uid) return;
-    void import("@/lib/recentDocs").then((m) => m.recordDocView(activeOrgId, uid, docId, { libraryId: viewedLib, number: viewedNumber, title: viewedTitle }));
-  }, [selectedDoc?.id, activeOrgId, uid, viewedLib, viewedNumber, viewedTitle]);
+    void import("@/lib/recentDocs").then((m) => m.recordDocView(activeOrgId, uid, docId));
+  }, [selectedDoc?.id, activeOrgId, uid]);
 
   // Sweep expired ad-hoc holds where they actually block people — the library
   // page — so a lapsed 24h cap releases on the next visit, not at the nightly

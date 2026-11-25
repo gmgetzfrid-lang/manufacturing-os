@@ -4,11 +4,9 @@
 //
 // Design contract (matches the code; keep it that way):
 //
-//   * The daily tools in sight, four of them (docs/design-rules.md A6):
-//     Home, Documents, Projects, Drafting requests. The other tools sit
-//     under More, one tap away; More opens by itself while one of them is
-//     the page, and remembers being left open. Alternate views of a tool
-//     live behind the in-page ViewTabs, never as extra items.
+//   * Every tool in one flat list, split into groups by space (the daily
+//     work, the plant, the tools). Alternate views of a tool live behind
+//     the in-page ViewTabs, never as extra items.
 //
 //   * Tool highlighting is DERIVED from the same ViewTabs arrays the pages
 //     use (TOOL_ALIASES below), so a new view tab keeps the highlight right.
@@ -16,16 +14,11 @@
 //   * The current item's tab is one shape that slides to the item and runs
 //     into the page edge (nav-joined in globals.css).
 //
-//   * Under the tools, only when there is something: "Checked out to you"
-//     (others wait on those, with when each is due) and "Jump back in"
-//     (starred documents first, then what was opened last). No empty
-//     headings (B7).
-//
 //   * Badges: red = waiting on your decision, a quiet count = unread news,
 //     absent = clear. The header bell owns the org-wide total.
 //
 //   * Admin is a separate fold, closed until wanted. In the 64 px rail
-//     (Cmd+B / Ctrl+B, remembered) More and Admin are one menu each. On a
+//     (Cmd+B / Ctrl+B, remembered) Admin is one menu. On a
 //     phone the menu is a drawer that closes on navigation and Escape.
 //
 //   * The footer avatar is the USER (photo, or initials), never a role.
@@ -45,7 +38,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown,
   FolderKanban, ShieldCheck, UsersRound, FileStack, Palette,
   Check, Image as ImageIcon, X, Bot, CreditCard, DatabaseBackup, ArchiveRestore, Compass,
-  HardHat, Lock, Star,
+  HardHat,
 } from 'lucide-react';
 import { useTicketNotifications } from '@/hooks/useTicketNotifications';
 import { useNotificationCenter } from '@/components/notifications/NotificationCenter';
@@ -53,7 +46,6 @@ import { useIsMobile } from '@/hooks/useIsMobile';
 import LogoUploadModal from '@/components/branding/LogoUploadModal';
 import UserAvatar from '@/components/ui/UserAvatar';
 import MoreMenu, { type MoreItem } from '@/components/ui/MoreMenu';
-import { useSideUtility } from '@/lib/sideUtility';
 import { badgeText } from '@/lib/badge';
 import { onTransitionClick } from '@/lib/viewTransition';
 import {
@@ -75,15 +67,6 @@ const TOOL_ALIASES: Record<string, string[]> = {
 
 const COLLAPSED_KEY  = 'mfg-os.sidebar.collapsed';
 const SECTIONS_KEY   = 'mfg-os.sidebar.closedSections';
-const MORE_KEY       = 'mfg-os.sidebar.moreOpen';
-
-// The tools in sight: what most people open every day (docs/design-rules.md
-// A6, three to five). The rest sit under More, one tap away.
-const DAILY = new Set(['/dashboard', '/documents', '/projects', '/requests']);
-
-// A row in the lists under the tools: one step quieter than a tool (14 px,
-// muted), the same height and icon column, 44 px on touch.
-const SIDE_ROW = 'flex items-center gap-2.5 h-9 pointer-coarse:h-11 px-2.5 rounded-lg text-body text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)] transition-colors';
 
 type Tone = 'orange' | 'blue' | 'indigo' | 'amber' | 'emerald' | 'violet' | 'rose' | 'slate' | 'purple' | 'cyan';
 type IconType = React.ComponentType<{ className?: string; style?: React.CSSProperties }>;
@@ -157,7 +140,6 @@ export default function Sidebar({
   // empty set — leaves them open, except Admin which we close by default).
   const [closedSections, setClosedSections] = useState<Set<string>>(new Set(['admin']));
   const [orgs, setOrgs] = useState<Array<{ id: string; name: string }>>([]);
-  const [moreOpen, setMoreOpen] = useState(false);
 
   // Hydrate persisted prefs.
   useEffect(() => {
@@ -167,13 +149,11 @@ export default function Sidebar({
       if (c === '1') setRailCollapsed(true);
       const s = localStorage.getItem(SECTIONS_KEY);
       if (s) setClosedSections(new Set(JSON.parse(s) as string[]));
-      if (localStorage.getItem(MORE_KEY) === '1') setMoreOpen(true);
     } catch {}
   }, []);
 
   useEffect(() => { try { localStorage.setItem(COLLAPSED_KEY, railCollapsed ? '1' : '0'); } catch {} }, [railCollapsed]);
   useEffect(() => { try { localStorage.setItem(SECTIONS_KEY, JSON.stringify([...closedSections])); } catch {} }, [closedSections]);
-  useEffect(() => { try { localStorage.setItem(MORE_KEY, moreOpen ? '1' : '0'); } catch {} }, [moreOpen]);
 
   // ⌘B toggle.
   useEffect(() => {
@@ -223,8 +203,6 @@ export default function Sidebar({
 
   const orgOptions = useMemo(() => orgs.slice().sort((a, b) => a.name.localeCompare(b.name)), [orgs]);
   const orgName = orgOptions.find((o) => o.id === activeOrgId)?.name ?? null;
-  // Under the tools: what this person holds, and where they left off.
-  const side = useSideUtility(activeOrgId, uid);
   const isAdmin = activeRole === 'Admin' || activeRole === 'DocCtrl';
 
   // The workspace menu: switch workspace, the logo, settings (only what this
@@ -308,11 +286,6 @@ export default function Sidebar({
   }, [sectionCounts, badgeOf, isAdmin, activeRole]);
 
   const workItems = sections.find((x) => x.id === 'work')?.items ?? [];
-  const daily = workItems.filter((leaf) => DAILY.has(leaf.href));
-  const more = workItems.filter((leaf) => !DAILY.has(leaf.href));
-  // More opens by itself while one of its tools is the page.
-  const moreHot = more.some((leaf) => isPathActive(leaf.href));
-  const moreShown = moreOpen || moreHot;
   const adminItems = sections.find((x) => x.id === 'admin')?.items ?? [];
   const adminHot = adminItems.some((leaf) => isPathActive(leaf.href));
   const adminShown = adminHot || !closedSections.has('admin');
@@ -337,11 +310,11 @@ export default function Sidebar({
     place();
     // Glide only after it has a place (the first paint just shows it there).
     const raf = requestAnimationFrame(() => tab.classList.add('is-ready'));
-    // The list above it can change height (More opening, a list loading).
+    // The list above it can change height (Admin opening).
     const ro = new ResizeObserver(place);
     ro.observe(box);
     return () => { cancelAnimationFrame(raf); ro.disconnect(); };
-  }, [pathname, collapsed, moreShown, adminShown, side]);
+  }, [pathname, collapsed, adminShown]);
 
   const toggleSection = (id: string) => {
     setClosedSections((prev) => {
@@ -419,98 +392,14 @@ export default function Sidebar({
             <span className="absolute left-1 top-2 bottom-2 w-[3px] rounded-full bg-[var(--color-current)]" />
           </div>
 
-          {/* The daily tools, in sight (docs/design-rules.md A6: three to five). */}
+          {/* Every tool in sight; groups split by space, not headings (B3). */}
           <div className="px-2 space-y-0.5">
-            {daily.map((leaf) => (
-              <SidebarLeaf key={leaf.href} leaf={leaf} active={isPathActive(leaf.href)} collapsed={collapsed} />
+            {workItems.map((leaf) => (
+              <div key={leaf.href} className={leaf.startsGroup ? (collapsed ? 'pt-3' : 'pt-4') : ''}>
+                <SidebarLeaf leaf={leaf} active={isPathActive(leaf.href)} collapsed={collapsed} />
+              </div>
             ))}
           </div>
-
-          {/* The rest, one tap away; open by itself while one of them is the page. */}
-          {more.length > 0 && (collapsed ? (
-            <div className="px-2 mt-1 space-y-0.5">
-              {more.filter((leaf) => isPathActive(leaf.href)).map((leaf) => (
-                <SidebarLeaf key={leaf.href} leaf={leaf} active collapsed />
-              ))}
-              <div className="flex justify-center">
-                <MoreMenu label="More tools" iconOnly
-                  triggerClass="w-10 h-10 inline-flex items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)] transition-colors"
-                  items={more.map((leaf) => ({ icon: <leaf.icon className="w-4 h-4" />, label: leaf.label, current: isPathActive(leaf.href), onClick: () => router.push(leaf.href) }))} />
-              </div>
-            </div>
-          ) : (
-            <div className="px-2 mt-0.5">
-              <button type="button" onClick={() => setMoreOpen((v) => !v)} aria-expanded={moreShown}
-                className="w-full flex items-center gap-2.5 h-9 pointer-coarse:h-11 px-2.5 rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)] transition-colors">
-                <ChevronDown aria-hidden className={`ui-chevron w-[17px] h-[17px] ${moreShown ? '' : '-rotate-90'}`} />
-                <span className="text-reading leading-none">More</span>
-              </button>
-              {moreShown && (
-                <div className="mt-0.5 space-y-0.5">
-                  {more.map((leaf) => (
-                    <SidebarLeaf key={leaf.href} leaf={leaf} active={isPathActive(leaf.href)} collapsed={false} />
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-
-          {/* What this person holds, and where they left off: plain rows
-              like the tools above (no box), each list only when it has
-              something (B7). */}
-          {!collapsed && side && side.held.length > 0 && (
-            <div className="px-2 mt-6">
-              <div className="px-2.5 mb-1 flex items-baseline gap-1.5 text-caption font-medium text-[var(--color-text-muted)]">
-                Checked out to you <span className="tabular-nums">{side.held.length}</span>
-              </div>
-              <ul className="space-y-0.5">
-                {side.held.slice(0, 3).map((h) => {
-                  const due = dueWords(h.dueAt);
-                  return (
-                    <li key={h.documentId}>
-                      <Link href={h.libraryId ? `/documents/${h.libraryId}?doc=${h.documentId}` : `/documents?doc=${h.documentId}`} title={`${h.label}${due ? `, ${due.words.toLowerCase()}` : ''}`}
-                        className={SIDE_ROW}>
-                        <Lock aria-hidden className="shrink-0 w-4 h-4" />
-                        <span className="ui-id truncate flex-1 min-w-0 !text-[color:inherit]">{h.label}</span>
-                        {due && (
-                          <span className={`shrink-0 inline-flex items-center gap-1.5 text-caption ${due.late ? 'text-[var(--color-text)] font-medium' : ''}`}>
-                            {due.late && <span aria-hidden className="w-1.5 h-1.5 rounded-full bg-[var(--state-overdue)]" />}{due.words}
-                          </span>
-                        )}
-                      </Link>
-                    </li>
-                  );
-                })}
-                {side.held.length > 3 && (
-                  <li><Link href="/checkouts" className={SIDE_ROW}><span aria-hidden className="w-4 shrink-0" /><span className="text-caption font-medium">All {side.held.length}</span></Link></li>
-                )}
-              </ul>
-            </div>
-          )}
-          {!collapsed && side && side.jump.length > 0 && (
-            <div className="px-2 mt-6">
-              <div className="px-2.5 mb-1 text-caption font-medium text-[var(--color-text-muted)]">Jump back in</div>
-              <ul className="space-y-0.5">
-                {side.jump.map((j) => {
-                  const here = j.kind === 'project' ? (pathname?.startsWith(`/projects/${j.id}`) ?? false) : false;
-                  const KindIcon = j.starred ? Star : j.kind === 'project' ? Briefcase : FileText;
-                  // The title, without the number it already starts with.
-                  const rest = j.code && j.title.startsWith(j.code) ? j.title.slice(j.code.length).trim() : j.title;
-                  return (
-                    <li key={`${j.kind}:${j.id}`}>
-                      <Link href={j.href} aria-current={here ? 'page' : undefined} title={j.code && rest ? `${j.code}, ${rest}` : j.title}
-                        className={`${SIDE_ROW} ${here ? '!text-[var(--color-text)] bg-[var(--color-surface)]' : ''}`}>
-                        <KindIcon aria-hidden className={`shrink-0 w-4 h-4 ${j.starred ? 'fill-current' : ''}`} />
-                        {j.starred && <span className="sr-only">Starred: </span>}
-                        {j.code && <span className="ui-id truncate min-w-0 max-w-[60%] shrink-0 !text-[color:inherit]">{j.code}</span>}
-                        {rest && <span className="truncate min-w-0 flex-1">{rest}</span>}
-                      </Link>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          )}
 
           {/* Admin: a different place, kept closed until wanted. In the rail,
               one menu instead of a dozen icons. */}
@@ -672,20 +561,6 @@ function SidebarLeaf({
       )}
     </Link>
   );
-}
-
-/** When a checked-out document is due back, in two words: "Overdue",
- *  "Due today", "Due Fri", "Due Dec 3". */
-function dueWords(at: string | null): { words: string; late: boolean } | null {
-  const t = at ? Date.parse(at) : NaN;
-  if (!Number.isFinite(t)) return null;
-  if (t < Date.now()) return { words: 'Overdue', late: true };
-  const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  const d = new Date(t);
-  const days = Math.round((day(d) - day(new Date())) / 86_400_000);
-  if (days === 0) return { words: 'Due today', late: false };
-  if (days < 7) return { words: `Due ${d.toLocaleDateString('en-US', { weekday: 'short' })}`, late: false };
-  return { words: `Due ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`, late: false };
 }
 
 // ─── The workspace card at the top ───────────────────────────

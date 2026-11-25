@@ -102,7 +102,6 @@ import type {
   Project, ProjectMember, ProjectMemberRole, ProjectActivity, CheckoutSession, ProjectStatus, Timestamp,
 } from "@/types/schema";
 import { sayError } from "@/components/projects/sayError";
-import { rememberProject } from "@/lib/recentProjects";
 
 type Tab = "plan" | "today" | "work" | "reports" | "closeout" | "materials" | "documents" | "intake" | "costs" | "quality" | "activity" | "members";
 const SCHEDULE_TABS = ["plan", "today", "work", "reports"] as const;
@@ -535,11 +534,6 @@ function ProjectDetail() {
     }, () => undefined);
     return () => { on = false; };
   }, [unscheduled0, project?.id, tab, scopeRev]);
-
-  // Kept on this device for the side menu's "Recent projects".
-  useEffect(() => {
-    if (project?.id && project.orgId && project.name) rememberProject(project.orgId, { id: project.id, name: project.name });
-  }, [project?.id, project?.orgId, project?.name]);
 
   const goBack = () => { if (window.history.length > 1) router.back(); else router.push("/projects"); };
 
