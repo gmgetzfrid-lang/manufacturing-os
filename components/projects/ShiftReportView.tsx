@@ -110,7 +110,8 @@ import { FindingsReview, PastJobsPanel, KindChip, useProjectFindings, usePastJob
 import { APPLIES_WORD, KIND_WORD, leadTag, type Finding } from "@/lib/findings";
 import { shiftForm, FORM_ROWS, type FormRowId } from "@/lib/shiftForm";
 import { exportedLabel, logSteps, shiftLog } from "@/lib/hourlyLog";
-import { pngInBrowser, saveHourlyLog, type LogFormat } from "@/lib/hourlyLogFiles";
+// The hourly log file makers load when a log is saved (lib/hourlyLogFiles).
+import type { LogFormat } from "@/lib/hourlyLogFiles";
 import { slotClocks, hourlyRows, hourSlots, breaksOn, breakLabel, plainLine, workOrderClosers, briefNotes, selfNamed } from "@/lib/shiftHourly";
 import { saidWithLatest } from "@/lib/stepComment";
 import { sayError } from "@/components/projects/sayError";
@@ -692,6 +693,7 @@ export default function ShiftReportView({ milestones: rawLive, progress: livePro
     const a = meetingRecord(records, thisKey), b = meetingRecord(records, nextKey);
     const one = shiftLog({ shift, tz, times, record: a.record, next: b.record, prev: records.get(prevKey), carried: { start: !!a.from, end: !!b.from }, rows, steps: logSteps(live, tz, times), log: progressRows ?? [], now: Date.now(), closes: closers });
     const name = (projectName ?? "Schedule").trim() || "Schedule";
+    const { saveHourlyLog, pngInBrowser } = await import("@/lib/hourlyLogFiles");
     await saveHourlyLog([one], format, { project: name, lh, exported: exportedLabel(Date.now(), tz), toPng: pngInBrowser, fileName: `${name} - hourly log ${shift.dayKey} ${shift.kind}` });
     return "Saved.";
   };

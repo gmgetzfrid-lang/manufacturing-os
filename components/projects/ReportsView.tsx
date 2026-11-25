@@ -36,7 +36,10 @@ import { loadHandover, handoverKey, type HandoverDecision } from "@/lib/shiftHan
 import { notesFor } from "@/lib/milestones";
 import { buildTimeLog, downloadTimeLog, type TimeLogRow } from "@/lib/timeLog";
 import { jobLogs, oneShiftLog, type ShiftLog } from "@/lib/hourlyLog";
-import { hourlyLogPdf, hourlyLogTable, pngInBrowser, saveHourlyLog, type LogFormat } from "@/lib/hourlyLogFiles";
+// The hourly log's PDF, Word and Excel makers (pdf-lib, zip) load when a
+// log is made, not with the project page.
+import type { LogFormat } from "@/lib/hourlyLogFiles";
+const logFiles = () => import("@/lib/hourlyLogFiles");
 import { groupWorkOrders, findOrders, showsOrder, workOrdersPrintDocument, SHOW_WORD, type Show } from "@/lib/workOrderGroups";
 import { buildShiftSheet, shiftSheetHtml, shiftSheetDocument, sheetPages, sheetIds, sheetTitle } from "@/lib/shiftSheet";
 import ShiftSheetEntry from "@/components/projects/ShiftSheetEntry";
@@ -355,7 +358,7 @@ export default function ReportsView(p: Props) {
         if (sel === "schedule") { setPreview(null); return; }
         setPreviewBusy(true);
         if (sel === "hourly") {
-          const logs = await hourlyLogs();
+          const [logs, { hourlyLogTable, hourlyLogPdf, pngInBrowser }] = await Promise.all([hourlyLogs(), logFiles()]);
           if (format === "xlsx") {
             const rows = hourlyLogTable(logs);
             if (alive) setPreview({ kind: "rows", head: ["Date", "Shift", "Time", "Type", "What happened"], rows: rows.slice(0, ROWS_SHOWN), total: rows.length });
@@ -422,7 +425,7 @@ export default function ReportsView(p: Props) {
         printHtml(extra ? page.replace(/<\/body>/i, `${extra}</body>`) : page, w);
         remember({ report: sel, label: `${meeting === "turnover" ? shiftLabel : "Printed"}`, shift: shiftPick });
       } else if (sel === "hourly") {
-        const logs = await hourlyLogs();
+        const [logs, { hourlyLogPdf, saveHourlyLog, pngInBrowser }] = await Promise.all([hourlyLogs(), logFiles()]);
         if (what === "print") {
           const bytes = await hourlyLogPdf(logs, { project: name, lh: lhOn, toPng: pngInBrowser });
           const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: "application/pdf" }));

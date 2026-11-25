@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
+import { lastLoaded, keepLoaded } from '@/lib/warmLoads';
 import { useRole } from '@/components/providers/RoleContext';
 import { Ticket, TicketStatus, OrgDraftingSettings, SelectOption, Role } from '@/types/schema';
 import { logAuditAction } from '@/lib/audit';
@@ -104,13 +105,20 @@ const calculateDaysOpen = (date: unknown) => {
 // SECTION 4: MAIN COMPONENT - REQUEST PORTAL
 // =========================================================================================
 
+/** The list as last read for this account, workspace, roles and closed
+ *  choice: shown at once when the page opens again (lib/warmLoads). */
+const requestsKey = (orgId: string, uid: string, roles: readonly string[], withClosed: boolean) =>
+  `requests:${orgId}|${uid}|${roles.join(",")}|${withClosed ? "all" : "open"}`;
+
 export default function RequestPortal() {
   const { activeRole, roles, activeOrgId, uid } = useRole();
   const router = useRouter();
   const narrow = useNarrow();
 
   // --- STATE ---
-  const [tickets, setTickets] = useState<Ticket[]>([]);
+  // Opened again: the list as last read, at once (read afresh below). The
+  // page opens on all statuses, closed included.
+  const [tickets, setTickets] = useState<Ticket[]>(() => (uid && activeOrgId ? lastLoaded<Ticket[]>(requestsKey(activeOrgId, uid, roles, true)) : undefined) ?? []);
   const [loading, setLoading] = useState<boolean>(true);
   // When true, the fetch drops the `.neq('status','CLOSED')` filter so
   // closed tickets show up. Lets a user find a previously completed
@@ -276,7 +284,9 @@ export default function RequestPortal() {
 
         if (alive) {
           setError(null);
-          setTickets(rows.map(fromRow));
+          const list = rows.map(fromRow);
+          setTickets(list);
+          keepLoaded(requestsKey(activeOrgId, uid, roles, includeClosed), list);
           setLoading(false);
           setRefreshing(false);
         }

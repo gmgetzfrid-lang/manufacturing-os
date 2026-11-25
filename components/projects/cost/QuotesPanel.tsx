@@ -39,7 +39,6 @@ import {
   parsedQuoteFrom, quoteGroups, unawardQuote, moveInvoiceToLine, correctCostDoc, lineOfDoc,
 } from "@/lib/costDocs";
 import { computeBidEconomics, scoreBids, DEFAULT_WEIGHTS, type ParsedQuote } from "@/lib/bidTab";
-import { downloadStarterRfq } from "@/lib/rfqDocx";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 import { sayError } from "@/components/projects/sayError";
 import HelpTooltip from "@/components/ui/HelpTooltip";
@@ -1132,6 +1131,8 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
       const { data: to } = await supabase.from("turnover_items")
         .select("name").eq("project_id", projectId).eq("required", true).limit(30);
       const { data: org } = await supabase.from("orgs").select("name").eq("id", orgId).maybeSingle();
+      // The Word maker loads when a request for quote is made, not with the page.
+      const { downloadStarterRfq } = await import("@/lib/rfqDocx");
       downloadStarterRfq({
         projectName: String(p.name ?? "Project"),
         orgName: (org?.name as string | null) ?? null,

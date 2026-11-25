@@ -53,8 +53,10 @@ export interface HomeWho { uid: string; orgId: string; roles: Role[]; email?: st
  *  account's roles there): the layout, the deck and the widgets. Sign-in
  *  starts these the moment the password is accepted when this device
  *  knows its workspace, alongside the server's check; they are only ever
- *  shown in that workspace, once the server says the account is in it. */
-export async function warmHomeOrg(who: { uid: string; orgId: string; email?: string | null }): Promise<Promise<unknown>[]> {
+ *  shown in that workspace, once the server says the account is in it.
+ *  `header`: the loads the top of Home shows, one round trip each;
+ *  `deck`: what's waiting on you (it looks up a few details after). */
+export async function warmHomeOrg(who: { uid: string; orgId: string; email?: string | null }): Promise<{ header: Promise<unknown>[]; deck: Promise<unknown>; startWidgets: () => void }> {
   const { uid, orgId, email } = who;
   const [{ loadDashboardConfig }, { loadInbox }, widgets] = await Promise.all([
     import("@/lib/dashboard/config"),
@@ -62,28 +64,35 @@ export async function warmHomeOrg(who: { uid: string; orgId: string; email?: str
     import("@/lib/dashboard/widgetLoads"),
   ]);
   const config = sharedLoad(dashKey(uid), () => loadDashboardConfig(uid));
-  // The widgets the layout holds, and the libraries and projects under them.
-  void config.then((cfg) => widgets.warmWidgets(cfg.widgets.map((w) => w.type), orgId, uid), () => undefined);
-  return [
-    config,
-    sharedLoad(inboxKey(orgId, uid), () => loadInbox(orgId, uid, email ?? undefined)),
-    sharedLoad(deckPillarsKey(orgId, uid), () => loadDeckPillars(orgId)),
-  ];
+  const header = [config, sharedLoad(deckPillarsKey(orgId, uid), () => loadDeckPillars(orgId))];
+  const deck = sharedLoad(inboxKey(orgId, uid), () => loadInbox(orgId, uid, email ?? undefined));
+  // The widgets the layout holds, and the libraries and projects under
+  // them, come after what the first screen shows: dozens of counts asked
+  // at once would hold up the answers needed first.
+  let started = false;
+  const startWidgets = () => {
+    if (started) return;
+    started = true;
+    void config.then((cfg) => widgets.warmWidgets(cfg.widgets.map((w) => w.type), orgId, uid), () => undefined);
+  };
+  return { header, deck, startWidgets };
 }
 
-/** Start the loads Home's first screen shows, for this account in this
- *  workspace; resolves when they have all answered (or failed). The
- *  widgets below come in as their own loads finish. */
+/** Start Home's loads for this account in this workspace. Resolves when
+ *  the top of Home can be drawn (what needs you, the layout, the setup
+ *  list, the deck's counts): one round trip. What waits on you in the deck
+ *  and the widgets below come in as their own loads finish. */
 export async function warmHome(who: HomeWho): Promise<void> {
   const { uid, orgId, roles, isAdmin } = who;
   const [{ attentionKey, loadAttention }, org] = await Promise.all([
     import("@/hooks/useTicketNotifications"),
     warmHomeOrg(who),
   ]);
-  const first: Promise<unknown>[] = [
-    ...org,
+  const header: Promise<unknown>[] = [
+    ...org.header,
     sharedLoad(attentionKey(orgId, uid, roles), () => loadAttention(orgId, uid, roles)),
     ...(isAdmin ? [sharedLoad(setupCountsKey(orgId, uid), () => loadSetupCounts(orgId))] : []),
   ];
-  await Promise.allSettled(first);
+  await Promise.allSettled(header);
+  org.startWidgets();
 }

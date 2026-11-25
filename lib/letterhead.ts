@@ -13,7 +13,6 @@
 // of text escaped and every picture checked to be an image.
 
 import { noEmDash } from "@/lib/noEmDash";
-import JSZip from "jszip";
 
 /** A picture: a data: URL, and its size on the page in inches. */
 export interface LhImg { src: string; w: number; h: number }
@@ -338,6 +337,8 @@ export const bandHeight = (items: LhItem[]) => items.reduce((a, it) => a + itemH
 
 /** A Word file (.docx) as a letterhead. Pictures come out as data: URLs. */
 export async function letterheadFromDocx(data: ArrayBuffer | Uint8Array, name: string): Promise<Letterhead> {
+  // The zip reader loads when a Word letterhead is read, not with every screen.
+  const { default: JSZip } = await import("jszip");
   const zip = await JSZip.loadAsync(data);
   const text = async (p: string) => (await zip.file(p)?.async("string")) ?? null;
   const docXml = await text("word/document.xml");

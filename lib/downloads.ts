@@ -9,7 +9,8 @@
 // rotated watermark + footer onto every page via pdf-lib (see lib/stamping.ts).
 
 import { supabase } from "@/lib/supabase";
-import { downloadStampedPdf, stampPdf } from "@/lib/stamping";
+// The PDF stamper (pdf-lib) loads when a copy is stamped, not with the page.
+const stamping = () => import("@/lib/stamping");
 import { recordIntent } from "@/lib/intents";
 import { publicOrigin } from "@/lib/publicOrigin";
 import type { DocumentRecord } from "@/types/schema";
@@ -225,6 +226,7 @@ export async function downloadDocumentPdf(ctx: DownloadContext): Promise<Control
     const blob = await res.blob();
     triggerBlobDownload(blob, ctx.filename ?? defaultFilename(ctx.doc, ""));
   } else {
+    const { downloadStampedPdf } = await stamping();
     await downloadStampedPdf({
       url: ctx.fileUrl,
       filename: ctx.filename ?? defaultFilename(ctx.doc, "_UNCONTROLLED"),
@@ -268,6 +270,7 @@ export async function printDocumentPdf(ctx: DownloadContext): Promise<ControlSta
     const res = await fetch(ctx.fileUrl);
     blob = await res.blob();
   } else {
+    const { stampPdf } = await stamping();
     blob = await stampPdf(ctx.fileUrl, {
       userLabel: ctx.userLabel ?? undefined,
       email: ctx.userEmail ?? undefined,

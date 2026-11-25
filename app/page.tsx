@@ -123,7 +123,7 @@ export default function LoginPage() {
     if (!user?.id) return Promise.resolve();
     const uid = user.id;
     const org = lastOrg();
-    if (org) return import("@/lib/dashboard/homeLoads").then((m) => m.warmHomeOrg({ uid, orgId: org, email: user.email ?? null })).catch(() => undefined);
+    if (org) return import("@/lib/dashboard/homeLoads").then((m) => m.warmHomeOrg({ uid, orgId: org, email: user.email ?? null })).then(() => undefined, () => undefined);
     return import("@/lib/dashboard/config").then((m) => sharedLoad(dashKey(uid), () => m.loadDashboardConfig(uid))).catch(() => undefined);
   };
 
@@ -189,10 +189,14 @@ export default function LoginPage() {
         }
         setLoading(false); setOpened(true);
         setSigned({ name, at: new Date() });
-        // "Opening your workspace" has a job: the dashboard's layout and what
-        // needs you load now, so it opens filled in. Never more than 2.5 s:
-        // past that it opens and the rest arrives in place.
-        await Promise.race([warm(user, answer), new Promise((r) => setTimeout(r, 2500))]);
+        // "Opening your workspace" has a job: the top of Home (what needs
+        // you, the layout) loads now, so it opens filled in. Never more than
+        // 2.5 s: past that it opens and the rest arrives in place.
+        // [timing experiment] mos.navEarly: open Home at once instead.
+        let early = false;
+        try { early = sessionStorage.getItem("mos.navEarly") === "1"; } catch { /* no */ }
+        if (early) void warm(user, answer);
+        else await Promise.race([warm(user, answer), new Promise((r) => setTimeout(r, 2500))]);
         router.replace("/dashboard");
         return;
       }
