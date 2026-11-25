@@ -68,7 +68,8 @@ import { sheet, link, btnQuiet, btnLink, btnDanger, btnIcon, field, label as lab
 import { bandInput, bandInputIcon, bandSelect, bandSeg, bandSegItem, plural } from "@/components/admin/band";
 import EquipmentFilesDialog from "@/components/assets/EquipmentFilesDialog";
 import { loadTree } from "@/lib/equipmentLibraryPush";
-import { planTree, type EquipmentTree } from "@/lib/equipmentLibrary";
+import type { EquipmentTree } from "@/lib/equipmentLibrary";
+import { useEquipmentFilesSync } from "@/components/assets/useEquipmentFilesSync";
 import { assetHref } from "@/lib/equipmentIdentity";
 
 /** Full-screen overlays live on <body>, above the top bar (the page is its
@@ -172,6 +173,17 @@ function AssetsPageInner() {
   }, [activeOrgId]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  // Equipment Files keeps itself in step with this registry and the site
+  // codebook: each time the equipment loads or changes, missing folders are
+  // made, renamed or renumbered ones renamed, re-typed equipment moved. Admin
+  // and Document Control only (the database makes folders for them alone).
+  const canSyncFolders = hasAnyRole(["Admin", "DocCtrl"]);
+  const efSync = useEquipmentFilesSync({
+    orgId: activeOrgId, uid, email: userEmail, can: canSyncFolders && !!efTree?.assets,
+    trigger: efTree?.assets && !loading ? assets : null,
+    onSynced: setEfTree,
+  });
 
   // ── Filters ────────────────────────────────────────────────
   const filtered = useMemo(() => {
@@ -645,19 +657,19 @@ function AssetsPageInner() {
       <PageBody>
         {/* Document control laid out like these areas: offered until it's made, then where it is and what's new. */}
         {!unitFilter && !loading && !error && assets.length > 0 && efTree !== undefined && (canEditEquipment || efTree?.assets) && (() => {
-          const fresh = efTree?.assets ? planTree({
-            units: book.units.map((u) => ({ code: u.code, label: u.label })), types: types.map((t) => ({ id: t.id, name: t.name })),
-            assets: assets.filter((a) => !a.archived).map((a) => ({ id: a.id, tag: a.tag, code: a.code ?? null, unitCode: a.unit_code ?? null, typeId: a.type_id, description: a.description })),
-            existing: efTree, equipmentFolders: true,
-          }).folders.length : 0;
           const open = efTree?.assets ? `/documents/${efTree.libraryId}${efTree.collectionId ? `?folderId=${efTree.collectionId}` : ""}` : "";
           return (
             <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-2">
               <FolderTree aria-hidden className="w-5 h-5 text-[var(--color-text-muted)] shrink-0" />
               {efTree?.assets ? (
                 <>
-                  <p className="min-w-0 flex-1 basis-64 text-body text-[var(--color-text)]"><b>Equipment files</b> live in <a href={open} className="font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">{efTree.libraryName ?? "the library"}</a>, a folder for each unit, type and piece of equipment.{fresh > 0 ? ` ${plural(fresh, "new folder")} to add for equipment added since.` : ""}</p>
-                  {canEditEquipment && fresh > 0 && <Button variant="secondary" onClick={() => setEfOpen(true)}>Add {plural(fresh, "folder")}</Button>}
+                  <div className="min-w-0 flex-1 basis-64 grid gap-0.5">
+                    <p className="text-body text-[var(--color-text)]"><b>Equipment files</b> live in <a href={open} className="font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">{efTree.libraryName ?? "the library"}</a>: a folder for each unit, type and piece of equipment, kept in step with this registry and the site codebook.</p>
+                    {efSync.busy ? <p role="status" className="text-body text-[var(--color-text-muted)]">Bringing it up to date: {efSync.busy.toLowerCase()}…</p>
+                      : efSync.error ? <p role="alert" className="text-body text-[var(--state-overdue-text)]">Couldn&apos;t bring it up to date: {efSync.error}</p>
+                      : efSync.words ? <p role="status" className="text-body text-[var(--color-text-muted)]">Just brought up to date: {efSync.words}.</p> : null}
+                  </div>
+                  {efSync.error && <Button variant="secondary" onClick={() => void efSync.run()}>Try again</Button>}
                 </>
               ) : (
                 <>

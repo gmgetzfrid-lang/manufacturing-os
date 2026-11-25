@@ -9,12 +9,12 @@
 // unit's page gets its folder pinned ("Equipment files").
 
 import { supabase } from "@/lib/supabase";
-import { createFolder } from "@/lib/libraryCollections";
+import { createFolder, moveFolderServer, renameFolderAndDescendants } from "@/lib/libraryCollections";
 import { fetchAllRows } from "@/lib/fetchAllRows";
-import { listAssets, listAssetTypes } from "@/lib/assets";
-import { loadCodebook, saveUnitLinks, type UnitResourceLink } from "@/lib/codebook";
+import { createAsset, createAssetType, invalidateAssetCache, listAssets, listAssetTypes } from "@/lib/assets";
+import { loadCodebook, saveUnitLinks, upsertEntry, type UnitResourceLink } from "@/lib/codebook";
 import { mutateConfig, readConfig } from "@/lib/woPackages";
-import { NO_UNIT, planTree, typeKeyOf, type EquipmentTree, type PlannedFolder, type TreeAsset } from "@/lib/equipmentLibrary";
+import { NO_UNIT, planSync, planTree, syncCount, typeKeyOf, type EquipmentTree, type FolderFact, type PlannedFolder, type SyncPlan, type TreeAsset, type TreeType } from "@/lib/equipmentLibrary";
 import { eqtypeId } from "@/lib/estate/folderMarks";
 import { defaultLibraryAccess } from "@/lib/libraryAccess";
 
@@ -28,12 +28,19 @@ export function saveTree(orgId: string, tree: EquipmentTree): Promise<EquipmentT
   return mutateConfig<EquipmentTree | null>(orgId, TREE_KEY, null, () => tree).then(() => tree);
 }
 
+/** Equipment types with their site codebook number, matched by name the way
+ *  Operating areas matches them ("Exchangers" is code 30). */
+export function numberTypes(types: Array<{ id: string; name: string }>, codebookTypes: Array<{ code: string; label: string }>): TreeType[] {
+  const codeOf = new Map(codebookTypes.map((t) => [t.label.trim().toLowerCase(), t.code]));
+  return types.map((t) => ({ id: t.id, name: t.name, code: codeOf.get(t.name.trim().toLowerCase()) ?? null }));
+}
+
 /** What the site encoding and the registry hold, for planning. */
 export async function treeInputs(orgId: string) {
   const [cb, types, assets] = await Promise.all([loadCodebook(orgId), listAssetTypes(orgId), listAssets({ orgId, archived: false })]);
   return {
     units: cb.units.map((u) => ({ code: u.code, label: u.label })),
-    types: types.map((t) => ({ id: t.id, name: t.name })),
+    types: numberTypes(types, cb.equipmentTypes),
     assets: assets.map((a): TreeAsset => ({ id: a.id, tag: a.tag, code: a.code ?? null, unitCode: a.unit_code ?? null, typeId: a.type_id, description: a.description })),
   };
 }
@@ -179,12 +186,94 @@ export type Where =
   | { own: true; name: string; accessFrom?: string | null }
   | { own: false; libraryId: string; folderName: string };
 
+/** The tree's folders as they are now: name and parent (gone or in the
+ *  trash: absent). */
+export async function folderFacts(tree: EquipmentTree): Promise<Map<string, FolderFact>> {
+  const ids = [...new Set([...Object.values(tree.units ?? {}), ...Object.values(tree.types ?? {}), ...Object.values(tree.assets ?? {})])];
+  const out = new Map<string, FolderFact>();
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await supabase.from("collections").select("id, name, parent_id").in("id", ids.slice(i, i + 200)).is("deleted_at", null);
+    if (error) throw new Error(error.message);
+    for (const r of (data ?? []) as Array<{ id: string; name: string; parent_id: string | null }>) out.set(r.id, { name: r.name, parentId: r.parent_id ?? null });
+  }
+  return out;
+}
+
+/** What it takes to bring the library in step with the registry and the
+ *  site codebook (nothing written). Null when there's no Equipment Files. */
+export async function syncPlanFor(orgId: string, tree?: EquipmentTree | null, extra?: { units?: string[]; typeKeys?: string[] }): Promise<{ tree: EquipmentTree; plan: SyncPlan; inputs: Awaited<ReturnType<typeof treeInputs>> } | null> {
+  const stored = tree === undefined ? await loadTree(orgId) : tree;
+  if (!stored?.assets) return null;
+  const live = await liveTree(stored);
+  const [inputs, facts] = await Promise.all([treeInputs(orgId), folderFacts(live)]);
+  return { tree: live, plan: planSync({ ...inputs, tree: live, folders: facts, extra }), inputs };
+}
+
+export interface SyncResult { tree: EquipmentTree; made: number; renamed: number; moved: number; pinned: number; marked: number }
+
+/** Make, rename and move as the plan says; save the map; pin each unit's
+ *  folder on its page; mark the new folders in the graph (or all of them). */
+async function applySync(orgId: string, uid: string, email: string | undefined, base: EquipmentTree, plan: SyncPlan, say: (w: string) => void, wireAll: boolean): Promise<SyncResult> {
+  const { tree: grown, made } = await applyPlan(orgId, base, plan.make, uid, (d, of) => say(`Making folders: ${d} of ${of}`));
+  let renamed = 0;
+  for (const [i, r] of plan.rename.entries()) {
+    say(`Numbering and renaming folders: ${i + 1} of ${plan.rename.length}`);
+    await renameFolderAndDescendants(r.id, r.to);
+    renamed++;
+  }
+  let moved = 0;
+  for (const [i, m] of plan.move.entries()) {
+    const to = grown.types?.[m.toTypeKey];
+    if (!to) continue;
+    say(`Moving equipment folders to their type: ${i + 1} of ${plan.move.length}`);
+    await moveFolderServer({ orgId, collectionId: m.id, newParentId: to });
+    moved++;
+  }
+  const saved = await saveTree(orgId, { ...grown, pushedAt: base.pushedAt ?? new Date().toISOString(), pushedBy: base.pushedBy ?? email, syncedAt: new Date().toISOString() });
+
+  // Each unit's page: its folder pinned (and its name kept current).
+  let pinned = 0;
+  const cb = await loadCodebook(orgId);
+  const unitIds = Object.values(saved.units ?? {});
+  const nameOf = new Map<string, string>();
+  for (let i = 0; i < unitIds.length; i += 200) {
+    const { data } = await supabase.from("collections").select("id, name").in("id", unitIds.slice(i, i + 200));
+    for (const c of (data ?? []) as Array<{ id: string; name: string }>) nameOf.set(c.id, c.name);
+  }
+  for (const u of cb.units) {
+    const folderId = saved.units?.[u.code];
+    if (!folderId) continue;
+    const links = (u.meta.links ?? []) as UnitResourceLink[];
+    const have = links.find((l) => l.folderId === folderId);
+    if (have && have.folderName === (nameOf.get(folderId) ?? have.folderName) && have.libraryName === saved.libraryName) continue;
+    const link: UnitResourceLink = { id: have?.id ?? crypto.randomUUID(), label: "Equipment files", libraryId: saved.libraryId, libraryName: saved.libraryName ?? "Equipment Files", folderId, folderName: nameOf.get(folderId) ?? null };
+    await saveUnitLinks(orgId, u.code, [...links.filter((l) => l.folderId !== folderId && l.label !== "Equipment files"), link]).then(() => { pinned++; }, () => undefined);
+  }
+  // The graph: every new folder marked for its unit, type or equipment.
+  const before = new Set([...Object.values(base.units ?? {}), ...Object.values(base.types ?? {}), ...Object.values(base.assets ?? {})]);
+  const fresh = new Set([...Object.values(saved.units ?? {}), ...Object.values(saved.types ?? {}), ...Object.values(saved.assets ?? {})].filter((f) => wireAll || !before.has(f)));
+  const marked = fresh.size ? await wireGraph(orgId, saved, { userId: uid, name: email ?? null }, fresh) : 0;
+  return { tree: saved, made, renamed, moved, pinned, marked };
+}
+
+/** Bring Equipment Files in step with the registry and the site codebook:
+ *  new units, types and equipment get folders, renamed or renumbered ones
+ *  are renamed, equipment whose type or unit changed moves (with its
+ *  documents). Admin and Document Control only (the database makes and
+ *  moves folders for them alone). Null when there's no Equipment Files. */
+export async function syncTree(orgId: string, uid: string, email?: string, onStep?: (words: string) => void, extra?: { units?: string[]; typeKeys?: string[] }): Promise<SyncResult | null> {
+  const p = await syncPlanFor(orgId, undefined, extra);
+  if (!p) return null;
+  if (!syncCount(p.plan)) return { tree: p.tree, made: 0, renamed: 0, moved: 0, pinned: 0, marked: 0 };
+  return applySync(orgId, uid, email, p.tree, p.plan, onStep ?? (() => undefined), false);
+}
+
 /** Make or grow the Equipment Files library. */
 export async function pushTree(input: {
   orgId: string; uid: string; email?: string; where: Where;
   allUnits: boolean; equipmentFolders: boolean;
   onStep?: (words: string) => void;
-}): Promise<{ tree: EquipmentTree; made: number; pinned: number; marked: number }> {
+}): Promise<SyncResult> {
   const say = input.onStep ?? (() => undefined);
   const stored = await loadTree(input.orgId);
   const before = stored ? await liveTree(stored) : null;
@@ -213,32 +302,13 @@ export async function pushTree(input: {
   }
   // A new place starts a new map; the same place keeps its folders.
   const samePlace = !!before && before.libraryId === libraryId && (before.collectionId ?? null) === collectionId;
-  const base: EquipmentTree = { ...(samePlace ? before! : {}), libraryId, libraryName, collectionId, own: input.where.own };
+  const base: EquipmentTree = { units: {}, types: {}, assets: {}, ...(samePlace ? before! : {}), libraryId, libraryName, collectionId, own: input.where.own,
+    allUnits: input.allUnits, equipmentFolders: input.equipmentFolders, pushedAt: new Date().toISOString(), pushedBy: input.email };
 
   say("Reading the operating areas");
-  const inputs = await treeInputs(input.orgId);
-  const plan = planTree({ ...inputs, existing: samePlace ? before : null, allUnits: input.allUnits, equipmentFolders: input.equipmentFolders });
-  const { tree, made } = await applyPlan(input.orgId, base, plan.folders, input.uid, (d, of) => say(`Making folders: ${d} of ${of}`));
-  const saved = await saveTree(input.orgId, { ...tree, pushedAt: new Date().toISOString(), pushedBy: input.email });
-
-  // Each unit's page: its folder pinned.
-  say("Pinning each unit's folder");
-  let pinned = 0;
-  const cb = await loadCodebook(input.orgId);
-  const { data: names } = await supabase.from("collections").select("id, name").in("id", Object.values(saved.units ?? {}).slice(0, 500));
-  const nameOf = new Map(((names ?? []) as Array<{ id: string; name: string }>).map((c) => [c.id, c.name]));
-  for (const u of cb.units) {
-    const folderId = saved.units?.[u.code];
-    if (!folderId) continue;
-    const links = (u.meta.links ?? []) as UnitResourceLink[];
-    if (links.some((l) => l.folderId === folderId)) continue;
-    const link: UnitResourceLink = { id: crypto.randomUUID(), label: "Equipment files", libraryId, libraryName, folderId, folderName: nameOf.get(folderId) ?? null };
-    await saveUnitLinks(input.orgId, u.code, [...links.filter((l) => l.label !== "Equipment files"), link]).then(() => { pinned++; }, () => undefined);
-  }
-  // The graph: every folder marked for its unit, type or equipment.
-  say("Linking the folders in the graph");
-  const marked = await wireGraph(input.orgId, saved, { userId: input.uid, name: input.email ?? null });
-  return { tree: saved, made, pinned, marked };
+  const [inputs, facts] = await Promise.all([treeInputs(input.orgId), folderFacts(base)]);
+  const plan = planSync({ ...inputs, tree: base, folders: facts });
+  return applySync(input.orgId, input.uid, input.email, base, plan, say, true);
 }
 
 /** Where a piece of equipment's files go in Equipment Files: its own
@@ -260,8 +330,8 @@ export async function ensureAssetFolder(orgId: string, uid: string, asset: TreeA
     return { id: near, path: ((data as { path_names?: string[] } | null)?.path_names ?? []), own: false };
   }
   if (!id) {
-    const types = await listAssetTypes(orgId).then((t) => t.map((x) => ({ id: x.id, name: x.name })), () => []);
     const cb = await loadCodebook(orgId);
+    const types = await listAssetTypes(orgId).then((t) => numberTypes(t, cb.equipmentTypes), () => []);
     const plan = planTree({ units: cb.units.map((u) => ({ code: u.code, label: u.label })), types, assets: [asset], existing: tree, equipmentFolders: true });
     const { tree: grown } = await applyPlan(orgId, tree, plan.folders, uid);
     await saveTree(orgId, grown);
@@ -276,3 +346,36 @@ export async function ensureAssetFolder(orgId: string, uid: string, asset: TreeA
   const { data } = await supabase.from("collections").select("path_names").eq("id", id).maybeSingle();
   return { id, path: ((data as { path_names?: string[] } | null)?.path_names ?? []), own };
 }
+
+// ── From the library into the registry ─────────────────────────────────
+// A folder made in the Equipment Files chain is a unit, a type or a piece of
+// equipment: it goes into the site codebook or the registry first, and its
+// folder follows from there (one source, never two lists to keep alike).
+
+/** A new operating area: into the site codebook, then its folder. */
+export async function addUnitFromLibrary(orgId: string, uid: string, email: string | undefined, unit: { code: string; label: string }): Promise<string | null> {
+  const code = unit.code.trim(), label = unit.label.trim();
+  await upsertEntry(orgId, { kind: "unit", code, label, meta: {} } as Parameters<typeof upsertEntry>[1], uid);
+  const r = await syncTree(orgId, uid, email, undefined, { units: [code] });
+  return r?.tree.units?.[code] ?? null;
+}
+
+/** An equipment type in a unit: the type from the site codebook (made in
+ *  the registry's list of types if it isn't there yet), then its folder. */
+export async function addTypeFromLibrary(orgId: string, uid: string, email: string | undefined, unitCode: string, type: { code: string; label: string }): Promise<string | null> {
+  const types = await listAssetTypes(orgId);
+  const have = types.find((t) => t.name.trim().toLowerCase() === type.label.trim().toLowerCase());
+  const typeId = have?.id ?? (await createAssetType({ orgId, name: type.label.trim(), sortOrder: 99 })).id;
+  const key = typeKeyOf(unitCode, typeId);
+  const r = await syncTree(orgId, uid, email, undefined, { typeKeys: [key] });
+  return r?.tree.types?.[key] ?? null;
+}
+
+/** A piece of equipment: into the registry in that unit and type, then its folder. */
+export async function addEquipmentFromLibrary(orgId: string, uid: string, email: string | undefined, eq: { unitCode: string | null; typeId: string | null; tag: string; code: string; description: string }): Promise<string | null> {
+  const a = await createAsset({ orgId, tag: eq.tag.trim(), code: eq.code.trim() || undefined, description: eq.description.trim() || undefined, unitCode: eq.unitCode && eq.unitCode !== NO_UNIT ? eq.unitCode : undefined, typeId: eq.typeId ?? undefined, createdBy: uid });
+  invalidateAssetCache();
+  const r = await syncTree(orgId, uid, email);
+  return r?.tree.assets?.[a.id] ?? null;
+}
+

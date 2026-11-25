@@ -9,6 +9,10 @@ import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import FolderGrid from "@/components/documents/FolderGrid";
 import CustomizeNodeModal from "@/components/documents/CustomizeNodeModal";
+import EquipmentFolderDialog, { type EquipmentFolderLevel } from "@/components/assets/EquipmentFolderDialog";
+import { syncWords } from "@/components/assets/useEquipmentFilesSync";
+import { loadTree as loadEquipmentTree, syncTree as syncEquipmentTree } from "@/lib/equipmentLibraryPush";
+import type { EquipmentTree } from "@/lib/equipmentLibrary";
 import LibraryHomeBoard from "@/components/documents/LibraryHomeBoard";
 import PageHeader from "@/components/documents/PageHeader";
 import PageBackground from "@/components/documents/PageBackground";
@@ -301,7 +305,7 @@ export default function LibraryExplorerPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const pathname = usePathname();
-  const { activeOrgId, activeRole, uid, userEmail } = useRole();
+  const { activeOrgId, activeRole, uid, userEmail, hasAnyRole } = useRole();
 
   const libraryId = params.libraryId as string;
 
@@ -1306,6 +1310,33 @@ export default function LibraryExplorerPage() {
   const [showSetManager, setShowSetManager] = useState(false);
   const [showEquipmentSweep, setShowEquipmentSweep] = useState(false);
   const [creatingFolder, setCreatingFolder] = useState(false);
+  // The Equipment Files library: its folders are the registry's units, types
+  // and equipment. A folder made in that chain asks what it is and goes into
+  // the site codebook or the registry first; mapped folders follow the
+  // registry (renamed and moved from there, not here).
+  const [efTree, setEfTree] = useState<EquipmentTree | null>(null);
+  const [efFolderAt, setEfFolderAt] = useState<EquipmentFolderLevel | null>(null);
+  const efSynced = useRef<string | null>(null);
+  useEffect(() => {
+    if (!activeOrgId) return;
+    let on = true;
+    void loadEquipmentTree(activeOrgId).then((t) => { if (on) setEfTree(t?.libraryId === libraryId ? t : null); }, () => { if (on) setEfTree(null); });
+    return () => { on = false; };
+  }, [activeOrgId, libraryId]);
+  // Opened by Admin or Document Control: brought in step with the registry
+  // and the codebook (once per visit), and said when something changed.
+  useEffect(() => {
+    if (!activeOrgId || !uid || !efTree || efSynced.current === libraryId || !hasAnyRole(["Admin", "DocCtrl"])) return;
+    efSynced.current = libraryId;
+    void syncEquipmentTree(activeOrgId, uid, userEmail ?? undefined).then((r) => {
+      if (!r) return;
+      setEfTree(r.tree);
+      const w = syncWords(r);
+      if (w) setNotice(`Equipment Files brought up to date with the registry and the site codebook: ${w}.`);
+    }, (e) => setError(`Couldn't bring Equipment Files up to date: ${e instanceof Error ? e.message : "try again"}.`));
+  }, [activeOrgId, uid, userEmail, efTree, libraryId, hasAnyRole]);
+  const efMapped = useCallback((id: string | null | undefined) => !!id && !!efTree && [...Object.values(efTree.units ?? {}), ...Object.values(efTree.types ?? {}), ...Object.values(efTree.assets ?? {})].includes(id), [efTree]);
+  const EF_FOLLOWS = "This folder follows the equipment registry and the site codebook. Rename or move the unit, type or equipment there (Operating areas or the site codebook) and its folder follows.";
   // Folder trash (30-day delete hold): null = closed, array = open with rows.
   const [trashFolders, setTrashFolders] = useState<DeletedFolder[] | null>(null);
   const [trashBusy, setTrashBusy] = useState<string | null>(null);
@@ -2716,6 +2747,16 @@ export default function LibraryExplorerPage() {
   };
 
   const openCreateFolder = () => {
+    // In the Equipment Files chain a new folder is a unit, a type or equipment.
+    if (efTree?.assets && hasAnyRole(["Admin", "DocCtrl"])) {
+      const here = currentFolderId ?? null;
+      const unit = Object.entries(efTree.units ?? {}).find(([, id]) => id === here)?.[0];
+      const tk = Object.entries(efTree.types ?? {}).find(([, id]) => id === here)?.[0];
+      const at: EquipmentFolderLevel | null = here === (efTree.collectionId ?? null) ? { level: "unit" }
+        : unit ? { level: "type", unitCode: unit }
+        : tk ? { level: "equipment", unitCode: tk.split("|")[0], typeId: tk.split("|")[1] === "none" ? null : tk.split("|")[1] } : null;
+      if (at) { setEfFolderAt(at); return; }
+    }
     setRenameValue("");
     setFolderErr(null);
     setCreatingFolder(true);
@@ -2761,6 +2802,7 @@ export default function LibraryExplorerPage() {
     if (!renameFolderId) return;
     const name = renameValue.trim();
     if (!name) return;
+    if (efMapped(renameFolderId)) { setFolderErr(EF_FOLLOWS); return; }
     try {
       await renameFolderAndDescendants(renameFolderId, name);
       setRenameFolderId(null);
@@ -2776,6 +2818,7 @@ export default function LibraryExplorerPage() {
   // the live subscription; a doc moved out of this folder leaves the list
   // locally so the row disappears under the cursor instead of a beat later.
   const dropMoveFolder = async (dragId: string, targetId: string | null) => {
+    if (efMapped(dragId)) { setError(EF_FOLLOWS); return; }
     try {
       const prevParent = folderMap.get(dragId)?.parentId ?? null;
       const { warning } = await moveFolderServer({ orgId: activeOrgId!, collectionId: dragId, newParentId: targetId });
@@ -2799,6 +2842,7 @@ export default function LibraryExplorerPage() {
     const target = folderMap.get(targetId);
     const dragged = folderMap.get(dragId);
     if (!target || !dragged) return;
+    if (efMapped(dragId) && (dragged.parentId ?? null) !== (target.parentId ?? null)) { setError(EF_FOLLOWS); return; }
     try {
       if ((dragged.parentId ?? null) !== (target.parentId ?? null)) {
         await moveFolderServer({ orgId: activeOrgId!, collectionId: dragId, newParentId: target.parentId ?? null });
@@ -2945,6 +2989,7 @@ export default function LibraryExplorerPage() {
 
   const confirmMoveFolder = async (targetId: string | null) => {
     if (!renameFolderId) return;
+    if (efMapped(renameFolderId)) { setError(EF_FOLLOWS); setShowMoveModal(false); return; }
     try {
       await moveFolderServer({ orgId: activeOrgId!, collectionId: renameFolderId, newParentId: targetId ?? null });
       nudgeKnowledgeSources(activeOrgId!, libraryId);
@@ -5942,6 +5987,17 @@ export default function LibraryExplorerPage() {
         <LibraryNumberingModal orgId={activeOrgId} libraryId={libraryId} onClose={() => setNumberingOpen(false)} />
       )}
 
+      {efFolderAt && activeOrgId && uid && efTree && (
+        <EquipmentFolderDialog orgId={activeOrgId} uid={uid} email={userEmail ?? undefined} tree={efTree} at={efFolderAt}
+          canAddEquipment={hasAnyRole(["Admin"])}
+          onClose={() => setEfFolderAt(null)}
+          onPlain={() => { setEfFolderAt(null); setRenameValue(""); setFolderErr(null); setCreatingFolder(true); }}
+          onDone={(fid) => {
+            setEfFolderAt(null);
+            void loadEquipmentTree(activeOrgId).then((t) => setEfTree(t), () => undefined);
+            if (fid) setCurrentFolderId(fid);
+          }} />
+      )}
       {creatingFolder && (
         <Modal onClose={() => setCreatingFolder(false)} size="sm" zIndex={90}>
           <ModalHeader icon={FolderPlus} title="New folder"

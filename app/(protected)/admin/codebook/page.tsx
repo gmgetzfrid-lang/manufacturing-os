@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import EquipmentFilesDialog from "@/components/assets/EquipmentFilesDialog";
+import { useEquipmentFilesSync } from "@/components/assets/useEquipmentFilesSync";
 import { loadTree } from "@/lib/equipmentLibraryPush";
 import type { EquipmentTree } from "@/lib/equipmentLibrary";
 import { supabase } from "@/lib/supabase";
@@ -65,7 +66,7 @@ const TABS: Array<{ key: Tab; label: string }> = [
 ];
 
 export default function CodebookPage() {
-  const { activeOrgId, uid, activeRole } = useRole();
+  const { activeOrgId, uid, activeRole, userEmail } = useRole();
   const canWrite = !!activeRole && WRITER_ROLES.has(activeRole);
   const [book, setBook] = useState<Codebook | null>(null);
   // The operating areas pushed to a library (Equipment Files), asked here once units exist.
@@ -77,6 +78,8 @@ export default function CodebookPage() {
     void loadTree(activeOrgId).then((t) => { if (on) setEfTree(t); }, () => { if (on) setEfTree(null); });
     return () => { on = false; };
   }, [activeOrgId]);
+  // Units and type codes added or renamed here: their Equipment Files folders follow.
+  const efSync = useEquipmentFilesSync({ orgId: activeOrgId, uid, email: userEmail, can: canWrite && !!efTree?.assets, trigger: efTree?.assets ? book : null, onSynced: setEfTree });
   const [tab, setTabNow] = useState<Tab>("units");
   // Switching sections cross-fades (instant under reduced motion).
   const setTab = (t: Tab) => withViewTransition(() => flushSync(() => setTabNow(t)));
@@ -204,11 +207,15 @@ export default function CodebookPage() {
       <PageBody>
       {error && <Problem>{error}</Problem>}
 
+      {tab !== "units" && efSync.error && <Problem>Couldn&apos;t bring Equipment Files up to date: {efSync.error}</Problem>}
       {tab === "units" && canWrite && book.units.length > 0 && efTree !== undefined && (
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-2">
           <p className="min-w-0 flex-1 basis-64 text-body text-[var(--color-text)]">
             {efTree?.assets
-              ? <><b>Equipment files</b> are in {efTree.libraryName ?? "their library"}, laid out like these units. Units or equipment added since get their folders when you update it.</>
+              ? <><b>Equipment files</b> are in {efTree.libraryName ?? "their library"}, laid out like these units and type codes and kept in step with them: a unit or type added or renamed here gets its folder or new name.
+                {efSync.busy ? <span role="status" className="block text-[var(--color-text-muted)]">Bringing it up to date: {efSync.busy.toLowerCase()}…</span>
+                  : efSync.error ? <span role="alert" className="block text-[var(--state-overdue-text)]">Couldn&apos;t bring it up to date: {efSync.error}</span>
+                  : efSync.words ? <span role="status" className="block text-[var(--color-text-muted)]">Just brought up to date: {efSync.words}.</span> : null}</>
               : <><b>Push a library for these operating areas?</b> Equipment Files mirrors them: a folder for each unit, equipment type and piece of equipment, linked to each unit&apos;s page and each piece of equipment. You pick its own library or a folder in one, and its name.</>}
           </p>
           <Button variant="secondary" onClick={() => setEfOpen(true)}>{efTree?.assets ? "Update the folders" : "Set it up"}</Button>
