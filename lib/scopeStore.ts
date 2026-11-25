@@ -35,6 +35,9 @@ export interface ScopeState {
   removed?: RemovedWO[];
   /** Every change made in the app (the list's imports are in `imports`). */
   changes?: ScopeChange[];
+  /** How the project started: its schedule (the scope is the schedule's
+   *  work orders), a work order list, or empty. */
+  start?: "schedule" | "list" | "empty";
 }
 
 /** Where typed-in work came from (no list file). */

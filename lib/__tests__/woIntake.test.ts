@@ -260,3 +260,33 @@ describe("the scope is one record with the schedule", () => {
     expect(p.steps[p.next]).toMatchObject({ key: "sched", ask: "match the schedule to the list", state: "2 of 4 work orders on it, 2 missing" });
   });
 });
+
+describe("a project started from its schedule", () => {
+  it("the schedule's work orders are the scope; scope and schedule are done", async () => {
+    const { readScheduleScope } = await import("@/lib/scheduleScope");
+    const { planningPath } = await import("@/lib/planningPath");
+    const rows = [
+      { name: "Unit 2 TAR", plannedAt: "2027-03-20T00:00:00Z", externalRef: "1", isSummary: true },
+      { name: "E-101 Clean exchanger", plannedAt: "2027-03-05T00:00:00Z", externalRef: "2", parentExternalRef: "1", workOrderRef: "400101", isSummary: true },
+      { name: "Pull bundle", plannedStartAt: "2027-03-03T06:00:00Z", plannedAt: "2027-03-03T18:00:00Z", externalRef: "3", parentExternalRef: "2" },
+      { name: "Hydroblast", plannedAt: "2027-03-04T18:00:00Z", externalRef: "4", parentExternalRef: "2" },
+      { name: "V-5 Inspect", plannedAt: "2027-03-06T18:00:00Z", externalRef: "5", parentExternalRef: "1", attributes: { "WO #": "400102" } },
+    ];
+    const r = readScheduleScope(rows as never);
+    expect(r.items.map((x) => x.wo)).toEqual(["400101", "400102"]);
+    expect(r.items[0]).toMatchObject({ what: "E-101 Clean exchanger", category: "From the schedule" });
+    expect(r.steps).toBe(3);
+    expect(r.from).toBe("2027-03-03T06:00:00Z");
+    expect(r.to).toBe("2027-03-06T18:00:00Z");
+    const scope = { items: r.items, coming: [], source: { file: "tar.xml", sheet: "", headers: [], map: {} }, imports: [], start: "schedule" as const };
+    const p = planningPath(scope, { wos: ["400101", "400102"], steps: 3, awarded: 0 });
+    expect(p.steps[0].state).toBe("2 work orders, from the schedule");
+    expect(p.steps[2].done).toBe(true);
+    expect(p.steps[p.next].key).toBe("pkg");
+    // No work order numbers on it: the steps are the plan; nothing to package.
+    const none = planningPath({ ...scope, items: [] }, { wos: [], steps: 12, awarded: 0 });
+    expect(none.steps.slice(0, 3).every((s) => s.done)).toBe(true);
+    expect(none.steps[0].state).toBe("The schedule's steps (no work order numbers on it)");
+    expect(none.steps[none.next].key).toBe("rfq");
+  });
+});

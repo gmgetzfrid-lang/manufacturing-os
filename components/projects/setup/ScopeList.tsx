@@ -366,7 +366,7 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
           {/* On a phone the button goes under the title, so neither squeezes. */}
           <div className="min-w-0 flex-1 basis-full sm:basis-auto">
             <h2 id="scope-title" className="font-display text-section font-semibold text-[var(--color-text)]">Scope <span className="font-normal text-[var(--color-text-muted)] tabular-nums">· {n} {jobWord}</span></h2>
-            <p className="text-caption text-[var(--color-text-muted)] break-words">{scope.source.sheet ? `From ${scope.source.file}, tab ${scope.source.sheet}${last ? `, imported ${when(last.at, tz)}${last.by ? ` by ${last.by}` : ""}` : ""}` : "Typed in on this page"}</p>
+            <p className="text-caption text-[var(--color-text-muted)] break-words">{scope.source.sheet ? `From ${scope.source.file}, tab ${scope.source.sheet}${last ? `, imported ${when(last.at, tz)}${last.by ? ` by ${last.by}` : ""}` : ""}` : scope.start === "schedule" ? `From the schedule, ${scope.source.file}` : "Typed in on this page"}</p>
           </div>
           {canManage && <Button variant="secondary" onClick={() => input.current?.click()} loading={busy && !incoming}><Upload className="w-4 h-4" /> {scope.source.sheet ? "Import the list again" : "Import a work order list"}</Button>}
         </div>
@@ -406,7 +406,9 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
             {vs.extra.length > 0 && canManage && <Button variant="secondary" className="mt-1 justify-self-start" onClick={() => void addFromSchedule(vs.extra)}><Plus className="w-4 h-4" /> Add {vs.extra.length === 1 ? "it" : `these ${vs.extra.length}`} to the scope</Button>}
           </div>
         )}
-        {vs && !vs.missing.length && !vs.extra.length && (
+        {/* (A project that started from its schedule: the scope IS the
+            schedule's work orders, so there's nothing to say.) */}
+        {vs && !vs.missing.length && !vs.extra.length && sc.start !== "schedule" && (
           <div className="mx-5 mb-4 rounded-md bg-[color-mix(in_srgb,var(--state-released)_10%,transparent)] px-3 py-2 text-body font-medium text-[var(--state-released-text)]">✓ Every work order in the list is on the schedule, and nothing else is.</div>
         )}
 

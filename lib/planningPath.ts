@@ -44,11 +44,16 @@ export function planningPath(scopeIn: ScopeState | null, facts: PathFacts | null
   // Jobs typed in, with no work order numbers: no schedule file to import, so
   // the schedule is made from the jobs (lib/jobsSchedule).
   const typed = n > 0 && scope.items.every((x) => isTypedItem(x.wo));
+  // Started from its schedule: the schedule is the plan, and its work
+  // orders (when it has numbers) are the scope.
+  const fromSchedule = scope.start === "schedule" && !!facts?.steps;
+  const noNumbers = fromSchedule && n === 0;
   const raw: PathStep[] = [
-    { key: "scope", name: "Scope", done: n > 0, state: n ? `${n} job${n === 1 ? "" : "s"}${scope.coming.length ? `, ${scope.coming.length} still adding scope` : ""}` : "No work added yet" },
-    { key: "pkg", name: "Packages", done: n > 0 && approved === n, state: n ? `${withPkg} of ${n} attached, ${approved} approved` : "After the work is added" },
-    { key: "sched", name: "Schedule", done: typed ? !!facts?.steps : !!vs && vs.missing.length === 0, ...(typed && !facts?.steps ? { ask: "make the schedule" } : !typed && facts?.steps && vs?.missing.length ? { ask: "match the schedule to the list" } : {}),
-      state: !facts?.steps ? (typed ? "Not made yet" : "Not imported yet") : typed ? "On the Schedule tab" : vs ? `${vs.on.length} of ${n} work orders on it${vs.missing.length ? `, ${vs.missing.length} missing` : ""}${vs.extra.length ? `, ${vs.extra.length} not in the list` : ""}` : "Imported, with no work order numbers on it" },
+    { key: "scope", name: "Scope", done: n > 0 || noNumbers,
+      state: noNumbers ? "The schedule's steps (no work order numbers on it)" : n ? `${n} ${fromSchedule ? `work order${n === 1 ? "" : "s"}, from the schedule` : `job${n === 1 ? "" : "s"}`}${scope.coming.length ? `, ${scope.coming.length} still adding scope` : ""}` : "No work added yet" },
+    { key: "pkg", name: "Packages", done: noNumbers || (n > 0 && approved === n), state: noNumbers ? "No work orders on the schedule to package" : n ? `${withPkg} of ${n} attached, ${approved} approved` : "After the work is added" },
+    { key: "sched", name: "Schedule", done: noNumbers || (typed ? !!facts?.steps : !!vs && vs.missing.length === 0), ...(typed && !facts?.steps ? { ask: "make the schedule" } : !typed && !noNumbers && facts?.steps && vs?.missing.length ? { ask: "match the schedule to the list" } : {}),
+      state: !facts?.steps ? (typed ? "Not made yet" : "Not imported yet") : noNumbers ? `${facts.steps} steps` : typed ? "On the Schedule tab" : vs ? `${vs.on.length} of ${n} work orders on it${vs.missing.length ? `, ${vs.missing.length} missing` : ""}${vs.extra.length ? `, ${vs.extra.length} not in the list` : ""}` : "Imported, with no work order numbers on it" },
     { key: "rfq", name: "RFQ", done: rfqs.length > 0, state: rfqs.length ? `Written for ${[...new Set(rfqs.flatMap((r) => r.to))].join(", ")} (last ${day(rfqs[rfqs.length - 1].at)})` : "Not written yet" },
     { key: "award", name: "Award", done: !!facts?.awarded, state: facts?.awarded ? `${facts.awarded} contract${facts.awarded === 1 ? "" : "s"} awarded` : "Quotes in, then award" },
   ];

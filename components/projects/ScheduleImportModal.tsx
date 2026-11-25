@@ -38,6 +38,7 @@ import FileThumb from "@/components/ui/FileThumb";
 import { useFileDrag } from "@/hooks/useFileDrag";
 import { tryUpload } from "@/lib/uploadRetry";
 import { sayError } from "@/components/projects/sayError";
+import { SCHEDULE_ACCEPT } from "@/lib/scheduleScope";
 
 /** A picked file's size: 1.2 MB, 340 KB. */
 function sizeOf(n: number): string {
@@ -391,7 +392,7 @@ export default function ScheduleImportModal({
                 ref={fileInputRef}
                 type="file"
                 className="hidden"
-                accept=".xml,.xer,.csv,.txt,application/xml,text/xml,text/csv,text/plain"
+                accept={SCHEDULE_ACCEPT}
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); }}
               />
               {drag.over ? (
