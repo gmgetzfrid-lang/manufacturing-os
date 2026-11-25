@@ -2,9 +2,9 @@
 // drawing sheet you sign in on. Engineers sign drawings in the title
 // block, so the form IS the title block: the sheet behind draws itself and
 // keeps running (components/auth/Blueprint), and the card carries the
-// block's cells: the workspace this device signs in to (once it has),
-// today's date, the app's revision, the STATUS of the sign-in, and the
-// SIGNED line, which fills with the person's name when they're in.
+// block's last cells: the STATUS of the sign-in and the SIGNED line, which
+// fills with the person's name when they're in. (No date or revision row:
+// the owner called it noise.)
 //
 // On a desktop the sheet fills the screen and the title block sits bottom
 // right, where it lives on a real drawing. On a phone the drawing is the
@@ -16,7 +16,6 @@
 import React, { useSyncExternalStore } from "react";
 import { Check } from "lucide-react";
 import { Blueprint } from "@/components/auth/Blueprint";
-import { APP_VERSION } from "@/lib/appVersion";
 import { ORG_NAME_KEY } from "@/lib/deviceWorkspace";
 const PLAYED_KEY = "manufacturingos.sheetDrawn";
 
@@ -69,8 +68,6 @@ export function AuthCard({ title, sub, children, footer, wide = false, status, s
   // this device signs in to.
   const facts = useSyncExternalStore(subscribeNever, readFacts, () => null);
   const mode = facts?.mode ?? null;
-  const today = facts?.today ?? "";
-  const workspace = facts?.workspace ?? null;
 
   const time = signed ? signed.at.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
 
@@ -106,16 +103,6 @@ export function AuthCard({ title, sub, children, footer, wide = false, status, s
             <div className="mt-6">{children}</div>
           </div>
 
-          {/* The block's cells: what the sheet is, then the sign-in's
-              status and signature. */}
-          <div className="order-2 relative text-[var(--color-text)]">
-            <div aria-hidden className="tb-rule absolute inset-x-0 top-0 h-px bg-[var(--color-border-strong)]" />
-            <div className="grid grid-cols-4 divide-x divide-[var(--color-border)]">
-              {workspace && <Cell label="Workspace" className="col-span-2">{workspace}</Cell>}
-              <Cell label="Date" className={workspace ? "" : "col-span-3"}>{today || "\u00a0"}</Cell>
-              <Cell label="Rev">{APP_VERSION}</Cell>
-            </div>
-          </div>
           {/* The status row: under the doors, and on a phone only once there
               is something to say (signing in, signed), not "Ready". */}
           <div className={`order-3 relative text-[var(--color-text)] ${!signed && (!status || status === "Ready to sign in") ? "max-md:hidden" : ""}`}>
