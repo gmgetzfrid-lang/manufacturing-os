@@ -78,6 +78,7 @@ Also read: `docs/design-rules.md` (rules are musts, ideas are optional) and `doc
 45. **Don't pile questions on him.** Make the call and show it. When a visual redesign keeps missing, show a mock-up and let him mark it up. (Nov 25)
 46. **Production only on "push".** The preview branch is `claude/answer-first-layout`; production is `master`.
 47. **Speed matters**: screens should load in well under a second. (Nov 24)
+48. **Never use the THOR indexer** (the network-drive indexer script in the repo) for anything in the app. Forget it entirely. (Nov 25)
 
 ---
 
