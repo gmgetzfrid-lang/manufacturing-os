@@ -15,6 +15,7 @@ import { Send, XCircle, RefreshCw, Download } from "lucide-react";
 import { stageLabel, stageTone, StatusTag as StageTag } from "@/components/requests/RequestBits";
 import { useRole } from "@/components/providers/RoleContext";
 import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
+import { sharedLoad, lastLoaded, inboxKey } from "@/lib/warmLoads";
 import { useTicketNotifications } from "@/hooks/useTicketNotifications";
 import { resolveMarkupRequest } from "@/lib/markupRequests";
 import { computeNudges } from "@/lib/nudges";
@@ -28,7 +29,7 @@ import { CopyId } from "@/components/ui/CopyId";
 import MoreMenu from "@/components/ui/MoreMenu";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
-import MyDeskPanel from "@/components/cockpit/MyDeskPanel";
+import MyDeskPanel, { deskKey, loadDesk } from "@/components/cockpit/MyDeskPanel";
 import { formatAgo, exportInboxCsv } from "@/components/cockpit/CommandDeck";
 import { AttentionFeed, type AttnFilter } from "@/components/cockpit/AttentionFeed";
 import GroupedTable, { type Group } from "@/components/cockpit/GroupedTable";
@@ -50,7 +51,12 @@ export default function InboxPage() {
   const [listSeen] = useState<number | null>(() => (typeof window === "undefined" ? null : readSeen(uid)));
   useEffect(() => { markSeen(); }, [markSeen]);
   const { showToast } = useToast();
-  const [data, setData] = useState<InboxSnapshot | null>(null);
+  // The snapshot read for this visit, with the key it was read for; until
+  // it comes, the last one read (here, on Home, or at sign-in), so the
+  // Inbox opened again shows at once and refreshes behind it.
+  const key = uid && activeOrgId ? inboxKey(activeOrgId, uid) : null;
+  const [got, setGot] = useState<{ key: string; snap: InboxSnapshot } | null>(null);
+  const data = (got && got.key === key ? got.snap : lastLoaded<InboxSnapshot>(key)) ?? null;
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [, setLastLoadedAt] = useState<number | null>(null);
@@ -85,13 +91,16 @@ export default function InboxPage() {
     }
   }, [markAllRead, showToast]);
 
-  const refresh = useCallback(async (opts?: { background?: boolean }) => {
-    if (!uid || !activeOrgId) return;
+  const refresh = useCallback(async (opts?: { background?: boolean; fresh?: boolean }) => {
+    if (!uid || !activeOrgId || !key) return;
     if (opts?.background) setRefreshing(true); else setLoading(true);
     setError(null);
+    // What's checked out to you (below) is read alongside, not after.
+    void sharedLoad(deskKey(activeOrgId, uid), () => loadDesk(activeOrgId, uid), opts?.background || opts?.fresh ? { fresh: true } : { maxAgeMs: 1500 }).catch(() => undefined);
     try {
-      const snap = await loadInbox(activeOrgId, uid, userEmail ?? undefined);
-      setData(snap);
+      // A load Home started a moment ago is picked up; a refresh is new.
+      const snap = await sharedLoad(key, () => loadInbox(activeOrgId, uid, userEmail ?? undefined), opts?.background || opts?.fresh ? { fresh: true } : { maxAgeMs: 1500 });
+      setGot({ key, snap });
       setLastLoadedAt(Date.now());
     } catch (e) {
       // Kept as it came; said in plain words where it shows.
@@ -99,7 +108,7 @@ export default function InboxPage() {
     } finally {
       setLoading(false); setRefreshing(false);
     }
-  }, [uid, activeOrgId, userEmail]);
+  }, [uid, activeOrgId, userEmail, key]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -344,7 +353,7 @@ export default function InboxPage() {
         factsHero={facts.overdue + facts.yourTurn > 0 ? "auto" : "none"}
         tools={
           <>
-            <button type="button" onClick={() => void refresh()} disabled={loading || refreshing} className={heroQuiet} aria-label="Refresh">
+            <button type="button" onClick={() => void refresh({ fresh: true })} disabled={loading || refreshing} className={heroQuiet} aria-label="Refresh">
               <RefreshCw className={`w-4 h-4 ${loading || refreshing ? "motion-safe:animate-spin" : ""}`} /><span className="max-sm:hidden">{loading || refreshing ? "Refreshing" : "Refresh"}</span>
             </button>
             {!!data && (attentionCount + deskCount) > 0 && (
@@ -360,7 +369,7 @@ export default function InboxPage() {
       </PageHero>
 
       <PageBody>
-        {!!error && <ErrorNote error={error} title="Your queue didn't load." onRetry={() => void refresh()} />}
+        {!!error && <ErrorNote error={error} title="Your queue didn't load." onRetry={() => void refresh({ fresh: true })} />}
 
         <section aria-label="Needs you">
           <SectionHead title="Needs you" className="!mb-1" />

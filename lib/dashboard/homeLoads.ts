@@ -49,26 +49,41 @@ export async function loadDeckPillars(orgId: string): Promise<DeckPillars> {
 // ─── Start Home's loads (sign-in) ──────────────────────────────────
 export interface HomeWho { uid: string; orgId: string; roles: Role[]; email?: string | null; isAdmin: boolean }
 
+/** The loads that need only the account and the workspace (not the
+ *  account's roles there): the layout, the deck and the widgets. Sign-in
+ *  starts these the moment the password is accepted when this device
+ *  knows its workspace, alongside the server's check; they are only ever
+ *  shown in that workspace, once the server says the account is in it. */
+export async function warmHomeOrg(who: { uid: string; orgId: string; email?: string | null }): Promise<Promise<unknown>[]> {
+  const { uid, orgId, email } = who;
+  const [{ loadDashboardConfig }, { loadInbox }, widgets] = await Promise.all([
+    import("@/lib/dashboard/config"),
+    import("@/lib/inbox"),
+    import("@/lib/dashboard/widgetLoads"),
+  ]);
+  const config = sharedLoad(dashKey(uid), () => loadDashboardConfig(uid));
+  // The widgets the layout holds, and the libraries and projects under them.
+  void config.then((cfg) => widgets.warmWidgets(cfg.widgets.map((w) => w.type), orgId, uid), () => undefined);
+  return [
+    config,
+    sharedLoad(inboxKey(orgId, uid), () => loadInbox(orgId, uid, email ?? undefined)),
+    sharedLoad(deckPillarsKey(orgId, uid), () => loadDeckPillars(orgId)),
+  ];
+}
+
 /** Start the loads Home's first screen shows, for this account in this
  *  workspace; resolves when they have all answered (or failed). The
  *  widgets below come in as their own loads finish. */
 export async function warmHome(who: HomeWho): Promise<void> {
-  const { uid, orgId, roles, email, isAdmin } = who;
-  const [{ loadDashboardConfig }, { loadInbox }, { attentionKey, loadAttention }, widgets] = await Promise.all([
-    import("@/lib/dashboard/config"),
-    import("@/lib/inbox"),
+  const { uid, orgId, roles, isAdmin } = who;
+  const [{ attentionKey, loadAttention }, org] = await Promise.all([
     import("@/hooks/useTicketNotifications"),
-    import("@/lib/dashboard/widgetLoads"),
+    warmHomeOrg(who),
   ]);
-  const config = sharedLoad(dashKey(uid), () => loadDashboardConfig(uid));
   const first: Promise<unknown>[] = [
-    config,
+    ...org,
     sharedLoad(attentionKey(orgId, uid, roles), () => loadAttention(orgId, uid, roles)),
-    sharedLoad(inboxKey(orgId, uid), () => loadInbox(orgId, uid, email ?? undefined)),
-    sharedLoad(deckPillarsKey(orgId, uid), () => loadDeckPillars(orgId)),
     ...(isAdmin ? [sharedLoad(setupCountsKey(orgId, uid), () => loadSetupCounts(orgId))] : []),
   ];
-  // The widgets the layout holds, and the libraries and projects under them.
-  void config.then((cfg) => widgets.warmWidgets(cfg.widgets.map((w) => w.type), orgId, uid), () => undefined);
   await Promise.allSettled(first);
 }

@@ -115,10 +115,15 @@ export default function LoginPage() {
     })).catch(() => undefined);
   };
   /** The account's Home layout needs only the account: asked for the moment
-   *  the password is accepted, alongside the workspace lookup. */
+   *  the password is accepted, alongside the workspace lookup. On a device
+   *  that has opened a workspace before, Home's loads for that workspace
+   *  start then too (those that don't depend on the account's roles); they
+   *  are shown only if the server's answer opens that same workspace. */
   const warmLayout = (user: User | null): Promise<unknown> => {
     if (!user?.id) return Promise.resolve();
     const uid = user.id;
+    const org = lastOrg();
+    if (org) return import("@/lib/dashboard/homeLoads").then((m) => m.warmHomeOrg({ uid, orgId: org, email: user.email ?? null })).catch(() => undefined);
     return import("@/lib/dashboard/config").then((m) => sharedLoad(dashKey(uid), () => m.loadDashboardConfig(uid))).catch(() => undefined);
   };
 

@@ -231,9 +231,12 @@ export async function listMyDueReviews(orgId: string, uid: string, opts?: { lead
   if (!uid) return [];
   const leadDays = opts?.leadDays ?? 30;
   const today = new Date().toISOString().slice(0, 10);
-  const { data: me } = await supabase.from("org_members").select("role").eq("org_id", orgId).eq("uid", uid).maybeSingle();
+  // Who I am here and what is due are read together (neither needs the other).
+  const [{ data: me }, due] = await Promise.all([
+    supabase.from("org_members").select("role").eq("org_id", orgId).eq("uid", uid).maybeSingle(),
+    listDueReviews(orgId, leadDays),
+  ]);
   const isController = me?.role === "Admin" || me?.role === "DocCtrl";
-  const due = await listDueReviews(orgId, leadDays);
   return due
     .filter((d) => isController || d.owner_user_id === uid)
     .map((d) => ({

@@ -11,7 +11,7 @@ import { supabase } from "@/lib/supabase";
 import { phasesOfRow, projectDue, projectDueWords } from "@/lib/projectPhases";
 import { dayKey } from "@/lib/scheduleTz";
 import { useRole } from "@/components/providers/RoleContext";
-import { loadOpenRequests, type OpenTicketRow } from "@/lib/dashboard/widgetLoads";
+import { loadOpenRequests } from "@/lib/dashboard/widgetLoads";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
 import { TrendChip, MiniBars, Sparkline, SegmentBar, dayBuckets, type Segment } from "../viz";
@@ -71,7 +71,6 @@ const STAGES: Array<{ key: string; label: string; statuses: string[] }> = [
   { key: "closing", label: "Closing out", statuses: ["PENDING_IFC", "FINAL_DRAFT", "PENDING_FINAL_APPROVAL"] },
 ];
 
-type TicketRow = OpenTicketRow;
 type ReqScope = "mine" | "assigned" | "unassigned" | "all";
 
 export function DraftingRequestsBody() {

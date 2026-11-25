@@ -122,6 +122,49 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
   // surface too (the query used to only look forward, hiding all of them).
   const milestoneLookbackIso = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString();
 
+  // My open holds
+  const holdsQ = Promise.resolve(supabase.from("document_holds").select("*").eq("org_id", orgId)
+    .eq("opened_by", userId).is("released_at", null)
+    .order("opened_at", { ascending: false }));
+  // Markup requests where I'm the recipient
+  const markupQ = Promise.resolve(supabase.from("markup_requests").select("*").eq("org_id", orgId)
+    .eq("requested_from_user_id", userId).eq("status", "open")
+    .order("created_at", { ascending: false }));
+  // Open milestones from the recent past (overdue) through the next 7 days
+  // (due soon). We split them into overdue vs upcoming below.
+  const milestonesQ = activeOnly((a) => {
+    const q = supabase.from("milestones").select("*").eq("org_id", orgId)
+      .gte("planned_at", milestoneLookbackIso).lte("planned_at", sevenDaysIso)
+      .in("status", ["planned", "in_progress", "blocked"]);
+    return (a ? q.is("cancelled_at", null) : q).order("planned_at", { ascending: true }).limit(100);
+  });
+  // Projects I'm a member of — to scope milestones below
+  const projectsQ = Promise.resolve(supabase.from("project_members").select("project_id").eq("user_id", userId));
+
+  // The follow-up lookups (which document each hold and markup request is
+  // on, which open tasks are really done) start the moment their own
+  // source answers, not after every source has.
+  const holdDocsQ = holdsQ.then(async (r) => {
+    const ids = [...new Set(((r.data ?? []) as Array<Record<string, unknown>>).map((h) => h.document_id as string))];
+    if (!ids.length) return null;
+    return (await supabase.from("documents").select("id, library_id, document_number, title, name").in("id", ids)).data;
+  });
+  const markupDocsQ = markupQ.then(async (r) => {
+    const ids = [...new Set(((r.data ?? []) as Array<Record<string, unknown>>).map((m) => String(m.document_id)))];
+    if (!ids.length) return null;
+    return (await supabase.from("documents").select("id, library_id").in("id", ids)).data;
+  });
+  const kidsQ = Promise.all([milestonesQ, projectsQ.catch(() => null)]).then(async ([ms, pm]) => {
+    const mineIds = new Set(((pm?.data ?? []) as Array<{ project_id: string }>).map((p) => p.project_id));
+    const parentIds = ((ms.data ?? []) as Array<Record<string, unknown>>)
+      .filter((r) => !r.cancelled_at && (!r.project_id || mineIds.has(r.project_id as string)))
+      .map((r) => r.id as string).filter((id) => !!id);
+    if (!parentIds.length) return null;
+    return (await supabase.from("milestones").select("parent_id, status, cancelled_at").in("parent_id", parentIds.slice(0, 200))).data;
+  });
+  // Settled here so a failure is handled where it's used, never unhandled.
+  const settledFollowUps = Promise.allSettled([holdDocsQ, markupDocsQ, kidsQ]);
+
   // Parallel fan-out — each source is independent
   const [
     assignedRes, unreadRes, watchingRes,
@@ -148,24 +191,10 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
     supabase.from("checkout_sessions").select("*").eq("org_id", orgId)
       .eq("user_id", userId).eq("status", "active")
       .order("started_at", { ascending: false }),
-    // My open holds
-    supabase.from("document_holds").select("*").eq("org_id", orgId)
-      .eq("opened_by", userId).is("released_at", null)
-      .order("opened_at", { ascending: false }),
-    // Markup requests where I'm the recipient
-    supabase.from("markup_requests").select("*").eq("org_id", orgId)
-      .eq("requested_from_user_id", userId).eq("status", "open")
-      .order("created_at", { ascending: false }),
-    // Open milestones from the recent past (overdue) through the next 7 days
-    // (due soon). We split them into overdue vs upcoming below.
-    activeOnly((a) => {
-      const q = supabase.from("milestones").select("*").eq("org_id", orgId)
-        .gte("planned_at", milestoneLookbackIso).lte("planned_at", sevenDaysIso)
-        .in("status", ["planned", "in_progress", "blocked"]);
-      return (a ? q.is("cancelled_at", null) : q).order("planned_at", { ascending: true }).limit(100);
-    }),
-    // Projects I'm a member of — to scope milestones below
-    supabase.from("project_members").select("project_id").eq("user_id", userId),
+    holdsQ,
+    markupQ,
+    milestonesQ,
+    projectsQ,
     // Unread notification count
     supabase.from("notifications").select("*", { count: "exact", head: true })
       .eq("user_id", userId).is("read_at", null),
@@ -217,13 +246,12 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
   const myOpenHolds: Array<DocumentHold & { __docLabel?: string | null; __libraryId?: string | null }> = holdsRes.status === "fulfilled"
     ? ((holdsRes.value.data || []) as Array<Record<string, unknown>>).map(rowToHold)
     : [];
-  // The follow-up lookups (which document each hold and markup request is
-  // on, which overdue tasks are really done) depend only on the first
-  // answers, not on each other: they run together.
+  // The follow-up lookups, started above as their own sources answered.
+  const [holdDocsRes, markupDocsRes, kidsRes] = await settledFollowUps;
+  const lookedUp = <T,>(r: PromiseSettledResult<T>): T => { if (r.status === "rejected") throw r.reason; return r.value; };
   const holdDocs = async () => {
     if (!myOpenHolds.length) return;
-    const ids = [...new Set(myOpenHolds.map((h) => h.documentId))];
-    const { data: hd } = await supabase.from("documents").select("id, library_id, document_number, title, name").in("id", ids);
+    const hd = lookedUp(holdDocsRes);
     const byId = new Map(((hd ?? []) as Array<Record<string, unknown>>).map((d) => [d.id as string, d]));
     for (const h of myOpenHolds) {
       const d = byId.get(h.documentId);
@@ -246,8 +274,7 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
     : [];
   const markupDocs = async () => {
     if (!markupRequestsToMe.length) return;
-    const ids = [...new Set(markupRequestsToMe.map((m) => m.documentId))];
-    const { data: libs } = await supabase.from("documents").select("id, library_id").in("id", ids);
+    const libs = lookedUp(markupDocsRes);
     const libOf = new Map(((libs ?? []) as Array<{ id: string; library_id: string | null }>).map((d) => [d.id, d.library_id]));
     for (const m of markupRequestsToMe) (m as { libraryId?: string | null }).libraryId = libOf.get(m.documentId) ?? null;
   };
@@ -271,7 +298,7 @@ export async function loadInbox(orgId: string, userId: string, userEmail?: strin
   const parentIds = mineAll.map((m) => m.id).filter((id): id is string => !!id);
   const rollUps = async () => {
     if (!parentIds.length) return;
-    const { data: kids } = await supabase.from("milestones").select("parent_id, status, cancelled_at").in("parent_id", parentIds.slice(0, 200));
+    const kids = lookedUp(kidsRes);
     const byParent = new Map<string, Array<{ status: string; cancelled_at: string | null }>>();
     for (const k of (kids ?? []) as Array<{ parent_id: string; status: string; cancelled_at: string | null }>) {
       if (k.cancelled_at) continue;

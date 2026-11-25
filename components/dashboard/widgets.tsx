@@ -226,7 +226,7 @@ function useInboxSnapshot(): { snap: InboxSnapshot | null; loading: boolean; ref
       .catch(() => { if (alive) { setDone(key); reportLoaded(); } });
     return () => { alive = false; };
   }, [activeOrgId, uid, userEmail, key, reloadKey, refreshKey, reportLoaded]);
-  const refresh = useCallback(() => setReloadKey((k) => k + 1), []);
+  const refresh = useCallback(() => setReloadKey((k) => k + 1), [setReloadKey]);
   return { snap, loading: !snap && done !== key, refresh };
 }
 

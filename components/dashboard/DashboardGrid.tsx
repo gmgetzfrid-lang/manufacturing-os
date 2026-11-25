@@ -154,7 +154,7 @@ export default function DashboardGrid() {
       });
     });
     return () => { alive = false; };
-  }, [uid]);
+  }, [uid, setConfig]);
 
   // The layout is always kept on this device; say so when the account copy
   // didn't save (it then won't follow you to another device).
@@ -166,7 +166,7 @@ export default function DashboardGrid() {
   const mutate = useCallback((next: DashboardConfig) => {
     setConfig(next);
     persist(next);
-  }, [persist]);
+  }, [persist, setConfig]);
 
   const isMobile = gridWidth > 0 && gridWidth < MD_BREAKPOINT;
   const colWidth = gridWidth > 0 ? (gridWidth - GAP * (GRID_COLS - 1)) / GRID_COLS : 0;
@@ -197,7 +197,7 @@ export default function DashboardGrid() {
       persist(next);
       return next;
     });
-  }, [persist]);
+  }, [persist, setConfig]);
 
   // ── Drag (pointer-driven, with ghost + placeholder) ───────────────────────
   const dragPointer = useRef<{

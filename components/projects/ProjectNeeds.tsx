@@ -9,6 +9,7 @@
 // at close-out that wasn't on this list from the start.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { lastLoaded, keepLoaded } from "@/lib/warmLoads";
 import { Check, ChevronDown, Loader2, Plus, Settings2 } from "lucide-react";
 import type { Milestone, Project, ProjectMember } from "@/types/schema";
 import { supabase } from "@/lib/supabase";
@@ -215,14 +216,17 @@ export default function ProjectNeeds({ orgId, project, jobKind, phases, steps, m
   const actor = useMemo(() => ({ uid, email: userEmail }), [uid, userEmail]);
   const by = userEmail ?? null;
 
-  const [facts, setFacts] = useState<Facts | null>(null);
+  // Opened before in this sign-in: the list as it read then, at once, while
+  // it reads afresh (kept per workspace, account and project).
+  const factsKey = `needs:${orgId}|${projectId}|${uid}`;
+  const [facts, setFacts] = useState<Facts | null>(() => lastLoaded<Facts>(factsKey) ?? null);
   const [tick, setTick] = useState(0);
   const reload = useCallback(() => setTick((t) => t + 1), []);
   useEffect(() => {
     let live = true;
-    void readFacts(orgId, projectId).then((f) => { if (live) setFacts(f); });
+    void readFacts(orgId, projectId).then((f) => { if (live) setFacts(f); keepLoaded(factsKey, f); });
     return () => { live = false; };
-  }, [orgId, projectId, refreshKey, tick]);
+  }, [orgId, projectId, refreshKey, tick, factsKey]);
   // A change made anywhere on the page (Close-out's PSSR, Setup, the roles) re-reads.
   useEffect(() => {
     const evs = [CLOSEOUT_CHANGED, SETUP_CLOSED_EVENT, ORG_CHANGED];

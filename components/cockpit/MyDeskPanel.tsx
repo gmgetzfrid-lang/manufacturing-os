@@ -14,6 +14,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Check, Loader2, Clock } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { sharedLoad, lastLoaded } from "@/lib/warmLoads";
 import { listMyStaleCopies, type StaleCopy } from "@/lib/staleCopies";
 import { friendlyError } from "@/lib/friendlyError";
 import { SkeletonRows } from "@/components/ui/Skeleton";
@@ -44,17 +45,15 @@ interface MyDeskPanelProps {
   userEmail?: string | null;
 }
 
-export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps) {
-  const [checkouts, setCheckouts] = useState<MyCheckout[]>([]);
-  const [staleCopies, setStaleCopies] = useState<StaleCopy[]>([]);
-  const [branches, setBranches] = useState<MyBranch[]>([]);
-  const [releasingId, setReleasingId] = useState<string | null>(null);
-  const [releaseError, setReleaseError] = useState<string | null>(null);
-  // Never a blank gap while it loads; nothing at all once it's known empty.
-  const [loading, setLoading] = useState(true);
+/** What is on my desk: my checkouts, my stale copies, my open branches. */
+export interface DeskLoad { checkouts: MyCheckout[]; staleCopies: StaleCopy[]; branches: MyBranch[] }
+export const deskKey = (orgId: string, uid: string) => `desk:${orgId}|${uid}`;
 
-  const load = useCallback(async () => {
-    // 1. My active checkouts.
+/** Read the desk. The three parts don't need each other: they're read
+ *  together, each with its own document names after it. */
+export async function loadDesk(orgId: string, uid: string): Promise<DeskLoad> {
+  // 1. My active checkouts.
+  const checkoutsP = (async (): Promise<MyCheckout[] | null> => {
     try {
       const { data: sessions } = await supabase
         .from("checkout_sessions")
@@ -75,7 +74,7 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
           labelById.set(String(d.id), String(d.document_number || d.title || d.name || "Document"));
         }
       }
-      setCheckouts(rows.map((r) => ({
+      return rows.map((r) => ({
         sessionId: String(r.id),
         documentId: String(r.document_id),
         libraryId: (r.library_id as string | null) ?? null,
@@ -84,13 +83,15 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
         startedAt: String(r.started_at),
         autoExpiresAt: (r.auto_expires_at as string | null) ?? null,
         expectedReleaseAt: (r.expected_release_at as string | null) ?? null,
-      })));
-    } catch { /* quiet */ }
+      }));
+    } catch { return null; /* quiet */ }
+  })();
 
-    // 2. My stale copies.
-    try { setStaleCopies(await listMyStaleCopies(uid, orgId)); } catch (e) { console.warn("[desk] stale copies read failed", e); }
+  // 2. My stale copies.
+  const staleP = listMyStaleCopies(uid, orgId).catch((e: unknown) => { console.warn("[desk] stale copies read failed", e); return null; });
 
-    // 3. My unresolved branches.
+  // 3. My unresolved branches.
+  const branchesP = (async (): Promise<MyBranch[] | null> => {
     try {
       const { data: rows } = await supabase
         .from("revision_branches")
@@ -113,18 +114,41 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
           });
         }
       }
-      setBranches(branchRows.map((r) => ({
+      return branchRows.map((r) => ({
         id: String(r.id),
         documentId: String(r.document_id),
         docLabel: labelById.get(String(r.document_id))?.label ?? "Document",
         libraryId: labelById.get(String(r.document_id))?.libraryId ?? null,
         createdAt: String(r.created_at),
-      })));
-    } catch { /* pre-migration env */ }
-    setLoading(false);
-  }, [orgId, uid]);
+      }));
+    } catch { return null; /* pre-migration env */ }
+  })();
 
-  useEffect(() => { void load(); }, [load]);
+  const [checkouts, staleCopies, branches] = await Promise.all([checkoutsP, staleP, branchesP]);
+  // A part that couldn't be read is left out, as before.
+  return { checkouts: checkouts ?? [], staleCopies: staleCopies ?? [], branches: branches ?? [] };
+}
+
+export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps) {
+  const key = deskKey(orgId, uid);
+  // This panel's answer; until it comes, the one last read (the Inbox
+  // opened again shows it at once) or the one the Inbox started with it.
+  const [got, setGot] = useState<{ key: string; v: DeskLoad } | null>(null);
+  const [releasingId, setReleasingId] = useState<string | null>(null);
+  const [releaseError, setReleaseError] = useState<string | null>(null);
+  const desk = (got && got.key === key ? got.v : lastLoaded<DeskLoad>(key)) ?? null;
+  const checkouts = desk?.checkouts ?? [];
+  const staleCopies = desk?.staleCopies ?? [];
+  const branches = desk?.branches ?? [];
+  // Never a blank gap while it loads; nothing at all once it's known empty.
+  const loading = !desk;
+
+  const load = useCallback(async (fresh = false) => {
+    const v = await sharedLoad(key, () => loadDesk(orgId, uid), fresh ? { fresh: true } : { maxAgeMs: 1500 });
+    setGot({ key, v });
+  }, [key, orgId, uid]);
+
+  useEffect(() => { void load().catch(() => undefined); }, [load]);
 
   const release = async (c: MyCheckout) => {
     setReleasingId(c.sessionId);
@@ -143,7 +167,7 @@ export default function MyDeskPanel({ orgId, uid, userEmail }: MyDeskPanelProps)
       });
       const { endMyIntents } = await import("@/lib/intents");
       void endMyIntents({ documentId: c.documentId, userId: uid, sources: ["checkout"] });
-      await load();
+      await load(true);
     } catch (e) {
       console.error("Release from desk failed", e);
       setReleaseError(`${c.docLabel} wasn't released. ${friendlyError(e)}`);

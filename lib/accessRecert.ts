@@ -157,12 +157,15 @@ export async function listMyDueRecerts(orgId: string, uid: string, opts?: { lead
   const leadDays = opts?.leadDays ?? 30;
   const cutoff = new Date(); cutoff.setDate(cutoff.getDate() + leadDays);
   const today = todayISO();
-  const { data: me } = await supabase.from("org_members").select("role").eq("org_id", orgId).eq("uid", uid).maybeSingle();
+  // Who I am here and which libraries are due are read together.
+  const [{ data: me }, { data }] = await Promise.all([
+    supabase.from("org_members").select("role").eq("org_id", orgId).eq("uid", uid).maybeSingle(),
+    supabase.from("libraries")
+      .select("id, name, next_recertification_date, owner_user_id")
+      .eq("org_id", orgId).not("next_recertification_date", "is", null)
+      .lte("next_recertification_date", cutoff.toISOString().slice(0, 10)),
+  ]);
   const isController = me?.role === "Admin" || me?.role === "DocCtrl";
-  const { data } = await supabase.from("libraries")
-    .select("id, name, next_recertification_date, owner_user_id")
-    .eq("org_id", orgId).not("next_recertification_date", "is", null)
-    .lte("next_recertification_date", cutoff.toISOString().slice(0, 10));
   const libs = (data ?? []) as Array<Record<string, unknown>>;
   return libs
     .filter((l) => isController || (l.owner_user_id as string | null) === uid)

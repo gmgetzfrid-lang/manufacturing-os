@@ -119,7 +119,6 @@ export function useWidgetData<T>(
       });
     return () => { alive = false; };
   // `key` is the workspace, the account and `deps`.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeOrgId, uid, refreshKey, depKey, key]);
   // This load's own answer; else the last one kept for it; else (while new
   // deps load) the previous answer stays on screen.

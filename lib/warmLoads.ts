@@ -42,6 +42,11 @@ export function lastLoaded<T>(key: string | null | undefined): T | undefined {
   return key ? (last.get(key)?.v as T | undefined) : undefined;
 }
 
+/** Keep an answer a screen read on its own (not through sharedLoad). */
+export function keepLoaded<T>(key: string, v: T): void {
+  last.set(key, { at: Date.now(), v });
+}
+
 /** Forget every shared load and every kept answer (signing out). */
 export function forgetLoads(): void { generation++; store.clear(); last.clear(); }
 
