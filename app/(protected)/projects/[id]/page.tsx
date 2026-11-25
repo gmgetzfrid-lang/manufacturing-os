@@ -97,6 +97,7 @@ import { MEMBER_ROLES, projectAccess, roleLabel, needsCoOwnerSql } from "@/lib/p
 const COOWNER_SQL_NOTE = "Co-owner needs a database change first: run supabase/migrations/20261113_project_co_owners.sql in the Supabase SQL editor. Editor and Viewer work now.";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { supabase } from "@/lib/supabase";
+import { lastLoaded, keepLoaded } from "@/lib/warmLoads";
 import type {
   Project, ProjectMember, ProjectMemberRole, ProjectActivity, CheckoutSession, ProjectStatus, Timestamp,
 } from "@/types/schema";
@@ -142,24 +143,44 @@ type CheckoutWithDoc = CheckoutSession & {
   libraryName?: string;
 };
 
+/** What the page read for a project, kept for this sign-in so the
+ *  project opened again shows at once while it reads afresh. */
+interface ProjectKept {
+  project: Project; members: ProjectMember[]; activity: ProjectActivity[]; timeline: TimelineEvent[];
+  checkouts: CheckoutWithDoc[]; jobKind: string | null;
+}
+const projectKeptKey = (projectId: string, orgId: string | null, uid: string | null) => `project:${projectId}|${orgId ?? ""}|${uid ?? ""}`;
+const projectStepsKey = (projectId: string, orgId: string | null, uid: string | null) => `project-steps:${projectId}|${orgId ?? ""}|${uid ?? ""}`;
+const projectAllStepsKey = (projectId: string, orgId: string | null, uid: string | null) => `project-allsteps:${projectId}|${orgId ?? ""}|${uid ?? ""}`;
+
+// Each project is its own screen: another project's answers never show
+// while this one's are read.
 export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();
+  return <ProjectDetail key={params.id} />;
+}
+
+function ProjectDetail() {
+  const params = useParams<{ id: string }>();
   const router = useRouter();
-  const { uid, userEmail, activeRole, hasAnyRole } = useRole();
+  const { uid, userEmail, activeRole, hasAnyRole, activeOrgId } = useRole();
   // roles[] aware: a user holding Admin/DocCtrl additively gets admin powers
   // here even if their headline role is something else.
   const isAdmin = hasAnyRole(["Admin", "DocCtrl"]);
 
   const projectId = params.id;
 
-  const [project, setProject] = useState<Project | null>(null);
-  const [members, setMembers] = useState<ProjectMember[]>([]);
-  const [activity, setActivity] = useState<ProjectActivity[]>([]);
+  // Opened before in this sign-in: what it showed, at once (read afresh below).
+  const keptKey = projectKeptKey(projectId, activeOrgId, uid);
+  const [kept] = useState(() => lastLoaded<ProjectKept>(keptKey));
+  const [project, setProject] = useState<Project | null>(kept?.project ?? null);
+  const [members, setMembers] = useState<ProjectMember[]>(kept?.members ?? []);
+  const [activity, setActivity] = useState<ProjectActivity[]>(kept?.activity ?? []);
   // Phase 3 — unified project timeline (project_activity + linked
   // document audit_logs + linked document_versions). Drives the
   // Activity tab; `activity` is still kept for the count badge.
-  const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
-  const [checkouts, setCheckouts] = useState<CheckoutWithDoc[]>([]);
+  const [timeline, setTimeline] = useState<TimelineEvent[]>(kept?.timeline ?? []);
+  const [checkouts, setCheckouts] = useState<CheckoutWithDoc[]>(kept?.checkouts ?? []);
   const [loading, setLoading] = useState(true);
   // Load errors (page can't render) vs action errors (page stays up, a
   // dismissible banner reports the failure). Sharing one state used to let a
@@ -193,16 +214,21 @@ export default function ProjectDetailPage() {
   // progress), then Shift, then Close-out once every step is done (or the
   // project is complete).
   type StepRow = { id: string; parent_id: string | null; status: string; percent_complete: number | null; is_summary: boolean | null; cancelled_at: string | null; actual_start_at: string | null; attributes: unknown };
-  const [stepRows, setStepRows] = useState<StepRow[] | null>(null);
+  const stepsKey0 = projectStepsKey(projectId, activeOrgId, uid);
+  const [stepRows, setStepRows] = useState<StepRow[] | null>(() => lastLoaded<StepRow[]>(stepsKey0) ?? null);
   useEffect(() => {
     if (!projectId) return;
     let live = true;
     void fetchAllRows<StepRow>((from, to) => supabase.from("milestones")
       .select("id, parent_id, status, percent_complete, is_summary, cancelled_at, actual_start_at, attributes")
       .eq("project_id", projectId).order("id").range(from, to))
-      .then(({ rows, error }) => { if (live) setStepRows(error ? [] : rows); });
+      .then(({ rows, error }) => {
+        if (!live) return;
+        setStepRows(error ? [] : rows);
+        if (!error) keepLoaded(stepsKey0, rows);
+      });
     return () => { live = false; };
-  }, [projectId]);
+  }, [projectId, stepsKey0]);
   // Where the work stands, phase by phase: done means every phase has a
   // schedule and all of it is done.
   const state = React.useMemo(() => (stepRows ? workState(stepRows, project?.phases ?? []) : null), [stepRows, project?.phases]);
@@ -230,7 +256,7 @@ export default function ProjectDetailPage() {
   const [gates, setGates] = useState<ProjectStateSnapshot | null>(null);
   const [gatesFailed, setGatesFailed] = useState(false);
   // Wizard fields the typed Project doesn't carry — fetched tolerantly.
-  const [jobKind, setJobKind] = useState<string | null>(null);
+  const [jobKind, setJobKind] = useState<string | null>(kept?.jobKind ?? null);
   // Lessons-learned editor
   // Lessons & findings (the close-out review), and how many are left to review.
   const [reviewOpen, setReviewOpen] = useState(false);
@@ -265,7 +291,8 @@ export default function ProjectDetailPage() {
   // same way the schedule's own screens read it (lib/phaseStanding), and
   // what's left to close once the work is done.
   const tz = project?.timezone || "America/Los_Angeles";
-  const [allSteps, setAllSteps] = useState<Milestone[] | null>(null);
+  const allStepsKey = projectAllStepsKey(projectId, activeOrgId, uid);
+  const [allSteps, setAllSteps] = useState<Milestone[] | null>(() => lastLoaded<Milestone[]>(allStepsKey) ?? null);
   const [stepsKey, setStepsKey] = useState(0);
   useEffect(() => {
     const on = () => setStepsKey((k) => k + 1);
@@ -277,11 +304,16 @@ export default function ProjectDetailPage() {
     let live = true;
     const t = setTimeout(() => {
       listMilestones({ orgId: project.orgId, projectId, includeGhost: true })
-        .then((m) => { if (live) setAllSteps(m.filter((x) => !x.cancelledAt)); })
+        .then((m) => {
+          if (!live) return;
+          const active = m.filter((x) => !x.cancelledAt);
+          setAllSteps(active);
+          keepLoaded(allStepsKey, active);
+        })
         .catch(() => { if (live) setAllSteps([]); });
     }, stepsKey ? 600 : 0);
     return () => { live = false; clearTimeout(t); };
-  }, [project?.orgId, projectId, stepsKey]);
+  }, [project?.orgId, projectId, stepsKey, allStepsKey]);
   const shiftTimes = useShiftTimes(projectId);
   const criticalMode = useCriticalMode(projectId);
   const [nowMs] = useState(() => Date.now());
@@ -319,21 +351,29 @@ export default function ProjectDetailPage() {
     setLoading(true);
     setError(null);
     try {
-      const proj = await getProject(projectId);
-      if (!proj) { setError("Project not found"); setLoading(false); return; }
-      setProject(proj);
-
-      const [m, act, ck, tl] = await Promise.all([
+      // Everything here needs only the project's id: asked for together,
+      // not one after another.
+      const restP = Promise.all([
         listMembers(projectId),
         listActivity(projectId, 200),
         listProjectCheckouts(projectId),
         getProjectTimeline({ projectId, limit: 200 }),
       ]);
+      // Wizard fields (tolerant — pre-migration DBs simply report null).
+      const extP = Promise.resolve(supabase.from("projects").select("job_kind").eq("id", projectId).maybeSingle());
+      // Settled where they're used; a missing project leaves them unread.
+      restP.catch(() => undefined); extP.catch(() => undefined);
+      const proj = await getProject(projectId);
+      if (!proj) { setError("Project not found"); setLoading(false); return; }
+      setProject(proj);
+
+      const [m, act, ck, tl] = await restP;
       setMembers(m);
       setActivity(act);
       setTimeline(tl);
 
       // Hydrate doc + library context for checkouts
+      let withDocs: CheckoutWithDoc[] = [];
       if (ck.length > 0) {
         const docIds = Array.from(new Set(ck.map((s) => s.documentId).filter(Boolean)));
         const libIds = Array.from(new Set(ck.map((s) => s.libraryId).filter(Boolean)));
@@ -347,27 +387,26 @@ export default function ProjectDetailPage() {
         const libMap = new Map<string, string>();
         (libsRes.data as Array<{ id: string; name?: string }> || [])
           .forEach((l) => libMap.set(l.id, l.name ?? ""));
-        setCheckouts(ck.map((c) => ({
+        withDocs = ck.map((c) => ({
           ...c,
           docNumber: docMap.get(c.documentId)?.docNumber,
           docTitle: docMap.get(c.documentId)?.docTitle,
           libraryName: c.libraryId ? libMap.get(c.libraryId) : undefined,
-        })));
-      } else {
-        setCheckouts([]);
+        }));
       }
+      setCheckouts(withDocs);
 
-      // Wizard fields (tolerant — pre-migration DBs simply report null).
-      const { data: ext, error: extErr } = await supabase
-        .from("projects").select("job_kind").eq("id", projectId).maybeSingle();
-      setJobKind(!extErr && ext ? ((ext as { job_kind?: string | null }).job_kind ?? null) : null);
+      const { data: ext, error: extErr } = await extP;
+      const kind = !extErr && ext ? ((ext as { job_kind?: string | null }).job_kind ?? null) : null;
+      setJobKind(kind);
       setCoachKey((k) => k + 1);
+      keepLoaded(keptKey, { project: proj, members: m, activity: act, timeline: tl, checkouts: withDocs, jobKind: kind });
     } catch (e) {
       setError(sayError(e, "Failed to load project"));
     } finally {
       setLoading(false);
     }
-  }, [projectId]);
+  }, [projectId, keptKey]);
 
   // Closeout gates load when the Complete confirmation opens.
   useEffect(() => {
@@ -467,7 +506,8 @@ export default function ProjectDetailPage() {
 
   const goBack = () => { if (window.history.length > 1) router.back(); else router.push("/projects"); };
 
-  if (loading) return (
+  // A refresh keeps the project on screen; only a first read shows the outline.
+  if (loading && !project) return (
     <div className={FRAME}>
       <PageHero back={{ onClick: goBack, label: "Back to projects" }} kicker="Projects" title="Project" />
       <PageBody><SkeletonRows rows={6} what="the project" /></PageBody>
@@ -719,6 +759,13 @@ export default function ProjectDetailPage() {
         back={{ onClick: goBack, label: "Back to projects" }}
         kicker={<span className="flex items-center gap-3 min-w-0" title={project.name}>
           <span className="truncate">{project.name}</span>
+          {/* Name, description and dates are changed right here, beside the name. */}
+          {canManage && (
+            <button type="button" onClick={() => setShowEdit(true)} aria-label="Edit the project's name, description and dates"
+              className="shrink-0 inline-flex items-center gap-1 min-h-9 pointer-coarse:min-h-11 px-2 -mx-1 rounded-md text-body font-medium text-[var(--color-accent-text)] hover:bg-[var(--color-surface-2)]">
+              <Pencil aria-hidden className="w-3.5 h-3.5" /> Edit
+            </button>
+          )}
           <span className="shrink-0 inline-flex items-center gap-1.5 text-body font-medium text-[var(--color-text)]">
             <span aria-hidden className="w-2 h-2 rounded-full" style={{ background: project.status === "paused" ? "var(--state-held)" : project.status === "completed" ? "var(--state-released)" : project.status === "active" ? "var(--color-text-faint)" : "var(--color-border-strong)" }} />
             {statusWord}
