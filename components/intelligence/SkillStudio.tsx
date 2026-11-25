@@ -254,7 +254,7 @@ export default function SkillStudio({ orgId, userId, userName, kind = "connectio
                     <span className="text-body text-[var(--state-held-text)]">No matches in this sample.</span>
                   ) : test.matches.map((m) => (
                     <span key={m} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] text-body font-display font-semibold text-[var(--color-text)]"
-                      style={{ animation: "pop 0.2s var(--ease-fluid) both" }}>
+                      style={{ animation: "pop 0.2s var(--ease-fluid) backwards" }}>
                       <CheckCircle2 className="w-3 h-3" /> {m}
                     </span>
                   ))}

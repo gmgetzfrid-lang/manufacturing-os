@@ -16,7 +16,7 @@
 // starts, however many pages the contents itself runs to.
 
 import {
-  PDFDocument, PDFName, PDFArray, PDFString, PDFHexString, PDFTextField, StandardFonts, rgb,
+  PDFDocument, PDFName, PDFArray, PDFRef, PDFString, PDFHexString, PDFTextField, StandardFonts, rgb,
   pushGraphicsState, popGraphicsState, concatTransformationMatrix, drawObject, rectangle, fill,
   setFillingRgbColor,
 } from "pdf-lib";
@@ -121,6 +121,30 @@ async function loadPdf(bytes: Uint8Array): Promise<PDFDocument> {
 
 const hasAcroForm = (doc: PDFDocument) => !!doc.catalog.get(PDFName.of("AcroForm"));
 
+/** Bake every form field into its page. pdf-lib 1.17 deletes a flattened
+ *  field's widgets but leaves them listed on the page, so they're taken
+ *  off the page's annotation list here too. */
+function flattenForm(doc: PDFDocument): void {
+  const form = doc.getForm();
+  const fields = form.getFields();
+  if (!fields.length) return;
+  const gone = new Set<string>();
+  for (const field of fields) {
+    gone.add(field.ref.toString());
+    for (const widget of field.acroField.getWidgets()) {
+      const ref = doc.context.getObjectRef(widget.dict);
+      if (ref) gone.add(ref.toString());
+    }
+  }
+  form.flatten();
+  for (const page of doc.getPages()) {
+    const annots = page.node.Annots();
+    if (!annots) continue;
+    const keep = annots.asArray().filter((a) => !(a instanceof PDFRef && (gone.has(a.toString()) || !doc.context.lookup(a))));
+    if (keep.length !== annots.size()) page.node.set(PDFName.of("Annots"), doc.context.obj(keep));
+  }
+}
+
 /** Open a PDF. Encrypted files load (ignoreEncryption) but their content
  *  stays encrypted, so copied pages would print blank: they count as
  *  locked. `flatten` bakes form fields into the page so what's on screen is
@@ -140,8 +164,7 @@ async function readPdf(bytes: Uint8Array, flatten: boolean): Promise<Read> {
   }
   if (flatten && hasAcroForm(doc)) {
     try {
-      const form = doc.getForm();
-      if (form.getFields().length) form.flatten();
+      flattenForm(doc);
     } catch {
       try { doc = await loadPdf(bytes); } catch { return { fail: "broken" }; }
     }
@@ -153,8 +176,14 @@ async function readPdf(bytes: Uint8Array, flatten: boolean): Promise<Read> {
 
 const charsets = new WeakMap<PDFFont, Set<number>>();
 const LOOKALIKE: Record<string, string> = {
-  "‐": "-", "‑": "-", "‒": "-", "−": "-", "′": "'", "″": "\"",
+  "\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2212": "-", "\u2032": "'", "\u2033": "\"",
+  "\u2192": "->", "\u2190": "<-", "\u2194": "<->", "\u21d2": "=>", "\u2264": "<=", "\u2265": ">=",
+  "\u2260": "!=", "\u2248": "~", "\u03bc": "\u00b5", "\u2126": "Ohm", "\u03a9": "Ohm", "\u2713": "OK", "\u2714": "OK",
 };
+
+/** Emoji and their joiners: decoration, dropped rather than printed as "?". */
+let PICTO: RegExp | null = null;
+try { PICTO = new RegExp("[\\p{Extended_Pictographic}\\u200d\\ufe0e\\ufe0f]", "gu"); } catch { PICTO = null; }
 
 /** Text the standard fonts can print: any run of spaces or line breaks
  *  becomes one space; a letter the font lacks becomes its plain base letter
@@ -166,14 +195,16 @@ function plain(font: PDFFont, raw: unknown, cap = 600): string {
     charsets.set(font, known);
   }
   const set = known;
-  const src = String(raw ?? "").replace(/\s+/g, " ").trim();
+  let src = String(raw ?? "");
+  if (PICTO) src = src.replace(PICTO, "");
+  src = src.replace(/\s+/g, " ").trim();
   let out = "";
   for (const ch of src) {
     if (out.length >= cap) break;
     const cp = ch.codePointAt(0) ?? 63;
     if (set.has(cp)) { out += ch; continue; }
     if (LOOKALIKE[ch]) { out += LOOKALIKE[ch]; continue; }
-    const base = ch.normalize("NFKD").replace(/[̀-ͯ]/g, "");
+    const base = ch.normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
     out += base && Array.from(base).every((c) => set.has(c.codePointAt(0) ?? -1)) ? base : "?";
   }
   return out;
@@ -686,6 +717,47 @@ function keyForField(field: PDFTextField): FieldKey | null {
   return null;
 }
 
+const TF = /(\d+(?:\.\d+)?)\s+Tf/;
+
+/** The value as it should go in a cover field. A field left at "auto"
+ *  size gets a real one (pdf-lib's auto size blows a multi-line box up to
+ *  a few huge words, and shrinks a long line to nothing), and so does one
+ *  whose size is too big for its box; a one-line field
+ *  gets the value cut with "…" to its width. The widget's own size wins
+ *  over the field's, as it does when pdf-lib draws it. */
+function fitField(field: PDFTextField, value: string, font: PDFFont): string {
+  const max = field.getMaxLength();
+  if (max !== undefined) return value.slice(0, max);
+  const acro = field.acroField;
+  const widgets = acro.getWidgets();
+  const sizeIn = (da: string | undefined) => {
+    const m = TF.exec(da ?? "");
+    return m ? Number(m[1]) : 0;
+  };
+  let size = sizeIn(widgets[0]?.getDefaultAppearance()) || sizeIn(acro.getDefaultAppearance());
+  const rect = widgets[0]?.getRectangle();
+  const multi = field.isMultiline();
+  // A size too big for the box is an auto size someone's tool baked in.
+  const tooBig = multi ? size > 24 : size > Math.max(14, rect?.height ?? 0);
+  const setSize = (n: number) => {
+    size = Math.round(n * 10) / 10;
+    const resize = (da: string) => da.replace(new RegExp(TF.source, "g"), `${size} Tf`);
+    const own = acro.getDefaultAppearance();
+    acro.setDefaultAppearance(own && TF.test(own) ? resize(own) : `/Helv ${size} Tf 0 g`);
+    for (const w of widgets) {
+      const da = w.getDefaultAppearance();
+      if (da && TF.test(da)) w.setDefaultAppearance(resize(da));
+    }
+  };
+  if (!(size > 0) || tooBig) setSize(multi ? 10 : Math.min(12, Math.max(7, (rect?.height ?? 20) * 0.6)));
+  if (multi || !rect || rect.width <= 8) return value;
+  // One line: shrink to as small as 8 pt to fit, then cut with "…".
+  const room = rect.width - 6;
+  const wide = font.widthOfTextAtSize(value, size);
+  if (wide > room && size > 8) setSize(Math.max(8, (size * room) / wide));
+  return clip(font, value, size, room);
+}
+
 /** The workspace's own cover: fill its fields (or write at the given
  *  spots), flatten, put it first. False when it can't be used, so the
  *  generated cover goes in instead. */
@@ -715,13 +787,12 @@ async function addTemplateCover(
         const key = keyForField(field);
         if (!key || !values[key]) continue;
         try {
-          const max = field.getMaxLength();
-          field.setText(max !== undefined ? values[key].slice(0, max) : values[key]);
+          field.setText(fitField(field, values[key], font));
           filled.add(key);
         } catch { /* leave this one blank */ }
       }
       if (fields.length) {
-        try { form.flatten(); } catch { /* print it as it is */ }
+        try { flattenForm(tpl); } catch { /* print it as it is */ }
       }
     }
   } catch { /* a form pdf-lib can't read: use the page as it is */ }
@@ -881,6 +952,28 @@ async function addPart(out: PDFDocument, fonts: Fonts, part: PackPart): Promise<
   if (kind === "pdf") {
     const read = await readPdf(bytes, true);
     if ("doc" in read) {
+      // A blank form gets its code in the bottom corner. Forms often have
+      // a signature box down there, so the form is drawn a little smaller
+      // (top kept, centered) to leave a clear strip for the code and the
+      // footer: nothing on the form is ever covered. Turned pages keep
+      // their size (the code goes over the corner as on any page).
+      if (part.kind === "form" && part.qr && !part.signed) {
+        try {
+          const src = read.doc.getPages();
+          if (src.every((pg) => !(pg.getRotation().angle % 360))) {
+            const embedded = await out.embedPages(src);
+            embedded.forEach((ep, i) => {
+              const { width: W, height: H } = src[i].getSize();
+              const k = Math.min(6, Math.max(1, Math.min(Math.max(W, H) / 1224, Math.min(W, H) / 792)));
+              const band = 64 * k;
+              const s = Math.min(1, (H - band - 6 * k) / H);
+              const page = out.addPage([W, H]);
+              page.drawPage(ep, { x: (W - W * s) / 2, y: H - H * s - 6 * k, xScale: s, yScale: s });
+            });
+            return true;
+          }
+        } catch { /* copied as is below */ }
+      }
       try {
         const pages = await out.copyPages(read.doc, read.doc.getPageIndices());
         for (const p of pages) out.addPage(p);

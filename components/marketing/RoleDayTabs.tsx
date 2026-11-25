@@ -116,7 +116,7 @@ export function RoleDayTabs() {
         ))}
       </div>
       <p key={`intro-${role.key}`} className="mt-4 mb-2.5 font-display text-section font-semibold text-[var(--color-text)]"
-        style={{ animation: "rise 0.35s var(--ease-fluid) both" }}>
+        style={{ animation: "rise 0.35s var(--ease-fluid) backwards" }}>
         {role.intro}
       </p>
       <div role="tabpanel" aria-live="polite" className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
@@ -127,7 +127,7 @@ export function RoleDayTabs() {
         <ul className="divide-y divide-[var(--color-border)]">
           {role.moments.map((m, i) => (
             <li key={`${role.key}-${i}`} className="grid grid-cols-1 md:grid-cols-2"
-              style={{ animation: `rise 0.4s var(--ease-fluid) ${i * 60}ms both` }}>
+              style={{ animation: `rise 0.4s var(--ease-fluid) ${i * 60}ms backwards` }}>
               <div className="px-4 sm:px-5 py-3.5 text-reading leading-snug text-[var(--color-text-muted)]">
                 <span className="md:hidden block text-body font-medium mb-0.5">Before</span>
                 {m.before}

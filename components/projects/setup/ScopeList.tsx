@@ -26,13 +26,13 @@ import ProjectFilePlace, { useProjectFileHome } from "@/components/projects/Proj
 import JobsScheduleDialog from "@/components/projects/setup/JobsScheduleDialog";
 import RfqDialog from "@/components/projects/setup/RfqDialog";
 import { uploadProjectFile } from "@/lib/projectUpload";
-import { applyScope, byCategory, diffScope, isTypedItem, packageGroup, pickSheet, readScope, shared, typedItem, woKey, type ScopeDiff, type ScopeRead, type ScopeWO, type WoOnSchedule } from "@/lib/woIntake";
+import { applyScope, byCategory, diffScope, isTypedItem, packageGroup, packageGroups, pickSheet, readScope, shared, typedItem, woKey, type ScopeDiff, type ScopeRead, type ScopeWO, type WoOnSchedule } from "@/lib/woIntake";
 import { InlineAddRow, type AddField } from "@/components/ui/InlineAddRow";
 import Timeline, { type TimelineItem, type TimelineTone } from "@/components/ui/Timeline";
 import UserAvatar from "@/components/ui/UserAvatar";
 import { loadScope, readSheets, saveScope, scheduleFacts, LIST_ACCEPT, OPEN_SCHEDULE_IMPORT, TYPED_SOURCE, type RemovedWO, type ScheduleFacts, type ScopeChange, type ScopeState } from "@/lib/scopeStore";
 import { draftMissing, loadKit, loadPackages, packageStage, PACKAGES_CHANGED, EMPTY_KIT, type PackageKit, type ProjectPackages, type WoPackage } from "@/lib/woPackages";
-import PackagesBar, { packageGroups } from "@/components/projects/packages/PackagesBar";
+import PackagesBar from "@/components/projects/packages/PackagesBar";
 import PackageBuilder from "@/components/projects/packages/PackageBuilder";
 import PackageKitDialog from "@/components/projects/packages/PackageKitDialog";
 import { useOrgBranding } from "@/components/providers/OrgBrandingProvider";
@@ -76,6 +76,8 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
   const [pkgs, setPkgs] = useState<ProjectPackages | null>(null);
   const [building, setBuilding] = useState<string | null>(null);
   const [kitOpen, setKitOpen] = useState(false);
+  const [drafting, setDrafting] = useState(false);
+  const [pkgNote, setPkgNote] = useState<string | null>(null);
   const [workspace, setWorkspace] = useState("");
   const { logoUrl } = useOrgBranding();
 
@@ -315,7 +317,6 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
   // "work orders" when the list has numbers; "jobs" for work typed in.
   const jobWord = sc.items.every((x) => isTypedItem(x.wo)) ? (n === 1 ? "job" : "jobs") : (n === 1 ? "work order" : "work orders");
   const equipment = new Set(sc.items.map((x) => x.equipment || x.wo)).size;
-  const withPkg = sc.items.filter((x) => x.pkg || x.drafted).length;
   const approved = sc.items.filter((x) => x.approved).length;
   const conditional = sc.items.filter((x) => x.conditional).length;
   const many = shared(sc.items).length;
@@ -345,13 +346,17 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
   const firstDraft = pkgs ? Object.values(pkgs.packages).find((p) => p.status === "draft") : undefined;
   const buildAll = async () => {
     if (!kit) return;
-    try { const made = await draftMissing(orgId, projectId, groupsByKey, kit); await markScope(made, "drafted"); loadPkgs(); }
-    catch (e) { setError(sayError(e)); }
+    setDrafting(true); setError(null); setPkgNote(null);
+    try {
+      const made = await draftMissing(orgId, projectId, groupsByKey, kit);
+      await markScope(made, "drafted"); loadPkgs();
+      setPkgNote(`${pkgMissing.length} package${pkgMissing.length === 1 ? "" : "s"} built from the kit. Open each to add drawings or photos and set the order, then approve it.`);
+    } catch (e) { setError(sayError(e)); } finally { setDrafting(false); }
   };
   const actions: Partial<Record<PathKey, { label: string; run?: () => void; href?: string; alt?: { label: string; run: () => void } }>> = {
     scope: n ? undefined : { label: "Add the work", run: () => { document.getElementById("add-work")?.scrollIntoView({ behavior: "smooth", block: "center" }); (document.querySelector("#add-work input") as HTMLInputElement | null)?.focus(); } },
     pkg: pkgMissing.length && kitEmpty ? { label: "Set up the package kit", run: () => setKitOpen(true) }
-      : pkgMissing.length ? { label: pkgMissing.length === groupsByKey.size ? "Build the packages from the kit" : `Build the other ${pkgMissing.length} package${pkgMissing.length === 1 ? "" : "s"}`, run: () => void buildAll() }
+      : pkgMissing.length ? { label: pkgMissing.length === groupsByKey.size ? `Build the ${pkgMissing.length} package${pkgMissing.length === 1 ? "" : "s"} from the kit` : `Build the other ${pkgMissing.length} package${pkgMissing.length === 1 ? "" : "s"}`, run: () => void buildAll(), alt: { label: "Check the kit first", run: () => setKitOpen(true) } }
       : firstDraft ? { label: `Check and approve ${firstDraft.wos[0] ? `WO ${firstDraft.wos[0]}` : firstDraft.equipment}`, run: () => setBuilding(firstDraft.key) }
       : firstWithout ? { label: `Attach the package for ${firstWithout.tag || (isTypedItem(firstWithout.wo) ? firstWithout.what.slice(0, 28) : `WO ${firstWithout.wo}`)}`, run: () => { if (home?.place) document.getElementById(`wo-${firstWithout.wo}`)?.scrollIntoView({ behavior: "smooth", block: "center" }); pickPackage(firstWithout.wo); } }
       : approved < n ? { label: "Approve the packages", run: () => document.getElementById("scope-list")?.scrollIntoView({ behavior: "smooth" }) } : undefined,
@@ -392,7 +397,7 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
                 {act && canManage && (now
                   ? (act.href
                     ? <Link href={act.href} className="mt-1 inline-flex items-center justify-center gap-1.5 min-h-10 pointer-coarse:min-h-11 px-3 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-body font-semibold hover:bg-[var(--color-accent-hover)]">{act.label}</Link>
-                    : <Button className="mt-1 justify-self-start max-w-full" onClick={act.run} loading={s.key === "pkg" && !!attaching}>{act.label}</Button>)
+                    : <Button className="mt-1 justify-self-start max-w-full" onClick={act.run} loading={s.key === "pkg" && (!!attaching || drafting)}>{act.label}</Button>)
                   : !s.done && (act.href
                     ? <Link href={act.href} className="inline-flex items-center min-h-9 pointer-coarse:min-h-11 text-caption font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">{act.label}</Link>
                     : <button type="button" onClick={act.run} className="justify-self-start inline-flex items-center min-h-9 pointer-coarse:min-h-11 text-caption font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">{act.label}</button>))}
@@ -412,6 +417,7 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
             <ProjectFilePlace orgId={orgId} projectId={projectId} uid={uid} canManage={canManage} home={home} onChange={(h) => { setHome(h); if (h.place) setNeedPlace(false); }} what="the packages" />
           </div>
         )}
+        {pkgNote && <p role="status" className="px-1 text-body text-[var(--color-text)]">{pkgNote}</p>}
         {error && <ErrorNote title={error} />}
       </section>
 
@@ -428,9 +434,11 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
         </section>
       )}
 
-      {n > 0 && scope && kit && pkgs && !sc.skipped?.includes("pkg") && (
+      {/* Once packages exist: printing, forms back, filing. Before that the
+          path's Packages step leads (set up the kit, build them). */}
+      {n > 0 && scope && kit && pkgs && Object.keys(pkgs.packages).length > 0 && !sc.skipped?.includes("pkg") && (
         <PackagesBar orgId={orgId} projectId={projectId} projectName={projectName} workspace={workspace} logoUrl={logoUrl} tz={tz} uid={uid} actorEmail={actorEmail} canManage={canManage}
-          items={sc.items} kit={kit} all={pkgs} onOpenKit={() => setKitOpen(true)} onMarkScope={markScope} />
+          items={sc.items} kit={kit} all={pkgs} onOpenKit={() => setKitOpen(true)} />
       )}
 
       {n > 0 && scope && <section id="scope-list" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden" aria-labelledby="scope-title">
@@ -445,7 +453,6 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
 
         <div className="px-5 pb-4 flex flex-wrap gap-x-7 gap-y-2">
           <Metric label="Equipment" value={String(equipment)} />
-          {!sc.skipped?.includes("pkg") && <Metric label="Packages" value={`${withPkg} of ${n}`} />}
           {conditional > 0 && <Metric label="Depend on inspection" value={String(conditional)} />}
           {many > 0 && <Metric label={`Pieces with 2+ ${jobWord.startsWith("work") ? "WOs" : "jobs"}`} value={String(many)} />}
           {scope.coming.length > 0 && <Metric label="Still adding scope" value={String(scope.coming.length)} />}

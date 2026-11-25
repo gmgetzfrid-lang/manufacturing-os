@@ -529,7 +529,7 @@ function SectionedBlocks({ blocks, citations, onCite }: {
   // Items rise in one after another (capped stagger) — the reveal itself
   // walks the reader down the step, both on load and on accordion open.
   const enter = (i: number): React.CSSProperties => ({
-    animation: "rise 0.35s var(--ease-fluid) both",
+    animation: "rise 0.35s var(--ease-fluid) backwards",
     animationDelay: `${Math.min(i, 10) * 40}ms`,
   });
   const renderItems = (items: AnswerBlock[]) => {
@@ -570,7 +570,7 @@ function SectionedBlocks({ blocks, citations, onCite }: {
         return (
           <div
             key={si}
-            style={{ animation: "rise 0.45s var(--ease-fluid) both", animationDelay: `${Math.min(step - 1, 8) * 70}ms` }}
+            style={{ animation: "rise 0.45s var(--ease-fluid) backwards", animationDelay: `${Math.min(step - 1, 8) * 70}ms` }}
           >
             <button
               type="button"
@@ -1981,7 +1981,7 @@ export function StreamingAnswer({ status, draft }: { status: string; draft: stri
   const statusStage = STAGES.findIndex((s) => s.match.test(status));
   const stage = inEvidence ? 5 : heroV ? 4 : Math.max(0, statusStage);
   const inline = (text: string) => <InlineAnswer text={text} citations={[]} onCite={() => undefined} />;
-  const reveal = { animation: "rise 0.4s var(--ease-fluid) both" } as React.CSSProperties;
+  const reveal = { animation: "rise 0.4s var(--ease-fluid) backwards" } as React.CSSProperties;
   const why = parts.why.filter((b) => b.type !== "label");
 
   return (

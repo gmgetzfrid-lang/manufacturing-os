@@ -18,7 +18,7 @@ export function ChipCloud({ chips, preview = 6 }: {
       {shown.map((c, i) => (
         <span key={c}
           className="inline-flex items-center px-2 py-0.5 min-h-7 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] text-body text-[var(--color-text)]"
-          style={open && i >= preview ? { animation: `pop 0.3s var(--ease-fluid) ${Math.min((i - preview) * 18, 400)}ms both` } : undefined}>
+          style={open && i >= preview ? { animation: `pop 0.3s var(--ease-fluid) ${Math.min((i - preview) * 18, 400)}ms backwards` } : undefined}>
           {c}
         </span>
       ))}

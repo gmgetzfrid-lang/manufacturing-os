@@ -55,6 +55,8 @@ export function Modal({
   dismissable = true,
   zIndex = 400,
   className = "",
+  labelledBy,
+  label,
   children,
 }: {
   onClose: () => void;
@@ -63,6 +65,9 @@ export function Modal({
   dismissable?: boolean;
   zIndex?: number;
   className?: string;
+  /** The id of the dialog's title, or a label when it has none. */
+  labelledBy?: string;
+  label?: string;
   children: React.ReactNode;
 }) {
   // Escape closes the dialog on top only: a dialog opened over another
@@ -90,6 +95,8 @@ export function Modal({
       style={{ zIndex }}
       role="dialog"
       aria-modal="true"
+      aria-labelledby={labelledBy}
+      aria-label={labelledBy ? undefined : label}
     >
       <div
         className="absolute inset-0 bg-[var(--color-ink)]/55 animate-in fade-in"

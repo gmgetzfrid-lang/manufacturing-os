@@ -206,6 +206,9 @@ describe("packagePdf", () => {
     form.createTextField("Work Order No").addToPage(page, { x: 60, y: 700, width: 200, height: 24 });
     form.createTextField("Equipment Tag").addToPage(page, { x: 60, y: 660, width: 300, height: 24 });
     form.createTextField("Inspector").addToPage(page, { x: 60, y: 620, width: 200, height: 24 });
+    const scope = form.createTextField("Scope of work");
+    scope.enableMultiline();
+    scope.addToPage(page, { x: 60, y: 480, width: 420, height: 120 });
     const bytes = await tpl.save();
 
     const res = await assemblePackage(meta, [pdfPart("a", "Exchanger closure", await makePdf([[612, 792]]), "form")], {
@@ -221,13 +224,27 @@ describe("packagePdf", () => {
     expect(doc.catalog.get(PDFName.of("AcroForm"))).toBeUndefined();
 
     // The filled values are now drawn on the page (flattened field art).
-    const xobjects = cover.node.Resources()?.lookup(PDFName.of("XObject"), PDFDict);
+    const xobjects = cover.node.Resources()?.lookupMaybe(PDFName.of("XObject"), PDFDict);
     const drawn = (xobjects?.entries() ?? [])
       .filter(([name]) => name.asString().startsWith("/FlatWidget"))
       .map(([, ref]) => streamText(doc, ref).toUpperCase())
       .join("\n");
     expect(drawn).toContain(hex("400101, 400102"));
     expect(drawn).toContain(hex("X-1 Overhead Cooler"));
+    // The multi-line scope box gets a readable size, not pdf-lib's auto size.
+    expect(drawn).toContain(hex("Open channel heads"));
+    expect(drawn).toMatch(/ 10 TF/);
+  });
+
+  it("prints names with characters the standard font lacks", async () => {
+    const res = await assemblePackage(
+      { ...meta, equipment: "X-1 Cooler \u2192 East \u{1F4F7} \u03A9", wos: ["WO 400101"] },
+      [pdfPart("a", "Photo: Caf\u00e9 \u{1F527} \u0151 \u65E5", await makePdf([[612, 792]]))],
+    );
+    const doc = await PDFDocument.load(res.pdf);
+    const text = pageText(doc, 2);
+    expect(text).toContain(hex("WO 400101 \u00b7 X-1 Cooler -> East Ohm"));
+    expect(text).toContain(hex("Photo: Caf\u00e9 o ?"));
   });
 
   it("uses a contents template and repeats it when rows don't fit", async () => {
@@ -242,6 +259,9 @@ describe("packagePdf", () => {
     expect(pageText(doc, 1)).toContain(hex("Sheet 1"));        // template is the background
     expect(pageText(doc, 2)).toContain(hex("Sheet 1"));        // and repeats
     expect(pageText(doc, 2)).toContain(hex("Item 30"));
+    // Copies of one template page don't share what's drawn on them.
+    expect(pageText(doc, 1)).not.toContain(hex("Item 30"));
+    expect(pageText(doc, 1)).not.toContain(hex("Page 3 of 33"));
   });
 
   it("runs a long list onto a second contents page and the numbers still line up", async () => {

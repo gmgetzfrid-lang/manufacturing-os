@@ -79,6 +79,9 @@ Also read: `docs/design-rules.md` (rules are musts, ideas are optional) and `doc
 46. **Production only on "push".** The preview branch is `claude/answer-first-layout`; production is `master`.
 47. **Speed matters**: screens should load in well under a second. (Nov 24)
 48. **Never use the THOR indexer** (the network-drive indexer script in the repo) for anything in the app. Forget it entirely. (Nov 25)
+49. **Every dialog opens over the whole screen**, wherever it's opened from: use the shared `Modal` (it draws over the page), never a hand-made `fixed inset-0` box, and check it on a long page scrolled down. (Nov 25: "that tiny modal is way down the scroll screen")
+50. **Don't box him in with fixed slots.** His sheets and forms are his: he says what each sheet is and what the app fills on it; the app reads the labels on it and suggests, he confirms or changes; some sheets are just printed blank and swapped once signed. (Nov 25)
+51. **Count things as what they are.** Packages are counted as packages (one per piece of equipment), not as work orders; a number is never shown twice on one screen. (Nov 25)
 
 ---
 
@@ -96,6 +99,9 @@ Also read: `docs/design-rules.md` (rules are musts, ideas are optional) and `doc
 ---
 
 ## Mistakes log (newest first; add one line each time he corrects something)
+
+- Nov 25: The package kit dialog opened way down the page with the dim only over the Plan panel. Cause: page sections keep their entrance animation's transform (`both` fill), which traps any fixed overlay inside them. Fixed at the root (entrance animations end with `backwards`) and the package dialogs moved to the shared Modal. The same screen also showed "0 of 69" four times, counted work orders as packages, and had "Set up the package kit" twice. All fixed.
+- Nov 25: The package kit only took a cover, a contents page and blank forms in fixed slots, with fields placed by hand. He wants to say what each sheet is and have the app read its labels and fill them. Rebuilding it (see lesson 50).
 
 - Nov 25 (found by running the checklist, before he did): the backup's floating progress card was missed when running work moved into the side menu; a schedule-started project didn't take new work orders from a re-imported schedule; the new-project dialog clipped on a phone and told phone users to "drop" a file. All fixed. Lesson: the checklist finds these; run it every time.
 - Nov 25: New project made everyone go list, scope, shifts, check, then later "import the schedule". Fixed: ask how to start (schedule, list, empty); a schedule's work orders are the scope.

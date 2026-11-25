@@ -121,7 +121,8 @@ describe("the planning path says the next step", () => {
     let p = planningPath(scope, null);
     expect(p.steps[p.next].key).toBe("pkg");
     expect(NEXT_WORDS[p.steps[p.next].key]).toBe("build the packages");
-    expect(p.steps[1].state).toBe("1 of 4 built, 0 approved");
+    // Counted as packages: 4 work orders, 3 packages (two are on X-1).
+    expect(p.steps[1].state).toBe("1 of 3 built, 0 approved");
     const done = { ...scope, items: r.items.map((x) => ({ ...x, drafted: true, approved: true })) };
     p = planningPath(done, { wos: ["400101", "400102", "400103"], steps: 10, awarded: 0 });
     expect(p.steps[p.next].key).toBe("sched");

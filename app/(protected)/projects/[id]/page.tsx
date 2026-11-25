@@ -54,6 +54,7 @@ import ProjectNeeds from "@/components/projects/ProjectNeeds";
 import ScopeList from "@/components/projects/setup/ScopeList";
 import { loadScope, scheduleFacts, SCOPE_CHANGED } from "@/lib/scopeStore";
 import { planningPath, NEXT_WORDS, STEP_NOUN, type PathStep } from "@/lib/planningPath";
+import { isTypedItem, packageCounts } from "@/lib/woIntake";
 import SetupHost from "@/components/projects/SetupHost";
 import { isWatching, watch, unwatch } from "@/lib/subscriptions";
 import { openProjectReport } from "@/lib/projectReport";
@@ -514,7 +515,7 @@ function ProjectDetail() {
   // Read until the work starts: an imported schedule doesn't end planning
   // (the RFQ and the award can still be ahead).
   const unscheduled0 = !!stepRows && !!standings && standings.every((s) => s.state === "no schedule" || s.state === "not started");
-  const [planning, setPlanning] = useState<{ wos: number; withPkg: number; pkgSkipped: boolean; next: PathStep | null; step: number; after: string[] } | null>(null);
+  const [planning, setPlanning] = useState<{ wos: number; typed: boolean; pk: { total: number; built: number; approved: number }; pkgSkipped: boolean; next: PathStep | null; step: number; after: string[] } | null>(null);
   // Read again when the scope is saved on the Plan tab (lib/scopeStore).
   const [scopeRev, setScopeRev] = useState(0);
   useEffect(() => {
@@ -530,7 +531,7 @@ function ProjectDetail() {
       // No work added yet: still a path, with adding the work first.
       const p = planningPath(s, f);
       // What follows the next step, leaving out the steps this job doesn't need.
-      setPlanning({ wos: s?.items.length ?? 0, withPkg: s?.items.filter((x) => x.pkg || x.drafted).length ?? 0, pkgSkipped: !!p.steps[1]?.skipped,
+      setPlanning({ wos: s?.items.length ?? 0, typed: !!s?.items.length && s.items.every((x) => isTypedItem(x.wo)), pk: packageCounts(s?.items ?? []), pkgSkipped: !!p.steps[1]?.skipped,
         next: p.next >= 0 ? p.steps[p.next] : null, step: p.next + 1, after: p.next >= 0 ? p.steps.slice(p.next + 1).filter((x) => !x.skipped).map((x) => STEP_NOUN[x.key]) : [] });
     }, () => undefined);
     return () => { on = false; };
@@ -611,10 +612,15 @@ function ProjectDetail() {
     const nx = planning.next;
     answer = nx ? `Next: ${nx.ask ?? NEXT_WORDS[nx.key]}.` : "Planning is done.";
     const starts = !noSchedule && upcoming?.plannedStart ? ` The work starts ${when(upcoming.plannedStart).split(",").slice(0, 2).join(",")}.` : "";
-    sub = nx ? `${nx.state}.${planning.after.length ? ` Then ${planning.after.join(", ")}.` : starts ? "" : " Then the work."}${starts}` : "Next: the work, a shift report every shift.";
-    facts = !planning.wos ? [] : planning.pkgSkipped ? [{ label: "Jobs", value: planning.wos, hero: true }]
-      : [{ label: "Packages built", value: `${planning.withPkg} of ${planning.wos}`, tone: planning.withPkg < planning.wos ? "warn" : undefined, hero: true },
-        { label: "Jobs", value: planning.wos }];
+    // The big number already says how many packages are built: the line
+    // under it says what a package is instead of repeating it.
+    const pkgNow = nx?.key === "pkg" && !planning.pkgSkipped && planning.wos > 0;
+    const what = pkgNow ? (planning.pk.built ? `${planning.pk.approved} approved.` : "One per piece of equipment, from the package kit.") : `${nx?.state}.`;
+    sub = nx ? `${what}${planning.after.length ? ` Then ${planning.after.join(", ")}.` : starts ? "" : " Then the work."}${starts}` : "Next: the work, a shift report every shift.";
+    const jobsLabel = planning.typed ? "Jobs" : "Work orders";
+    facts = !planning.wos ? [] : planning.pkgSkipped ? [{ label: jobsLabel, value: planning.wos, hero: true }]
+      : [{ label: "Packages built", value: `${planning.pk.built} of ${planning.pk.total}`, tone: planning.pk.built < planning.pk.total ? "warn" : undefined, hero: true },
+        { label: jobsLabel, value: planning.wos }];
   }
   else if (noSchedule) { answer = "No schedule yet."; sub = "Import it on Plan to track the work."; }
   else if (workDone) {

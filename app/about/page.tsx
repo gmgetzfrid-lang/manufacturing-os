@@ -105,7 +105,7 @@ function Hero() {
       </div>
 
       {/* The one bold element: the register, as the app draws it. */}
-      <div className="mt-8" style={{ animation: "rise 0.6s var(--ease-fluid) 120ms both" }}>
+      <div className="mt-8" style={{ animation: "rise 0.6s var(--ease-fluid) 120ms backwards" }}>
         <div className="flex flex-wrap items-end gap-x-4 gap-y-1 mb-2.5">
           <h2 className="font-display text-section font-semibold text-[var(--color-text)]">Unit 25 diesel hydrotreater, drawing register</h2>
           <span className="text-body text-[var(--color-text-muted)]">Example</span>

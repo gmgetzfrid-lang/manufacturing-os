@@ -34,7 +34,7 @@ export function Reveal({ children, delay = 0, className = "" }: {
   return (
     <div ref={ref} className={className} data-reveal
       style={shown
-        ? { animation: `rise 0.6s var(--ease-fluid) ${delay}ms both` }
+        ? { animation: `rise 0.6s var(--ease-fluid) ${delay}ms backwards` }
         : { opacity: 0 }}>
       {children}
     </div>
@@ -56,7 +56,7 @@ export function RotatingWord({ words, className = "" }: { words: string[]; class
   }, [words.length]);
   return (
     <span key={i} className={`inline-block ${className}`}
-      style={{ animation: "rise 0.45s var(--ease-fluid) both" }}>
+      style={{ animation: "rise 0.45s var(--ease-fluid) backwards" }}>
       {words[i]}
     </span>
   );

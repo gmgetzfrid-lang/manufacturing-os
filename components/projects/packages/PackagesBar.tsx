@@ -1,15 +1,15 @@
 "use client";
 
-// PackagesBar - the project's work order packages at a glance, over the
-// scope list: how many are built, approved, printed, how many signed forms
-// are back and how many are filed. Its button is the next thing to do for
-// all of them at once: set up the kit, build them all from it, print every
-// approved one as one print job, file every one whose forms are all back.
-// The rest (the kit, a contractor's returns link, the network folder) is
-// under its menu.
+// PackagesBar - the project's work order packages once they're built, over
+// the scope list: how many are printed, how many signed forms are back and
+// how many are filed. (Setting up the kit and building them is the planning
+// path's Packages step; this doesn't repeat it.) Its button does the next
+// thing for all of them at once: print every approved one as one print
+// job, or file every one whose forms are all back. The rest (the kit, a
+// contractor's returns link, the network folder) is under its menu.
 
 import React, { useState } from "react";
-import { FileStack, FolderOpen, Link2, Package, Printer, Settings2 } from "lucide-react";
+import { FileStack, FolderOpen, Link2, Printer, Settings2 } from "lucide-react";
 import { PDFDocument } from "pdf-lib";
 import { Button } from "@/components/ui/Button";
 import MoreMenu from "@/components/ui/MoreMenu";
@@ -17,33 +17,22 @@ import { ErrorNote } from "@/components/ui/ErrorNote";
 import { field as fieldCls, label as labelCls } from "@/components/admin/kit";
 import { sayError } from "@/components/projects/sayError";
 import { supabase } from "@/lib/supabase";
-import { packageGroup, type ScopeWO } from "@/lib/woIntake";
+import { packageGroups, type ScopeWO } from "@/lib/woIntake";
 import {
-  draftMissing, joinPath, packageStage, sayPackagesChanged, updatePackages,
+  joinPath, packageStage, sayPackagesChanged, updatePackages,
   type PackageKit, type ProjectPackages,
 } from "@/lib/woPackages";
 import {
   buildPackagePdf, canWriteToFolder, deleteWorkingCopies, openPdf, projectFolder, withDrawings, writeToFolder,
 } from "@/lib/packageOps";
 
-/** The project's equipment groups (one package each), by their key. */
-export function packageGroups(items: ScopeWO[]): Map<string, ScopeWO[]> {
-  const out = new Map<string, ScopeWO[]>();
-  for (const x of items) {
-    const g = packageGroup(items, x.wo);
-    if (!out.has(g[0].wo)) out.set(g[0].wo, g);
-  }
-  return out;
-}
-
 export default function PackagesBar({
-  orgId, projectId, projectName, workspace, logoUrl, tz, uid, actorEmail, canManage, items, kit, all, onOpenKit, onMarkScope,
+  orgId, projectId, projectName, workspace, logoUrl, tz, uid, actorEmail, canManage, items, kit, all, onOpenKit,
 }: {
   orgId: string; projectId: string; projectName: string; workspace: string; logoUrl?: string | null; tz?: string;
   uid: string | null; actorEmail?: string; canManage: boolean;
   items: ScopeWO[]; kit: PackageKit; all: ProjectPackages;
   onOpenKit: () => void;
-  onMarkScope: (wos: string[], what: "drafted" | "approved") => Promise<void>;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -56,24 +45,12 @@ export default function PackagesBar({
   const keys = [...groups.keys()];
   const pkgs = keys.map((k) => all.packages[k]).filter(Boolean);
   const stages = pkgs.map((p) => packageStage(p));
-  const missing = keys.filter((k) => !all.packages[k]);
   const approvedOnly = pkgs.filter((p) => p.status === "approved");
   const complete = pkgs.filter((p) => p.status === "issued" && packageStage(p).forms > 0 && packageStage(p).signed === packageStage(p).forms);
   const forms = stages.reduce((n, s) => n + s.forms, 0);
   const signed = stages.reduce((n, s) => n + s.signed, 0);
   const filed = pkgs.filter((p) => p.status === "filed").length;
   const printed = pkgs.filter((p) => p.status === "issued").length;
-  const approved = pkgs.filter((p) => p.status !== "draft").length;
-
-  const buildAll = async () => {
-    setBusy("Building the packages"); setError(null); setNote(null);
-    try {
-      const made = await draftMissing(orgId, projectId, groups, kit);
-      await onMarkScope(made, "drafted");
-      sayPackagesChanged(projectId);
-      setNote(`${missing.length} package${missing.length === 1 ? "" : "s"} built from the kit. Open each to add drawings or photos, then approve.`);
-    } catch (e) { setError(sayError(e)); } finally { setBusy(null); }
-  };
 
   // Every approved package as one print job.
   const printApproved = async () => {
@@ -155,10 +132,7 @@ export default function PackagesBar({
     catch (e) { setError(sayError(e)); } finally { setBusy(null); }
   };
 
-  const noKit = !kit.forms.length && !kit.cover && !pkgs.length;
   const next = !canManage ? null
-    : noKit ? { label: "Set up the package kit", icon: Settings2, run: async () => onOpenKit() }
-    : missing.length ? { label: `Build ${missing.length === keys.length ? "all " : ""}${missing.length} package${missing.length === 1 ? "" : "s"}`, icon: Package, run: buildAll }
     : approvedOnly.length ? { label: `Print ${approvedOnly.length} approved`, icon: Printer, run: printApproved }
     : complete.length ? { label: `File ${complete.length} with every form back`, icon: FolderOpen, run: fileComplete }
     : null;
@@ -170,7 +144,7 @@ export default function PackagesBar({
         <div className="min-w-0 flex-1">
           <div className="text-reading font-semibold text-[var(--color-text)]">Work order packages</div>
           <div className="text-body text-[var(--color-text-muted)] tabular-nums">
-            {pkgs.length ? <>{pkgs.length} of {keys.length} built · {approved} approved · {printed + filed} printed{forms ? ` · ${signed} of ${forms} forms back` : ""}{filed ? ` · ${filed} filed` : ""}</> : noKit ? "Set up the kit once: every project's packages build from it." : `${keys.length} to build from the kit`}
+            {printed + filed ? `${printed + filed} of ${pkgs.length} printed` : "None printed yet"}{printed + filed && forms ? ` · ${signed} of ${forms} forms back` : ""}{filed ? ` · ${filed} filed` : ""}
           </div>
         </div>
         {busy && <span role="status" className="text-body text-[var(--color-text-muted)]">{busy}…</span>}

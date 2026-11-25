@@ -4,7 +4,7 @@
 // page's header says the next step; the Plan tab's path shows all five
 // (components/projects/setup/ScopeList). Pure.
 
-import { againstSchedule, isTypedItem, type ScopeWO } from "@/lib/woIntake";
+import { againstSchedule, isTypedItem, packageCounts, type ScopeWO } from "@/lib/woIntake";
 import type { ScopeState } from "@/lib/scopeStore";
 
 export type PathKey = "scope" | "pkg" | "sched" | "rfq" | "award";
@@ -37,8 +37,8 @@ export function planningPath(scopeIn: ScopeState | null, facts: PathFacts | null
   const scope: ScopeState = scopeIn ?? { items: [], coming: [], source: { file: "", sheet: "", headers: [], map: {} }, imports: [] };
   const skip = new Set(scope.skipped ?? []);
   const n = scope.items.length;
-  const withPkg = scope.items.filter((x) => x.pkg || x.drafted).length;
-  const approved = scope.items.filter((x) => x.approved).length;
+  // Counted as packages (one per equipment group), not work orders.
+  const pk = packageCounts(scope.items);
   const vs = scheduleMatch(scope.items, facts);
   const rfqs = scope.rfqs ?? [];
   // Jobs typed in, with no work order numbers: no schedule file to import, so
@@ -51,7 +51,7 @@ export function planningPath(scopeIn: ScopeState | null, facts: PathFacts | null
   const raw: PathStep[] = [
     { key: "scope", name: "Scope", done: n > 0 || noNumbers,
       state: noNumbers ? "The schedule's steps (no work order numbers on it)" : n ? `${n} ${fromSchedule ? `work order${n === 1 ? "" : "s"}, from the schedule` : `job${n === 1 ? "" : "s"}`}${scope.coming.length ? `, ${scope.coming.length} still adding scope` : ""}` : "No work added yet" },
-    { key: "pkg", name: "Packages", done: noNumbers || (n > 0 && approved === n), state: noNumbers ? "No work orders on the schedule to package" : n ? `${withPkg} of ${n} built, ${approved} approved` : "After the work is added" },
+    { key: "pkg", name: "Packages", done: noNumbers || (n > 0 && pk.approved === pk.total), state: noNumbers ? "No work orders on the schedule to package" : n ? `${pk.built} of ${pk.total} built, ${pk.approved} approved` : "After the work is added" },
     { key: "sched", name: "Schedule", done: noNumbers || (typed ? !!facts?.steps : !!vs && vs.missing.length === 0), ...(typed && !facts?.steps ? { ask: "make the schedule" } : !typed && !noNumbers && facts?.steps && vs?.missing.length ? { ask: "match the schedule to the list" } : {}),
       state: !facts?.steps ? (typed ? "Not made yet" : "Not imported yet") : noNumbers ? `${facts.steps} steps` : typed ? "On the Schedule tab" : vs ? `${vs.on.length} of ${n} work orders on it${vs.missing.length ? `, ${vs.missing.length} missing` : ""}${vs.extra.length ? `, ${vs.extra.length} not in the list` : ""}` : "Imported, with no work order numbers on it" },
     { key: "rfq", name: "RFQ", done: rfqs.length > 0, state: rfqs.length ? `Written for ${[...new Set(rfqs.flatMap((r) => r.to))].join(", ")} (last ${day(rfqs[rfqs.length - 1].at)})` : "Not written yet" },

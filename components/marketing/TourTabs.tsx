@@ -90,7 +90,7 @@ export function TourTabs({ header }: { header?: React.ReactNode }) {
           </div>
         </div>
         <p key={active} className="mt-3 text-reading text-[var(--color-text-muted)] max-w-2xl"
-          style={{ animation: "rise 0.4s var(--ease-fluid) both" }}>
+          style={{ animation: "rise 0.4s var(--ease-fluid) backwards" }}>
           {CAPTIONS[active]}
         </p>
       </div>
@@ -100,7 +100,7 @@ export function TourTabs({ header }: { header?: React.ReactNode }) {
 @media (prefers-reduced-motion: reduce) { .mkt-dash-anim { animation: none } }`}</style>
       <div key={`panel-${active}`} role="tabpanel" aria-live="polite"
         className="mt-4"
-        style={{ animation: "rise 0.5s var(--ease-fluid) both" }}>
+        style={{ animation: "rise 0.5s var(--ease-fluid) backwards" }}>
         {active === "library" && <LibraryMockup />}
         {active === "ask" && <AskMockup />}
         {active === "ticket" && <TicketMockup />}

@@ -225,7 +225,7 @@ export default function GraphShapeWizard({
 
               {stage === "done" ? (
                 <div className="py-8 flex flex-col items-center gap-3 text-center">
-                  <CheckCircle2 className="w-9 h-9 text-[var(--state-released)]" style={{ animation: "pop 0.3s var(--ease-fluid) both" }} />
+                  <CheckCircle2 className="w-9 h-9 text-[var(--state-released)]" style={{ animation: "pop 0.3s var(--ease-fluid) backwards" }} />
                   <div className="text-body font-medium text-[var(--color-text)]">
                     {written} connection{written === 1 ? "" : "s"} written to the graph
                   </div>
@@ -247,7 +247,7 @@ export default function GraphShapeWizard({
                       </div>
                       {rows.map((r, i) => (
                         <div key={r.key}
-                          style={{ animation: "rise 0.35s var(--ease-fluid) both", animationDelay: `${Math.min(i, 8) * 50}ms` }}
+                          style={{ animation: "rise 0.35s var(--ease-fluid) backwards", animationDelay: `${Math.min(i, 8) * 50}ms` }}
                           className={`rounded-xl border px-3 py-2.5 transition-colors ${r.accepted
                             ? "border-[var(--color-text)] bg-[var(--color-surface-2)]"
                             : "border-[var(--color-border)] opacity-60"}`}>

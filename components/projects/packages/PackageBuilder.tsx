@@ -21,6 +21,7 @@ import {
   MoveDown, MoveUp, Pencil, Plus, Printer, Search, Trash2, Upload, X, Eye,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/ui/Modal";
 import MoreMenu, { type MoreItem } from "@/components/ui/MoreMenu";
 import { ErrorNote } from "@/components/ui/ErrorNote";
 import { field as fieldCls, label as labelCls } from "@/components/admin/kit";
@@ -93,12 +94,6 @@ export default function PackageBuilder({
       } catch (e) { setError(sayError(e)); }
     })();
   }, [pkg, canManage, orgId, projectId, key, group, kit, onMarkScope]);
-
-  useEffect(() => {
-    const on = (e: KeyboardEvent) => { if (e.key === "Escape" && !busy && !scan) onClose(); };
-    window.addEventListener("keydown", on);
-    return () => window.removeEventListener("keydown", on);
-  }, [busy, scan, onClose]);
 
   // The package's own page (its QR), once it has been printed.
   useEffect(() => {
@@ -210,7 +205,7 @@ export default function PackageBuilder({
   const title = pkg.wos.length ? `WO ${pkg.wos.join(", ")}` : pkg.equipment;
 
   return (
-    <Sheet onClose={onClose} title={title} sub={<>{pkg.wos.length ? `${pkg.equipment} · ` : ""}<span className="inline-flex items-center gap-1.5"><span aria-hidden className={`w-2 h-2 rounded-full ${STATUS[pkg.status].dot}`} />{STATUS[pkg.status].word}</span>{st.forms ? <span className="tabular-nums"> · {st.signed} of {st.forms} forms signed back</span> : null}</>}
+    <Sheet onClose={onClose} dismissable={!busy} title={title} sub={<>{pkg.wos.length ? `${pkg.equipment} · ` : ""}<span className="inline-flex items-center gap-1.5"><span aria-hidden className={`w-2 h-2 rounded-full ${STATUS[pkg.status].dot}`} />{STATUS[pkg.status].word}</span>{st.forms ? <span className="tabular-nums"> · {st.signed} of {st.forms} forms signed back</span> : null}</>}
       footer={!canManage ? null : (
         <>
           {!filed && <Button variant="secondary" onClick={() => void preview()} disabled={!!busy}><Eye className="w-4 h-4" /> Preview</Button>}
@@ -353,23 +348,22 @@ export default function PackageBuilder({
   );
 }
 
-/** A full-height sheet on a phone, a wide dialog on a desktop. */
-function Sheet({ title, sub, footer, onClose, children }: { title: React.ReactNode; sub?: React.ReactNode; footer?: React.ReactNode; onClose: () => void; children: React.ReactNode }) {
+/** The package's dialog: the app's one dialog shell (drawn over the whole
+ *  page, Escape closes the top dialog only). */
+function Sheet({ title, sub, footer, onClose, dismissable = true, children }: { title: React.ReactNode; sub?: React.ReactNode; footer?: React.ReactNode; onClose: () => void; dismissable?: boolean; children: React.ReactNode }) {
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="pb-title" className="fixed inset-0 z-[200] bg-[var(--color-ink)]/55 flex items-stretch sm:items-center justify-center sm:p-4">
-      <div className="ui-float ui-float-in w-full sm:max-w-3xl bg-[var(--color-surface)] sm:rounded-xl border border-[var(--color-border)] flex flex-col max-h-dvh sm:max-h-[calc(100dvh-2rem)]">
-        <div className="px-5 sm:px-6 pt-4 pb-3 border-b border-[var(--color-border)] flex items-start gap-3">
-          <div className="flex-1 min-w-0">
-            <div className="text-caption font-medium uppercase tracking-[0.08em] text-[var(--color-text-muted)]">Work package</div>
-            <h2 id="pb-title" className="font-display text-section font-semibold text-[var(--color-text)] truncate">{title}</h2>
-            {sub && <p className="mt-0.5 text-body text-[var(--color-text-muted)]">{sub}</p>}
-          </div>
-          <button type="button" onClick={onClose} aria-label="Close" className="-mr-2 w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 inline-flex items-center justify-center rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
+    <Modal onClose={onClose} size="xl" dismissable={dismissable} labelledBy="pb-title">
+      <div className="px-5 sm:px-6 pt-4 pb-3 border-b border-[var(--color-border)] flex items-start gap-3 shrink-0">
+        <div className="flex-1 min-w-0">
+          <div className="text-caption font-medium uppercase tracking-[0.08em] text-[var(--color-text-muted)]">Work package</div>
+          <h2 id="pb-title" className="font-display text-section font-semibold text-[var(--color-text)] truncate">{title}</h2>
+          {sub && <p className="mt-0.5 text-body text-[var(--color-text-muted)]">{sub}</p>}
         </div>
-        <div className="px-5 sm:px-6 py-4 grid gap-4 overflow-y-auto flex-1 min-h-0 content-start">{children}</div>
-        {footer && <div className="px-5 sm:px-6 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] flex flex-wrap items-center gap-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">{footer}</div>}
+        <button type="button" onClick={onClose} aria-label="Close" className="-mr-2 w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 inline-flex items-center justify-center rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
       </div>
-    </div>
+      <div className="px-5 sm:px-6 py-4 grid gap-4 overflow-y-auto custom-scrollbar flex-1 min-h-0 content-start">{children}</div>
+      {footer && <div className="px-5 sm:px-6 py-3 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] rounded-b-xl flex flex-wrap items-center gap-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] shrink-0">{footer}</div>}
+    </Modal>
   );
 }
 

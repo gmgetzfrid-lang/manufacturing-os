@@ -14,6 +14,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Check, FileStack, FileText, Plus, Trash2, Upload, X } from "lucide-react";
 import { PDFDocument } from "pdf-lib";
 import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/ui/Modal";
 import { ErrorNote } from "@/components/ui/ErrorNote";
 import { field as fieldCls } from "@/components/admin/kit";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -44,12 +45,6 @@ export default function PackageKitDialog({ orgId, kit, actorEmail, onClose, onSa
   const coverIn = useRef<HTMLInputElement>(null);
   const tocIn = useRef<HTMLInputElement>(null);
   const formsIn = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    const on = (e: KeyboardEvent) => { if (e.key === "Escape" && !busy && !placing) onClose(); };
-    window.addEventListener("keydown", on);
-    return () => window.removeEventListener("keydown", on);
-  }, [busy, placing, onClose]);
 
   const save = async (words: string, fn: (k: PackageKit) => PackageKit) => {
     setBusy(words); setError(null);
@@ -106,9 +101,8 @@ export default function PackageKitDialog({ orgId, kit, actorEmail, onClose, onSa
   };
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="pk-title" className="fixed inset-0 z-[210] bg-[var(--color-ink)]/55 flex items-stretch sm:items-center justify-center sm:p-4">
-      <div className="ui-float ui-float-in w-full sm:max-w-2xl bg-[var(--color-surface)] sm:rounded-xl border border-[var(--color-border)] flex flex-col max-h-dvh sm:max-h-[calc(100dvh-2rem)]">
-        <div className="px-5 sm:px-6 pt-4 pb-3 border-b border-[var(--color-border)] flex items-start gap-3">
+    <Modal onClose={onClose} size="lg" dismissable={!busy && !placing} labelledBy="pk-title">
+        <div className="px-5 sm:px-6 pt-4 pb-3 border-b border-[var(--color-border)] flex items-start gap-3 shrink-0">
           <div className="flex-1 min-w-0">
             <h2 id="pk-title" className="font-display text-section font-semibold text-[var(--color-text)]">Package kit</h2>
             <p className="mt-0.5 text-body text-[var(--color-text-muted)]">Set up once, used by every project&apos;s work order packages.</p>
@@ -116,7 +110,7 @@ export default function PackageKitDialog({ orgId, kit, actorEmail, onClose, onSa
           <button type="button" onClick={onClose} aria-label="Close" className="-mr-2 w-9 h-9 pointer-coarse:w-11 pointer-coarse:h-11 inline-flex items-center justify-center rounded-lg hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="w-4 h-4" /></button>
         </div>
 
-        <div className="px-5 sm:px-6 py-4 grid gap-5 overflow-y-auto flex-1 min-h-0 content-start">
+        <div className="px-5 sm:px-6 py-4 grid gap-5 overflow-y-auto custom-scrollbar flex-1 min-h-0 content-start">
           {error && <ErrorNote title={error} />}
           {busy && <p role="status" className="text-body text-[var(--color-text-muted)]">{busy}…</p>}
 
@@ -168,8 +162,7 @@ export default function PackageKitDialog({ orgId, kit, actorEmail, onClose, onSa
           <Placer path={kit.toc.path} mode="region" initial={kit.toc.region ?? null} onCancel={() => setPlacing(null)}
             onSave={(region) => { setPlacing(null); void save("Saving the list area", (k) => (k.toc ? { ...k, toc: { ...k.toc, region: region as { x: number; y: number; w: number; h: number } } } : k)); }} />
         )}
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -275,9 +268,8 @@ function Placer({ path, mode, initial, onSave, onCancel }: {
   const region = corners.length === 2 ? { x: Math.round(Math.min(corners[0].x, corners[1].x)), y: Math.round(Math.min(corners[0].y, corners[1].y)), w: Math.round(Math.abs(corners[1].x - corners[0].x)), h: Math.round(Math.abs(corners[1].y - corners[0].y)) } : null;
 
   return (
-    <div role="dialog" aria-modal="true" aria-label={mode === "fields" ? "Place the cover's fields" : "Mark the list area"} className="fixed inset-0 z-[220] bg-[var(--color-ink)]/60 flex items-stretch sm:items-center justify-center sm:p-4">
-      <div className="ui-float w-full sm:max-w-3xl bg-[var(--color-surface)] sm:rounded-xl border border-[var(--color-border)] flex flex-col max-h-dvh">
-        <div className="px-5 pt-4 pb-3 border-b border-[var(--color-border)]">
+    <Modal onClose={onCancel} size="xl" label={mode === "fields" ? "Place the cover's fields" : "Mark the list area"}>
+        <div className="px-5 pt-4 pb-3 border-b border-[var(--color-border)] shrink-0">
           <h3 className="font-display text-section font-semibold text-[var(--color-text)]">{mode === "fields" ? "Where each goes on the cover" : "Where the list goes"}</h3>
           <p className="text-body text-[var(--color-text-muted)]">{mode === "fields" ? "Pick one, then click on the page where its text starts." : "Click the top-left corner of the list area, then the bottom-right."}</p>
           {mode === "fields" && (
@@ -305,14 +297,13 @@ function Placer({ path, mode, initial, onSave, onCancel }: {
             </div>
           )}
         </div>
-        <div className="px-5 py-3 border-t border-[var(--color-border)] flex items-center gap-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <div className="px-5 py-3 border-t border-[var(--color-border)] flex items-center gap-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] shrink-0">
           <Button variant="ghost" onClick={onCancel}>Cancel</Button>
           <span className="ml-auto" />
           <Button onClick={() => (mode === "fields" ? onSave(fields) : region && onSave(region))} disabled={mode === "fields" ? !fields.some((f) => f.key === "wo") : !region}>
             <Check className="w-4 h-4" /> Save
           </Button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

@@ -311,6 +311,29 @@ export function packageGroup(items: ScopeWO[], wo: string): ScopeWO[] {
   return realEquipment(x) ? items.filter((i) => i.equipment === x.equipment && i.category === x.category) : [x];
 }
 
+/** The project's packages: one per group (packageGroup), by its first work
+ *  order. */
+export function packageGroups(items: ScopeWO[]): Map<string, ScopeWO[]> {
+  const out = new Map<string, ScopeWO[]>();
+  for (const x of items) {
+    const g = packageGroup(items, x.wo);
+    if (!out.has(g[0].wo)) out.set(g[0].wo, g);
+  }
+  return out;
+}
+
+/** Packages counted as packages, not work orders: two work orders on one
+ *  exchanger are one package. Built: drafted from the kit or a file
+ *  attached; approved: every work order in it approved. */
+export function packageCounts(items: ScopeWO[]): { total: number; built: number; approved: number } {
+  const groups = [...packageGroups(items).values()];
+  return {
+    total: groups.length,
+    built: groups.filter((g) => g.some((x) => x.pkg || x.drafted)).length,
+    approved: groups.filter((g) => g.every((x) => x.approved)).length,
+  };
+}
+
 /** The scope against the schedule's work order numbers. */
 export function againstSchedule(items: ScopeWO[], scheduled: Iterable<string>, named: Iterable<string> = []): { on: ScopeWO[]; missing: ScopeWO[]; extra: string[] } {
   const sched = new Set([...scheduled].map(woKey).filter(Boolean));
