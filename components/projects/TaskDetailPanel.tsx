@@ -14,6 +14,9 @@ import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { spanLabel, startOf, finishOf, effectiveSpans } from "@/lib/scheduleTime";
 import { workShiftOf, calendarShift, hoursInSpan, type ShiftCredit } from "@/lib/shiftReport";
 import { useShiftTimes } from "@/lib/shiftTimesStore";
+import { useScopePackages } from "@/lib/scopeStore";
+import { inheritedWorkOrders } from "@/lib/workOrderCrew";
+import Link from "next/link";
 import DateTimePicker from "@/components/projects/DateTimePicker";
 import { fmtInTz, fromDateTimeInput, toDateTimeInput, tzAbbrev } from "@/lib/scheduleTz";
 import {
@@ -123,6 +126,10 @@ export default function TaskDetailPanel({
   const [err, setErr] = useState<string | null>(null);
   const failed = (e: unknown) => setErr(sayError(e, "That didn't save - try again."));
   const shiftTimes = useShiftTimes(milestone.projectId);
+  // Its work order (its own, or the job's above it) and that order's package.
+  const pkgs = useScopePackages(milestone.projectId);
+  const woHere = useMemo(() => milestone.workOrderRef?.trim() || (milestone.id && allTasks ? inheritedWorkOrders(allTasks).get(milestone.id) : "") || "", [milestone, allTasks]);
+  const pkgHere = woHere ? pkgs?.get(woHere) : undefined;
 
   const m = milestone;
   const isLeaf = subtasks.length === 0;
@@ -664,6 +671,11 @@ export default function TaskDetailPanel({
                 )}
                 {m.workOrderRef && (
                   <Field icon={<Hash className="w-3.5 h-3.5" />} label="Work order">{m.workOrderRef}</Field>
+                )}
+                {pkgHere && (
+                  <Field icon={<Hash className="w-3.5 h-3.5" />} label="Work package">
+                    <Link href={pkgHere.href} className="font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">{pkgHere.label}</Link>{!m.workOrderRef?.trim() && <span className="text-[var(--color-text-muted)]"> · WO {woHere}</span>}
+                  </Field>
                 )}
                 {m.id && (
                   <Field icon={<Wrench className="w-3.5 h-3.5" />} label="Equipment (work order)">

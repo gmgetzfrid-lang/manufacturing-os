@@ -14,24 +14,24 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Check, ChevronDown, FileSpreadsheet, FileText, Paperclip, Upload, Package, CalendarRange, Handshake } from "lucide-react";
-import { planningPath, type PathKey } from "@/lib/planningPath";
+import { Check, ChevronDown, FileSpreadsheet, FileText, Paperclip, Upload, Package, CalendarRange, Handshake, Pencil, X, RotateCcw, Plus } from "lucide-react";
+import { planningPath, scheduleMatch, type PathKey } from "@/lib/planningPath";
 import { Button } from "@/components/ui/Button";
 import { ErrorNote } from "@/components/ui/ErrorNote";
-import { appConfirm } from "@/components/providers/DialogProvider";
+import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
+import { cancelMilestone, restoreCancelledMilestone } from "@/lib/milestones";
+import { field as fieldCls } from "@/components/admin/kit";
 import { sayError } from "@/components/projects/sayError";
 import ProjectFilePlace, { useProjectFileHome } from "@/components/projects/ProjectFilePlace";
 import JobsScheduleDialog from "@/components/projects/setup/JobsScheduleDialog";
 import RfqDialog from "@/components/projects/setup/RfqDialog";
 import { uploadProjectFile } from "@/lib/projectUpload";
-import { againstSchedule, applyScope, byCategory, diffScope, isTypedItem, packageGroup, pickSheet, readScope, shared, typedItem, type ScopeDiff, type ScopeRead, type ScopeWO } from "@/lib/woIntake";
+import { applyScope, byCategory, diffScope, isTypedItem, packageGroup, pickSheet, readScope, shared, typedItem, woKey, type ScopeDiff, type ScopeRead, type ScopeWO, type WoOnSchedule } from "@/lib/woIntake";
 import { InlineAddRow, type AddField } from "@/components/ui/InlineAddRow";
-import { loadScope, readSheets, saveScope, scheduleFacts, LIST_ACCEPT, OPEN_SCHEDULE_IMPORT, TYPED_SOURCE, type ScopeState } from "@/lib/scopeStore";
+import { loadScope, readSheets, saveScope, scheduleFacts, LIST_ACCEPT, OPEN_SCHEDULE_IMPORT, TYPED_SOURCE, type RemovedWO, type ScheduleFacts, type ScopeChange, type ScopeState } from "@/lib/scopeStore";
 
 const SHOW = 6;
 const when = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-
-interface Facts { wos: string[]; crews: string[]; steps: number; awarded: number }
 
 export default function ScopeList({ orgId, projectId, projectName, uid, canManage, noSchedule, actorEmail, finish, tz }: {
   orgId: string; projectId: string; projectName: string; uid: string | null; canManage: boolean; noSchedule: boolean; actorEmail?: string;
@@ -41,7 +41,7 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
   finish?: string;
 }) {
   const [scope, setScope] = useState<ScopeState | null | undefined>(undefined);
-  const [facts, setFacts] = useState<Facts | null>(null);
+  const [facts, setFacts] = useState<ScheduleFacts | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [incoming, setIncoming] = useState<{ file: File; read: ScopeRead; diff: ScopeDiff } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -62,15 +62,19 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
   useEffect(() => { load(); }, [load]);
 
   const groups = useMemo(() => (scope ? byCategory(scope.items) : []), [scope]);
-  const vs = useMemo(() => (scope && facts && facts.wos.length ? againstSchedule(scope.items, facts.wos) : null), [scope, facts]);
+  const vs = useMemo(() => (scope ? scheduleMatch(scope.items, facts) : null), [scope, facts]);
 
   const save = async (next: ScopeState) => { await saveScope(projectId, next); setScope(next); };
 
   const apply = async (file: File, read: ScopeRead, diff?: ScopeDiff) => {
+    const at = new Date().toISOString();
     await save({
-      items: applyScope(scope?.items ?? [], read.items), coming: read.coming,
+      // Everything else stays: steps marked not needed, removed work, changes.
+      ...(scope ?? {}),
+      // Removed here stays removed; work added here stays; new work is dated.
+      items: applyScope(scope?.items ?? [], read.items, (scope?.removed ?? []).map((r) => r.wo), at), coming: read.coming,
       source: { file: file.name, sheet: read.sheet, headers: read.headers, map: read.map },
-      imports: [...(scope?.imports ?? []), { at: new Date().toISOString(), by: actorEmail, file: file.name, sheet: read.sheet, added: diff?.added.length ?? read.items.length, changed: diff?.changed.length ?? 0, dropped: diff?.dropped.length ?? 0 }],
+      imports: [...(scope?.imports ?? []), { at, by: actorEmail, file: file.name, sheet: read.sheet, added: diff?.added.length ?? read.items.length, changed: diff?.changed.length ?? 0, dropped: diff?.dropped.length ?? 0 }],
       rfqs: scope?.rfqs ?? [],
     });
     setIncoming(null);
@@ -88,7 +92,7 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
       const read = readScope(sheet, sameLayout ? scope!.source.map : undefined);
       if (!read.items.length) throw new Error("No work order numbers found in it. Check it's the work order list.");
       if (!scope) { await apply(f, read); return; }
-      setIncoming({ file: f, read, diff: diffScope(scope.items, read.items) });
+      setIncoming({ file: f, read, diff: diffScope(scope.items, read.items, (scope.removed ?? []).map((r) => r.wo)) });
     } catch (e) {
       setError(sayError(e));
     } finally { setBusy(false); }
@@ -135,13 +139,92 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
 
   // ── Work typed in (no list, or a job that came in later) ──
   const blankScope = (): ScopeState => ({ items: [], coming: [], source: TYPED_SOURCE, imports: [] });
-  const addTyped = async (vals: Array<{ what: string; equipment?: string; wo?: string; group?: string }>) => {
+  const log = (base: ScopeState, ...c: Array<Omit<ScopeChange, "at" | "by">>): ScopeChange[] => {
+    const at = new Date().toISOString();
+    return [...(base.changes ?? []), ...c.map((x) => ({ ...x, at, by: actorEmail }))];
+  };
+  const addTyped = async (vals: Array<{ what: string; equipment?: string; wo?: string; group?: string }>, why?: string) => {
     const base = scope ?? blankScope();
+    const at = new Date().toISOString();
     let items = base.items;
-    for (const v of vals) if (v.what?.trim()) items = [...items, typedItem(v, items)];
-    if (items.length === base.items.length) return "Say what the work is.";
-    try { await save({ ...base, items }); return { ok: true, text: `Added ${items.length - base.items.length}.` }; }
-    catch (e) { return { ok: false, text: sayError(e) }; }
+    const skipped: string[] = [];
+    for (const v of vals) {
+      if (!v.what?.trim()) continue;
+      // One work order is on the scope once.
+      const k = woKey(v.wo);
+      if (k && items.some((x) => x.wo === k)) { skipped.push(`WO ${k} is already in the scope`); continue; }
+      if (k && (base.removed ?? []).some((r) => r.wo === k)) { skipped.push(`WO ${k} was removed (put it back under Removed)`); continue; }
+      items = [...items, { ...typedItem(v, items), addedAt: at }];
+    }
+    const added = items.slice(base.items.length);
+    if (!added.length) return skipped.length ? `${skipped.join(". ")}.` : "Say what the work is.";
+    try {
+      await save({ ...base, items, changes: log(base, ...added.map((x) => ({ kind: "added" as const, wo: x.wo, what: x.what, ...(why ? { why } : {}) }))) });
+      return { ok: true, text: `Added ${added.length}.${skipped.length ? ` ${skipped.join(". ")}.` : ""}` };
+    } catch (e) { return { ok: false, text: sayError(e) }; }
+  };
+
+  // ── Changing the scope: remove (with why), put back, edit ──
+  const nameOf = (x: ScopeWO) => (isTypedItem(x.wo) ? `"${x.what.length > 36 ? `${x.what.slice(0, 35)}...` : x.what}"` : `WO ${x.wo}`);
+  const remove = async (x: ScopeWO) => {
+    if (!scope || !uid) return;
+    const on = facts?.byWo[x.wo];
+    const live = on && !on.cancelled && on.steps > 0;
+    // Its steps come off the schedule with it, unless they sit under a job
+    // with other work orders (that's cancelled on the Work tab).
+    const cancel = live && !on.mixed ? on.owners : [];
+    const name = nameOf(x);
+    const why = await appPrompt({
+      title: `Remove ${name} from the scope?`,
+      message: [
+        cancel.length ? `Its ${on!.steps} step${on!.steps === 1 ? "" : "s"} on the schedule ${on!.steps === 1 ? "is" : "are"} cancelled with it.` : live ? "It's on the schedule under a job with other work orders: cancel its steps on the Work tab." : "",
+        x.pkg ? "Its package stays in document control." : "",
+        "You can put it back.",
+      ].filter(Boolean).join(" "),
+      placeholder: "Why (kept with the scope's changes)",
+      confirmLabel: `Remove ${name}`, tone: "danger",
+    });
+    if (why === null) return;
+    if (!why.trim()) { setError("Say why it's removed: it's kept with the scope's changes."); return; }
+    setError(null);
+    try {
+      for (const id of cancel) await cancelMilestone({ id, note: `Removed from the scope: ${why.trim()}`, movedTo: "", actorUserId: uid, actorUserEmail: actorEmail });
+      const gone: RemovedWO = { ...x, removedAt: new Date().toISOString(), removedBy: actorEmail, why: why.trim(), ...(cancel.length ? { cancelledIds: cancel } : {}) };
+      await save({ ...scope, items: scope.items.filter((y) => y.wo !== x.wo), removed: [...(scope.removed ?? []), gone], changes: log(scope, { kind: "removed", wo: x.wo, what: x.what, why: why.trim() }) });
+      if (cancel.length) { window.dispatchEvent(new CustomEvent("schedule:changed")); load(); }
+    } catch (e) { setError(sayError(e)); }
+  };
+  const putBack = async (r: RemovedWO) => {
+    if (!scope || !uid) return;
+    setError(null);
+    try {
+      for (const id of r.cancelledIds ?? []) await restoreCancelledMilestone({ id, actorUserId: uid, actorUserEmail: actorEmail });
+      const { removedAt, removedBy, why, cancelledIds, ...item } = r;
+      await save({ ...scope, items: [...scope.items, item], removed: (scope.removed ?? []).filter((y) => y.wo !== r.wo), changes: log(scope, { kind: "put back", wo: r.wo, what: r.what }) });
+      if (r.cancelledIds?.length) { window.dispatchEvent(new CustomEvent("schedule:changed")); load(); }
+    } catch (e) { setError(sayError(e)); }
+  };
+  const saveEdit = async (x: ScopeWO, v: { what: string; equipment: string; wo: string }): Promise<string | null> => {
+    if (!scope) return "The scope isn't loaded.";
+    if (!v.what.trim()) return "Say what the work is.";
+    // A job typed in without a number can be given its work order number.
+    const k = woKey(v.wo);
+    const wo = isTypedItem(x.wo) && k ? k : x.wo;
+    if (wo !== x.wo && (scope.items.some((y) => y.wo === wo) || (scope.removed ?? []).some((y) => y.wo === wo))) return `WO ${wo} is already on the scope's record.`;
+    const eqChanged = v.equipment.trim() !== x.equipment;
+    const t = typedItem({ what: v.what, equipment: v.equipment }, []);
+    const next: ScopeWO = { ...x, wo, what: t.what, ...(eqChanged ? { equipment: t.equipment, tag: t.tag, equipmentName: t.equipmentName } : {}) };
+    const fields = [next.what !== x.what ? "description" : "", eqChanged ? "equipment" : "", wo !== x.wo ? "WO number" : ""].filter(Boolean);
+    if (!fields.length) return null;
+    try {
+      await save({ ...scope, items: scope.items.map((y) => (y.wo === x.wo ? next : y)), changes: log(scope, { kind: "edited", wo, what: next.what, why: `${fields.join(", ")} changed` }) });
+      return null;
+    } catch (e) { return sayError(e); }
+  };
+  // On the schedule, not in the list: into the scope in one go.
+  const addFromSchedule = async (wos: string[]) => {
+    const r = await addTyped(wos.map((w) => ({ what: facts?.byWo[w]?.name || `WO ${w}`, wo: w, group: "From the schedule" })), "On the schedule, not in the list");
+    if (typeof r === "string") setError(r); else if (!r.ok) setError(r.text);
   };
   const ADD_FIELDS: AddField[] = [
     { key: "what", label: "What the work is", placeholder: "e.g. Replace the 6\" gate valve", required: true },
@@ -175,6 +258,12 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
   const rfqs = sc.rfqs ?? [];
   const firstWithout = sc.items.find((x) => !x.pkg && !x.drafted);
   const onSched = new Set(vs?.on.map((x) => x.wo) ?? []);
+  // Scope growth: what changed after the first RFQ went out.
+  const since = rfqs[0]?.at;
+  const addedSince = since ? sc.items.filter((x) => x.addedAt && x.addedAt > since).length : 0;
+  const removedSince = since ? (sc.removed ?? []).filter((r) => r.removedAt > since).length : 0;
+  const removed = sc.removed ?? [];
+  const changes = sc.changes ?? [];
 
   // The planning path (lib/planningPath): where each step stands; the
   // first one not done is next. Here, what each step's button does.
@@ -277,6 +366,8 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
           {conditional > 0 && <Metric label="Depend on inspection" value={String(conditional)} />}
           {many > 0 && <Metric label={`Pieces with 2+ ${jobWord.startsWith("work") ? "WOs" : "jobs"}`} value={String(many)} />}
           {scope.coming.length > 0 && <Metric label="Still adding scope" value={String(scope.coming.length)} />}
+          {addedSince > 0 && <Metric label="Added since the RFQ" value={String(addedSince)} />}
+          {removedSince > 0 && <Metric label="Removed since the RFQ" value={String(removedSince)} />}
         </div>
 
         {incoming && (
@@ -286,6 +377,8 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
             <DiffList title="New" rows={incoming.diff.added.map((x) => ({ wo: x.wo, text: x.what }))} />
             <DiffList title="Changed" rows={incoming.diff.changed.map((c) => ({ wo: c.after.wo, text: `${c.after.what} (${c.fields.map((f) => (f === "what" ? "description" : f)).join(", ")} changed)` }))} />
             <DiffList title="Dropped" rows={incoming.diff.dropped.map((x) => ({ wo: x.wo, text: `${x.what}${x.pkg ? " · has a package" : ""}` }))} tone="warn" />
+            {!!incoming.diff.stillRemoved?.length && <p className="text-body text-[var(--color-text-muted)]">Still in the list, removed here (they stay removed): {incoming.diff.stillRemoved.map((x) => x.wo).join(", ")}</p>}
+            <p className="text-caption text-[var(--color-text-muted)]">Work added on this page isn&apos;t in the file, so it stays.</p>
             <div className="flex flex-wrap justify-end gap-2">
               <Button variant="secondary" onClick={() => setIncoming(null)} disabled={busy}>Cancel</Button>
               <Button onClick={() => void confirmApply()} loading={busy}>Apply the changes</Button>
@@ -297,8 +390,9 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
         {vs && (vs.missing.length > 0 || vs.extra.length > 0) && (
           <div className="mx-5 mb-4 rounded-md bg-[color-mix(in_srgb,var(--state-held)_12%,transparent)] px-3 py-2.5 grid gap-1">
             <div className="text-body font-semibold text-[var(--state-held-text)]">The schedule and the list don&apos;t match</div>
-            {vs.missing.length > 0 && <p className="text-body text-[var(--color-text)]"><b>{vs.missing.length}</b> in the list, not on the schedule: {vs.missing.slice(0, 8).map((x) => x.wo).join(", ")}{vs.missing.length > 8 ? ` + ${vs.missing.length - 8} more` : ""}</p>}
+            {vs.missing.length > 0 && <p className="text-body text-[var(--color-text)]"><b>{vs.missing.length}</b> in the list, not on the schedule: {vs.missing.slice(0, 8).map((x) => x.wo).join(", ")}{vs.missing.length > 8 ? ` + ${vs.missing.length - 8} more` : ""}. {vs.missing.length === 1 ? "Add it to the schedule, or remove it below if it isn't being done." : "Add them to the schedule, or remove them below if they aren't being done."}</p>}
             {vs.extra.length > 0 && <p className="text-body text-[var(--color-text)]"><b>{vs.extra.length}</b> on the schedule, not in the list: {vs.extra.slice(0, 8).join(", ")}{vs.extra.length > 8 ? ` + ${vs.extra.length - 8} more` : ""}</p>}
+            {vs.extra.length > 0 && canManage && <Button variant="secondary" className="mt-1 justify-self-start" onClick={() => void addFromSchedule(vs.extra)}><Plus className="w-4 h-4" /> Add {vs.extra.length === 1 ? "it" : `these ${vs.extra.length}`} to the scope</Button>}
           </div>
         )}
         {vs && !vs.missing.length && !vs.extra.length && (
@@ -325,7 +419,8 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
                 </div>
                 <ul>
                   {rows.map((x) => <WoRow key={x.wo} x={x} items={scope.items} canManage={canManage} busy={attaching === x.wo} offSchedule={!!vs && !isTypedItem(x.wo) && !onSched.has(x.wo)} noPkg={!!sc.skipped?.includes("pkg")}
-                    onAttach={() => pickPackage(x.wo)} onApprove={() => void approve(x.wo)} />)}
+                    sched={facts?.byWo[x.wo]} late={!!since && !!x.addedAt && x.addedAt > since}
+                    onAttach={() => pickPackage(x.wo)} onApprove={() => void approve(x.wo)} onRemove={() => void remove(x)} onSave={(v) => saveEdit(x, v)} />)}
                 </ul>
                 {g.items.length > SHOW && (
                   <button type="button" onClick={() => setOpen((o) => ({ ...o, [g.category]: !isOpen }))} aria-expanded={isOpen}
@@ -337,6 +432,40 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
             );
           })}
         </div>
+        {/* Taken off the scope, with why: each can be put back. */}
+        {removed.length > 0 && (
+          <details className="border-t border-[var(--color-border)] group">
+            <summary className="px-5 min-h-11 flex items-center gap-1.5 cursor-pointer text-body font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+              <ChevronDown aria-hidden className="ui-chevron w-4 h-4 -rotate-90 group-open:rotate-0" />Removed <span className="font-normal text-[var(--color-text-muted)] tabular-nums">· {removed.length}</span>
+            </summary>
+            <ul>
+              {removed.map((r) => (
+                <li key={r.wo} className="px-5 py-2.5 border-t border-[var(--color-border)] flex flex-wrap sm:flex-nowrap items-start gap-x-4 gap-y-1.5">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-body text-[var(--color-text)] break-words">{!isTypedItem(r.wo) && <span className="ui-id mr-1.5">WO {r.wo}</span>}{r.what}</div>
+                    <div className="text-caption text-[var(--color-text-muted)] break-words">Removed {when(r.removedAt)}{r.removedBy ? ` by ${r.removedBy}` : ""}: {r.why}{r.cancelledIds?.length ? ". Its schedule steps were cancelled." : ""}</div>
+                  </div>
+                  {canManage && <button type="button" onClick={() => void putBack(r)} className="shrink-0 inline-flex items-center gap-1 min-h-9 pointer-coarse:min-h-11 px-2 rounded-md border border-[var(--color-border-strong)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]"><RotateCcw aria-hidden className="w-3.5 h-3.5" />Put back{r.cancelledIds?.length ? " (and its steps)" : ""}</button>}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+        {/* Every change made here, with who, when and why. */}
+        {changes.length > 0 && (
+          <details className="border-t border-[var(--color-border)] group">
+            <summary className="px-5 min-h-11 flex items-center gap-1.5 cursor-pointer text-body font-semibold text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">
+              <ChevronDown aria-hidden className="ui-chevron w-4 h-4 -rotate-90 group-open:rotate-0" />Changes <span className="font-normal text-[var(--color-text-muted)] tabular-nums">· {changes.length}</span>
+            </summary>
+            <ul className="px-5 pb-3">
+              {[...changes].reverse().slice(0, 40).map((c, i) => (
+                <li key={i} className="py-1.5 border-t border-[var(--color-border)] first:border-t-0 text-body text-[var(--color-text)] break-words">
+                  <span className="text-[var(--color-text-muted)] tabular-nums">{when(c.at)}</span> · <b className="font-medium">{c.kind === "put back" ? "Put back" : c.kind[0].toUpperCase() + c.kind.slice(1)}</b> {isTypedItem(c.wo) ? `"${c.what}"` : `WO ${c.wo}`}{c.why ? `: ${c.why}` : ""}{c.by ? <span className="text-[var(--color-text-muted)]"> · {c.by}</span> : null}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
         {/* A job that came in later, typed in here. */}
         {canManage && (
           <div className="px-5 py-4 border-t border-[var(--color-border)]">
@@ -361,12 +490,23 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
 }
 
 /** One work order: what and where, its number, and its package. */
-function WoRow({ x, items, canManage, busy, offSchedule, noPkg, onAttach, onApprove }: {
+function WoRow({ x, items, canManage, busy, offSchedule, noPkg, sched, late, onAttach, onApprove, onRemove, onSave }: {
   x: ScopeWO; items: ScopeWO[]; canManage: boolean; busy: boolean; offSchedule: boolean;
   /** Packages marked not needed for this job: no package asks on the row. */
-  noPkg: boolean; onAttach: () => void; onApprove: () => void;
+  noPkg: boolean;
+  /** Its steps on the schedule, once there is one. */
+  sched?: WoOnSchedule;
+  /** Added after the RFQ went out (scope growth). */
+  late: boolean;
+  onAttach: () => void; onApprove: () => void; onRemove: () => void;
+  onSave: (v: { what: string; equipment: string; wo: string }) => Promise<string | null>;
 }) {
+  const [edit, setEdit] = useState<{ what: string; equipment: string; wo: string } | null>(null);
+  const [editErr, setEditErr] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const group = packageGroup(items, x.wo);
+  // Where it stands on the schedule, in words.
+  const schedSaid = !sched ? "" : sched.cancelled ? "Cancelled on the schedule" : !sched.steps ? "" : sched.done === sched.steps ? "Done on the schedule" : `On the schedule: ${sched.done} of ${sched.steps} step${sched.steps === 1 ? "" : "s"} done`;
   const ask = /need|add .*drawing|missing/i.test(x.notes);
   const noteShown = x.notes && !(x.conditional && /inspect for clean/i.test(x.notes)) ? x.notes : "";
   return (
@@ -374,11 +514,31 @@ function WoRow({ x, items, canManage, busy, offSchedule, noPkg, onAttach, onAppr
       <div className="min-w-0 flex-1">
         <div className="text-body font-medium text-[var(--color-text)] break-words">{x.tag && <span className="ui-id mr-1.5">{x.tag}</span>}{x.equipmentName || (x.tag ? "" : x.equipment)}</div>
         <div className="text-body text-[var(--color-text)] break-words">{x.what}</div>
-        {(noteShown || x.conditional || offSchedule) && (
+        {(noteShown || x.conditional || offSchedule || late) && (
           <div className="text-caption break-words text-[var(--color-text-muted)]">
-            {[x.conditional ? "Depends on inspection" : "", offSchedule ? "Not on the schedule" : ""].filter(Boolean).map((t) => <span key={t} className="mr-2 font-medium text-[var(--state-held-text)]">{t}</span>)}
+            {[x.conditional ? "Depends on inspection" : "", offSchedule ? "Not on the schedule" : "", late && x.addedAt ? `Added ${new Date(x.addedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}, after the RFQ` : ""].filter(Boolean).map((t) => <span key={t} className="mr-2 font-medium text-[var(--state-held-text)]">{t}</span>)}
             {noteShown && <span className={ask ? "font-medium text-[var(--state-held-text)]" : ""}>{noteShown}</span>}
           </div>
+        )}
+        {schedSaid && <div className={`text-caption ${sched?.cancelled ? "text-[var(--state-held-text)] font-medium" : sched && sched.done === sched.steps ? "text-[var(--state-released-text)] font-medium" : "text-[var(--color-text-muted)]"}`}>{schedSaid}</div>}
+        {canManage && !edit && (
+          <div className="flex flex-wrap gap-x-1">
+            <button type="button" onClick={() => { setEditErr(null); setEdit({ what: x.what, equipment: x.equipment, wo: isTypedItem(x.wo) ? "" : x.wo }); }} className="-ml-1 inline-flex items-center gap-1 min-h-9 pointer-coarse:min-h-11 px-1 text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><Pencil aria-hidden className="w-3.5 h-3.5" />Edit</button>
+            <button type="button" onClick={onRemove} className="inline-flex items-center gap-1 min-h-9 pointer-coarse:min-h-11 px-1 text-caption font-medium text-[var(--color-text-muted)] hover:text-[var(--state-overdue-text)]"><X aria-hidden className="w-3.5 h-3.5" />Remove</button>
+          </div>
+        )}
+        {edit && (
+          <form className="mt-2 grid gap-2 sm:grid-cols-[1fr_10rem_9rem] items-end" onSubmit={(e) => { e.preventDefault(); setSaving(true); void onSave(edit).then((err) => { setSaving(false); if (err) setEditErr(err); else setEdit(null); }); }}>
+            <label className="grid gap-1 text-caption text-[var(--color-text-muted)]">What the work is<input value={edit.what} onChange={(e) => setEdit({ ...edit, what: e.target.value })} className={fieldCls} /></label>
+            <label className="grid gap-1 text-caption text-[var(--color-text-muted)]">Equipment<input value={edit.equipment} onChange={(e) => setEdit({ ...edit, equipment: e.target.value })} className={fieldCls} /></label>
+            <label className="grid gap-1 text-caption text-[var(--color-text-muted)]">WO number<input value={edit.wo} disabled={!isTypedItem(x.wo)} placeholder="If it has one" onChange={(e) => setEdit({ ...edit, wo: e.target.value })} className={`${fieldCls} disabled:opacity-60`} /></label>
+            <div className="sm:col-span-3 flex flex-wrap items-center gap-2">
+              <Button type="submit" variant="secondary" loading={saving}>Save</Button>
+              <Button type="button" variant="ghost" onClick={() => setEdit(null)}>Cancel</Button>
+              {!x.typed && <span className="text-caption text-[var(--color-text-muted)]">The next import of the list puts back what the list says.</span>}
+            </div>
+            {editErr && <p className="sm:col-span-3 text-body font-medium text-[var(--state-overdue-text)]">{editErr}</p>}
+          </form>
         )}
       </div>
       <div className="sm:text-right shrink-0 grid gap-1 sm:justify-items-end text-caption text-[var(--color-text-muted)]">

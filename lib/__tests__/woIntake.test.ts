@@ -206,3 +206,57 @@ describe("a schedule made from the jobs (no schedule file)", () => {
     expect(p.steps[2].state).toBe("On the Schedule tab");
   });
 });
+
+describe("the scope is one record with the schedule", () => {
+  it("work added in the app survives a new import of the list; removed work stays removed; new work is dated", () => {
+    const before = readScope(approved).items;
+    const typed = { ...before[0], wo: "item-1", what: "Swap seal", typed: true };
+    const removedWo = before[3].wo;
+    const after = [before[0], before[1], before[2], before[3], { ...before[2], wo: "400150", what: "New: replace valve" }];
+    const d = diffScope([...before.slice(0, 3), typed], after, [removedWo]);
+    expect(d.dropped).toEqual([]);
+    expect(d.added.map((x) => x.wo)).toEqual(["400150"]);
+    expect(d.stillRemoved?.map((x) => x.wo)).toEqual([removedWo]);
+    const kept = applyScope([...before.slice(0, 3), typed], after, [removedWo], "2027-02-01T00:00:00Z");
+    expect(kept.map((x) => x.wo)).toEqual(["400101", "400102", "400103", "400150", "item-1"]);
+    expect(kept.find((x) => x.wo === "400150")?.addedAt).toBe("2027-02-01T00:00:00Z");
+    expect(kept.find((x) => x.wo === "400101")?.addedAt).toBeUndefined();
+  });
+
+  it("a work order number reads the same however it's written, and a number in a step's name counts as on the schedule", async () => {
+    const { woKey, againstSchedule } = await import("@/lib/woIntake");
+    expect(["WO 400101", "W/O# 400101", "wo#: 400101", " 400101 "].map(woKey)).toEqual(["400101", "400101", "400101", "400101"]);
+    const v = againstSchedule(readScope(approved).items, ["WO 400101"], ["400103"]);
+    expect(v.on.map((x) => x.wo)).toEqual(["400101", "400103"]);
+    expect(v.extra).toEqual([]);
+  });
+
+  it("each work order on the schedule: from its WO column, a custom WO field, or the job above it; its steps done; cancelled", async () => {
+    const { scheduleByWo } = await import("@/lib/woIntake");
+    const rows = [
+      { id: "a", name: "X-1 Overhead Cooler", parent_id: null, work_order_ref: "400101" },
+      { id: "a1", name: "Pull bundle", parent_id: "a", work_order_ref: null, status: "completed", percent_complete: 100 },
+      { id: "a2", name: "Hydroblast", parent_id: "a", work_order_ref: null, status: "in_progress", percent_complete: 40 },
+      { id: "b", name: "V-4 Tower", parent_id: null, work_order_ref: null, attributes: { "WO#": "400103" } },
+      { id: "b1", name: "Open manways", parent_id: "b", work_order_ref: null, cancelled_at: "2027-03-01" },
+      { id: "c", name: "Unit 9 area", parent_id: null, work_order_ref: "400104" },
+      { id: "c1", name: "Other order", parent_id: "c", work_order_ref: "400105" },
+      { id: "d", name: "400102 Coat channel", parent_id: null, work_order_ref: null },
+    ];
+    const { byWo, named } = scheduleByWo(rows);
+    expect(byWo["400101"]).toMatchObject({ name: "X-1 Overhead Cooler", steps: 2, done: 1, started: 2, cancelled: false, owners: ["a"] });
+    expect(byWo["400103"]).toMatchObject({ steps: 0, cancelled: true, owners: ["b"] });
+    // Cancelling 400104's row would take 400105 off too.
+    expect(byWo["400104"].mixed).toBe(true);
+    expect(byWo["400105"].mixed).toBeUndefined();
+    expect(named).toContain("400102");
+  });
+
+  it("after the schedule is in, the path asks to match it to the list while work orders are missing", async () => {
+    const { planningPath } = await import("@/lib/planningPath");
+    const r = readScope(approved);
+    const scope = { items: r.items.map((x) => ({ ...x, approved: true })), coming: [], source: { file: "x.xlsx", sheet: r.sheet, headers: r.headers, map: r.map }, imports: [] };
+    const p = planningPath(scope, { wos: ["400101"], named: ["400102"], steps: 5, awarded: 0 });
+    expect(p.steps[p.next]).toMatchObject({ key: "sched", ask: "match the schedule to the list", state: "2 of 4 work orders on it, 2 missing" });
+  });
+});

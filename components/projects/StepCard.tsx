@@ -8,7 +8,9 @@
 // few things that happened sit underneath.
 
 import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Play, Check, Trash2, Pencil, Loader2, CalendarRange, Plus, CircleAlert } from "lucide-react";
+import { ChevronLeft, ChevronRight, Play, Check, Trash2, Pencil, Loader2, CalendarRange, Plus, CircleAlert, FileText } from "lucide-react";
+import Link from "next/link";
+import { useScopePackages } from "@/lib/scopeStore";
 import MoreMenu from "@/components/ui/MoreMenu";
 import type { Milestone, MilestoneNote, MilestoneStatus } from "@/types/schema";
 import { shiftAt, workHours, type ShiftTimes } from "@/lib/shiftReport";
@@ -129,6 +131,7 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
 }) {
   // Always with its date — a multi-week job has more than one Monday.
   const when = (t: number) => whenDated(t, tz);
+  const pkgs = useScopePackages(m.projectId);
 
   const ps = startMsOf(m), pf = finishMsOf(m);
   const found = discoveryOf(m);
@@ -707,6 +710,8 @@ export default function StepCard({ m, wo, pct, hours, rows, notes, tz, times, no
       {/* What it is and when, as labeled cells: plan against actual. */}
       <dl className="flex flex-wrap gap-x-8 gap-y-2">
         {wo && <div><dt className="text-body text-[var(--color-text-muted)]">Work order</dt><dd className="ui-id">WO {wo}</dd></div>}
+        {/* Its work package, from the scope (lib/scopeStore), where the work is done. */}
+        {wo && pkgs?.get(wo) && <div><dt className="text-body text-[var(--color-text-muted)]">Work package</dt><dd><Link href={pkgs.get(wo)!.href} className="inline-flex items-center gap-1 min-h-9 pointer-coarse:min-h-11 text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2"><FileText aria-hidden className="w-3.5 h-3.5" />{pkgs.get(wo)!.label}</Link></dd></div>}
         <div><dt className="text-body text-[var(--color-text-muted)]">Crew</dt><dd className="text-[var(--color-text)]">{planned ? <span className="ui-tag">{planned}</span> : "-"}
           {m.actualParty?.trim() && m.actualParty.trim() !== planned && <div className="text-body font-medium">done by {m.actualParty.trim()}</div>}</dd></div>
         <div><dt className="text-body text-[var(--color-text-muted)]">Hours</dt><dd className="font-display tabular-nums text-[var(--color-text)]">{allotted} h</dd></div>

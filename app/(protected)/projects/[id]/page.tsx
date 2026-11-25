@@ -504,7 +504,9 @@ function ProjectDetail() {
 
   // A project in planning (no schedule yet): where its scope stands, from the
   // work order list (lib/scopeStore), for the header.
-  const unscheduled0 = !!stepRows && !!standings && standings.every((s) => s.state === "no schedule");
+  // Read until the work starts: an imported schedule doesn't end planning
+  // (the RFQ and the award can still be ahead).
+  const unscheduled0 = !!stepRows && !!standings && standings.every((s) => s.state === "no schedule" || s.state === "not started");
   const [planning, setPlanning] = useState<{ wos: number; withPkg: number; pkgSkipped: boolean; next: PathStep | null; step: number; after: string[] } | null>(null);
   // Read again when the scope is saved on the Plan tab (lib/scopeStore).
   const [scopeRev, setScopeRev] = useState(0);
@@ -589,12 +591,13 @@ function ProjectDetail() {
   else if (project.status === "archived") answer = "Archived.";
   else if (project.status === "completed") { answer = workDone ? "Project complete." : "Marked complete."; facts = [finishFact(true), stepsFact]; }
   else if (!standings || !stepRows) answer = project.name;
-  else if (noSchedule && planning) {
+  else if (planning && (noSchedule || (planning.next && planning.wos > 0 && !running && upcoming))) {
     // Planning from the work order list: the one next step as the answer
     // (lib/planningPath), its own number big, what follows it said after.
     const nx = planning.next;
     answer = nx ? `Next: ${nx.ask ?? NEXT_WORDS[nx.key]}.` : "Planning is done.";
-    sub = nx ? `${nx.state}.${planning.after.length ? ` Then ${planning.after.join(", ")}.` : " Then the work."}` : "Next: the work, a shift report every shift.";
+    const starts = !noSchedule && upcoming?.plannedStart ? ` The work starts ${when(upcoming.plannedStart).split(",").slice(0, 2).join(",")}.` : "";
+    sub = nx ? `${nx.state}.${planning.after.length ? ` Then ${planning.after.join(", ")}.` : starts ? "" : " Then the work."}${starts}` : "Next: the work, a shift report every shift.";
     facts = !planning.wos ? [] : planning.pkgSkipped ? [{ label: "Jobs", value: planning.wos, hero: true }]
       : [{ label: "Packages attached", value: `${planning.withPkg} of ${planning.wos}`, tone: planning.withPkg < planning.wos ? "warn" : undefined, hero: true },
         { label: "Jobs", value: planning.wos }];
@@ -678,7 +681,7 @@ function ProjectDetail() {
   const closeNote = project.status === "completed" ? "Complete" : close ? (close.open.length ? <><span className="max-sm:hidden">{close.open[0].name}</span><span className="sm:hidden">{close.open.length} left</span></> : "Ready to close") : workDone ? "Next" : "After the work";
   const lineSteps = standings ? [
     // A project in planning: planning is where it is, before the work.
-    ...(noSchedule && planning ? [{ label: "Planning", state: (planning.next ? "now" : "done") as "done" | "now" | "next", note: planning.next ? `Step ${planning.step} of 5: ${planning.next.name}` : "Done", short: planning.next ? planning.next.name : "Done" }] : []),
+    ...(planning && (noSchedule || (planning.next && planning.wos > 0 && !running && upcoming)) ? [{ label: "Planning", state: (planning.next ? "now" : "done") as "done" | "now" | "next", note: planning.next ? `Step ${planning.step} of 5: ${planning.next.name}` : "Done", short: planning.next ? planning.next.name : "Done" }] : []),
     ...bandSteps, { label: "Close-out", state: (project.status === "completed" ? "done" : workDone ? "now" : "next") as "done" | "now" | "next", note: closeNote, short: closeNote }] : null;
 
   // The one orange action: what's next for the project, unless the tab
@@ -689,7 +692,7 @@ function ProjectDetail() {
       : project.status === "paused" ? { label: "Resume project", tab: "closeout", run: () => setPendingStatus("active") }
       : !standings ? null
       // Planning from the work order list: its next step, on the Plan tab.
-      : noSchedule && planning?.next ? { label: (planning.next.ask ?? NEXT_WORDS[planning.next.key]).replace(/^\w/, (c) => c.toUpperCase()), tab: "plan", run: () => goTab("plan") }
+      : planning?.next && (noSchedule || (planning.wos > 0 && !running && upcoming)) ? { label: (planning.next.ask ?? NEXT_WORDS[planning.next.key]).replace(/^\w/, (c) => c.toUpperCase()), tab: "plan", run: () => goTab("plan") }
       : noSchedule ? { label: "Import the schedule", tab: "plan", run: () => goTab("plan") }
         : workDone ? (close && close.open.length === 0 ? { label: "Mark complete", tab: "closeout", run: () => setPendingStatus("completed") } : { label: "Finish close-out", tab: "closeout", run: () => goTab("closeout") })
           : state?.scheduledDone && unscheduled.length ? { label: `Import ${unscheduled[0].name}'s schedule`, tab: "plan", run: () => { setPhase(unscheduled[0].id); goTab("plan"); } }

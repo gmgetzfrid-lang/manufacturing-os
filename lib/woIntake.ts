@@ -46,6 +46,11 @@ export interface ScopeWO {
   pkg?: ScopePackage;
   approvedBy?: string;
   approvedAt?: string;
+  /** Added in the app (typed in, or taken from the schedule), not from the
+   *  list file: a new import of the list keeps it. */
+  typed?: boolean;
+  /** When it joined the scope, after the first list (scope growth). */
+  addedAt?: string;
 }
 
 export interface ScopePackage { documentId: string; label: string; href: string; at: string; by?: string }
@@ -244,6 +249,8 @@ export function shared(items: ScopeWO[]): Array<{ equipment: string; tag: string
 }
 
 export interface ScopeDiff {
+  /** Removed in the app and still in the list: they stay removed. */
+  stillRemoved?: ScopeWO[];
   added: ScopeWO[];
   changed: Array<{ before: ScopeWO; after: ScopeWO; fields: Array<"what" | "equipment" | "category" | "notes"> }>;
   dropped: ScopeWO[];
@@ -251,11 +258,14 @@ export interface ScopeDiff {
 }
 
 /** The new list against the one the project has, by work order number. */
-export function diffScope(before: ScopeWO[], after: ScopeWO[]): ScopeDiff {
+export function diffScope(before: ScopeWO[], after: ScopeWO[], removed: Iterable<string> = []): ScopeDiff {
   const old = new Map(before.map((x) => [x.wo, x]));
   const now = new Map(after.map((x) => [x.wo, x]));
-  const added = after.filter((x) => !old.has(x.wo));
-  const dropped = before.filter((x) => !now.has(x.wo));
+  const gone = new Set(removed);
+  const added = after.filter((x) => !old.has(x.wo) && !gone.has(x.wo));
+  // Work added in the app isn't in the list file: it isn't dropped.
+  const dropped = before.filter((x) => !now.has(x.wo) && !x.typed);
+  const stillRemoved = after.filter((x) => gone.has(x.wo));
   const changed: ScopeDiff["changed"] = [];
   let same = 0;
   for (const a of after) {
@@ -265,19 +275,28 @@ export function diffScope(before: ScopeWO[], after: ScopeWO[]): ScopeDiff {
     if (fields.length) changed.push({ before: b, after: a, fields: [...fields] });
     else same++;
   }
-  return { added, changed, dropped, same };
+  return { added, changed, dropped, same, ...(stillRemoved.length ? { stillRemoved } : {}) };
 }
 
 /** The list after an import is applied: the new rows; a work order the
  *  project already had keeps its package progress (drafted / approved
  *  set in the app stays set). */
-export function applyScope(before: ScopeWO[], after: ScopeWO[]): ScopeWO[] {
+export function applyScope(before: ScopeWO[], after: ScopeWO[], removed: Iterable<string> = [], at?: string): ScopeWO[] {
   const old = new Map(before.map((x) => [x.wo, x]));
-  return after.map((a) => {
+  const gone = new Set(removed);
+  const now = new Set(after.map((x) => x.wo));
+  const fromList = after.filter((a) => !gone.has(a.wo)).map((a) => {
     const b = old.get(a.wo);
-    return b ? { ...a, drafted: a.drafted || b.drafted, approved: a.approved || b.approved, ...(b.pkg ? { pkg: b.pkg } : {}), ...(b.approvedBy ? { approvedBy: b.approvedBy, approvedAt: b.approvedAt } : {}) } : a;
+    // New since the first list: when it joined (scope growth).
+    if (!b) return at && before.length ? { ...a, addedAt: at } : a;
+    return { ...a, drafted: a.drafted || b.drafted, approved: a.approved || b.approved, ...(b.pkg ? { pkg: b.pkg } : {}), ...(b.approvedBy ? { approvedBy: b.approvedBy, approvedAt: b.approvedAt } : {}), ...(b.addedAt ? { addedAt: b.addedAt } : {}) };
   });
+  // Work added in the app stays (the list file doesn't have it).
+  return [...fromList, ...before.filter((b) => b.typed && !now.has(b.wo))];
 }
+
+/** A work order number as written anywhere ("WO 400101", "W/O# 400101"). */
+export const woKey = (s: string | null | undefined) => clean(s).replace(/^w\/?o\s*(#|no\.?|num(ber)?)?\s*[:#-]?\s*/i, "");
 
 /** A piece of equipment with its own number or tag ("X-1", "2030.01"), as
  *  opposed to a whole unit ("20 - Crude"): its work orders share a package. */
@@ -293,14 +312,17 @@ export function packageGroup(items: ScopeWO[], wo: string): ScopeWO[] {
 }
 
 /** The scope against the schedule's work order numbers. */
-export function againstSchedule(items: ScopeWO[], scheduled: Iterable<string>): { on: ScopeWO[]; missing: ScopeWO[]; extra: string[] } {
-  const sched = new Set([...scheduled].map((s) => s.trim()).filter(Boolean));
+export function againstSchedule(items: ScopeWO[], scheduled: Iterable<string>, named: Iterable<string> = []): { on: ScopeWO[]; missing: ScopeWO[]; extra: string[] } {
+  const sched = new Set([...scheduled].map(woKey).filter(Boolean));
+  // A number in a step's name ("400101 Pull bundle") counts as on it too.
+  const inNames = new Set([...named].map(woKey));
+  const has = (wo: string) => sched.has(wo) || inNames.has(wo);
   const mine = new Set(items.map((x) => x.wo));
   // Work typed in without a work order number can't be matched by number.
   const numbered = items.filter((x) => !isTypedItem(x.wo));
   return {
-    on: numbered.filter((x) => sched.has(x.wo)),
-    missing: numbered.filter((x) => !sched.has(x.wo)),
+    on: numbered.filter((x) => has(x.wo)),
+    missing: numbered.filter((x) => !has(x.wo)),
     extra: [...sched].filter((w) => !mine.has(w)).sort(),
   };
 }
@@ -311,12 +333,88 @@ export const isTypedItem = (wo: string) => /^item-\d+$/.test(wo);
 /** A job typed in by hand: what, and its equipment and work order number
  *  when there are any. */
 export function typedItem(v: { what: string; equipment?: string; wo?: string; group?: string }, items: ScopeWO[]): ScopeWO {
-  const wo = clean(v.wo).replace(/^WO\s*/i, "");
+  const wo = woKey(v.wo);
   const used = new Set(items.map((x) => x.wo));
   let key = wo;
   if (!key || used.has(key)) { let n = items.filter((x) => isTypedItem(x.wo)).length + 1; while (used.has(`item-${n}`)) n++; key = `item-${n}`; }
   const eq = clean(v.equipment);
   const { tag, name } = splitTag(eq);
   return { wo: key, what: clean(v.what), equipment: eq, tag: tag || (/^[A-Z]{1,4}-?\d{1,4}[A-Z]?$/i.test(eq) ? eq.toUpperCase() : ""), equipmentName: tag ? name : (/^[A-Z]{1,4}-?\d{1,4}[A-Z]?$/i.test(eq) ? "" : eq),
-    category: clean(v.group) || "Work", notes: "", conditional: false, drafted: false, approved: false };
+    category: clean(v.group) || "Work", notes: "", conditional: false, drafted: false, approved: false, typed: true };
+}
+
+// ── The schedule, by work order ──
+
+/** A schedule row as read for the scope (lib/scopeStore scheduleFacts). */
+export interface SchedRow {
+  id: string; name: string; parent_id: string | null; work_order_ref: string | null;
+  attributes?: Record<string, unknown> | null; status?: string | null; percent_complete?: number | null; cancelled_at?: string | null;
+}
+/** One work order on the schedule: its steps (the bottom rows), how many are
+ *  done or started, whether it was cancelled there, and the rows that carry
+ *  its number at the top (what cancelling it cancels). */
+export interface WoOnSchedule { name: string; steps: number; done: number; started: number; cancelled: boolean; owners: string[];
+  /** A row carrying it has other work orders under it: cancelling that row
+   *  would take them off too, so it's left to the Work tab. */
+  mixed?: boolean }
+
+const WO_FIELD = /^\s*(work\s*order|wo|w\/o)\s*(#|no\.?|num(ber)?|ref)?\s*$/i;
+
+/** Each work order on the schedule. A row's number is its WO column, else a
+ *  custom field named for it (P6 "WO#"), else the nearest row above it with
+ *  one. Numbers written in step names are kept apart ("named"): they count
+ *  for matching the list, never as extra work. */
+export function scheduleByWo(rows: SchedRow[]): { byWo: Record<string, WoOnSchedule>; named: string[] } {
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const parents = new Set(rows.map((r) => r.parent_id).filter(Boolean) as string[]);
+  const own = (r: SchedRow) => {
+    const w = woKey(r.work_order_ref);
+    if (w) return w;
+    for (const [k, v] of Object.entries(r.attributes ?? {})) if (WO_FIELD.test(k) && (typeof v === "string" || typeof v === "number") && woKey(String(v))) return woKey(String(v));
+    return "";
+  };
+  const memo = new Map<string, string>();
+  const woFor = (r: SchedRow): string => {
+    if (memo.has(r.id)) return memo.get(r.id)!;
+    let w = own(r);
+    const seen = new Set([r.id]);
+    for (let p = r.parent_id ? byId.get(r.parent_id) : undefined; !w && p && !seen.has(p.id); p = p.parent_id ? byId.get(p.parent_id) : undefined) { seen.add(p.id); w = own(p); }
+    memo.set(r.id, w);
+    return w;
+  };
+  const byWo: Record<string, WoOnSchedule> = {};
+  const all = new Map<string, { rows: number; cancelled: number }>();
+  const named = new Set<string>();
+  for (const r of rows) {
+    const w = woFor(r);
+    if (!r.cancelled_at) for (const m of r.name.matchAll(/\b\d{5,9}\b/g)) named.add(m[0]);
+    if (!w) continue;
+    // Cancelled when every bottom row of it is.
+    const a = all.get(w) ?? { rows: 0, cancelled: 0 };
+    if (!parents.has(r.id)) { a.rows++; if (r.cancelled_at) a.cancelled++; }
+    all.set(w, a);
+    const o = byWo[w] ?? (byWo[w] = { name: "", steps: 0, done: 0, started: 0, cancelled: false, owners: [] });
+    const up = r.parent_id ? byId.get(r.parent_id) : undefined;
+    if (own(r) === w && (!up || woFor(up) !== w)) { o.owners.push(r.id); if (!o.name) o.name = r.name; }
+    if (parents.has(r.id) || r.cancelled_at) continue;
+    const pct = Number(r.percent_complete ?? 0);
+    const done = r.status === "completed" || pct >= 100;
+    o.steps++;
+    if (done) o.done++;
+    if (done || pct > 0 || r.status === "in_progress") o.started++;
+  }
+  for (const [w, a] of all) byWo[w].cancelled = a.rows > 0 && a.cancelled === a.rows;
+  // An owner row with another work order under it.
+  const ownerOf = new Map<string, string>();
+  for (const [w, o] of Object.entries(byWo)) for (const id of o.owners) ownerOf.set(id, w);
+  for (const r of rows) {
+    const w = woFor(r);
+    const seen = new Set([r.id]);
+    for (let p = r.parent_id ? byId.get(r.parent_id) : undefined; p && !seen.has(p.id); p = p.parent_id ? byId.get(p.parent_id) : undefined) {
+      seen.add(p.id);
+      const pw = ownerOf.get(p.id);
+      if (pw && pw !== w) byWo[pw].mixed = true;
+    }
+  }
+  return { byWo, named: [...named] };
 }
