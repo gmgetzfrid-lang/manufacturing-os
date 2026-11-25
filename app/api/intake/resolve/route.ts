@@ -120,6 +120,9 @@ export async function GET(req: NextRequest) {
       .from("documents")
       .select("id, document_number, title, name, rev, status, pending_version_id, updated_at")
       .in("id", docIds)
+      // Only the link's own workspace: an id in assigned_doc_ids from
+      // another workspace is never shown.
+      .eq("org_id", link.org_id as string)
       .order("updated_at", { ascending: false });
     items = (((docs ?? []) as Array<Record<string, unknown>>)).map((d) => ({
       docId: String(d.id),

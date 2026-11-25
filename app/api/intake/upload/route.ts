@@ -251,9 +251,11 @@ export async function POST(req: NextRequest) {
     if (!linkAuthored && !isAssigned) {
       return bad("This link may only submit revisions to its own or assigned documents.", 403);
     }
+    // Only a document of the link's own workspace (an id from another
+    // workspace in assigned_doc_ids must never be revised through it).
     const { data: d } = await supabaseAdmin
       .from("documents").select("id, document_number, title, name, rev, current_version_id, pending_version_id")
-      .eq("id", docId).maybeSingle();
+      .eq("id", docId).eq("org_id", orgId).maybeSingle();
     if (!d) return bad("Document not found.", 404);
     if (d.pending_version_id && !(link.allow_auto_supersede && linkAuthored)) {
       return bad("Your previous submission for this document is still in review - it must be approved or rejected first.", 409);
@@ -324,14 +326,14 @@ export async function POST(req: NextRequest) {
     const prevCurrent = (targetDoc?.current_version_id as string | null) ?? null;
     await supabaseAdmin.from("documents")
       .update({ current_version_id: versionId, rev: revLabel || "A", revision: revLabel || "A", status: "Issued", pending_version_id: null, updated_at: nowIso })
-      .eq("id", documentId);
+      .eq("id", documentId).eq("org_id", orgId);
     if (prevCurrent) {
       await supabaseAdmin.from("document_versions").update({ superseded_at: nowIso }).eq("id", prevCurrent);
     }
   } else {
     await supabaseAdmin.from("documents")
       .update({ pending_version_id: versionId, updated_at: nowIso })
-      .eq("id", documentId);
+      .eq("id", documentId).eq("org_id", orgId);
   }
 
   // ── Notify the project team + audit ──

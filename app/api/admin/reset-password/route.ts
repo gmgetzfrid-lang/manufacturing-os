@@ -32,6 +32,18 @@ export async function POST(req: NextRequest) {
 
   const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(uid);
   const email = authUser?.user?.email ?? (target.email as string | null) ?? null;
+  // A password is the person's own, for every workspace they're in: never set
+  // by one workspace for someone who also belongs to another (that would let
+  // this workspace's admin sign in as them there), nor for an account that
+  // signs in with Microsoft. They change it themselves, on their Profile.
+  if ((authUser?.user?.identities ?? []).some((i) => i.provider === "azure")) {
+    return NextResponse.json({ error: "This person signs in with Microsoft, so there's no password to reset. Their IT account controls it." }, { status: 400 });
+  }
+  const { data: elsewhere, error: elseErr } = await supabaseAdmin.from("org_members").select("org_id").eq("uid", uid).neq("org_id", orgId).limit(1);
+  if (elseErr) return NextResponse.json({ error: "Couldn't check this person's other workspaces. Try again." }, { status: 503 });
+  if ((elsewhere ?? []).length > 0) {
+    return NextResponse.json({ error: "This person also belongs to another workspace, so their password isn't this workspace's to reset. They can change it on their Profile page." }, { status: 409 });
+  }
   const policy = await getSigninPolicy(orgId);
   if (mustUseMicrosoft(email, policy)) return NextResponse.json({ error: "This person signs in with Microsoft, so there's no password to reset. Their IT account controls it." }, { status: 400 });
   if (!policy.allowPasswords) return NextResponse.json({ error: "This workspace doesn't allow password accounts." }, { status: 400 });
