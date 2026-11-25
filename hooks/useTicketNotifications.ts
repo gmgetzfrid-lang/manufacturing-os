@@ -1,5 +1,5 @@
 import { sharedLoad, lastLoaded } from "@/lib/warmLoads";
-import { useState, useEffect, useMemo, useId } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
 import type { Role, Ticket } from '@/types/schema';
@@ -234,17 +234,54 @@ export async function loadAttention(orgId: string, uid: string, roles: Role[]): 
 }
 
 // A change pushed by the database refreshes every reader of the feed with
-// one load: the readers that hear it within a moment share it.
+// one load: the readers that hear it within a moment share it. The load
+// waits 1 to 3 s (random, so open tabs don't all reload at the same
+// instant) and a burst of changes in that time is one reload, not one per
+// change. A change after the wait has started its load gets a new one.
 const refreshing = new Map<string, Promise<AttentionLoad>>();
 function refreshSoon(key: string, load: () => Promise<AttentionLoad>): Promise<AttentionLoad> {
   let p = refreshing.get(key);
   if (!p) {
-    p = new Promise((r) => setTimeout(r, 40)).then(() => sharedLoad(key, load, { fresh: true }));
+    const mine: Promise<AttentionLoad> = new Promise<void>((r) => setTimeout(r, 1_000 + Math.random() * 2_000)).then(() => {
+      if (refreshing.get(key) === mine) refreshing.delete(key);
+      return sharedLoad(key, load, { fresh: true });
+    });
+    p = mine;
     refreshing.set(key, p);
-    const mine = p;
-    void mine.then(() => undefined, () => undefined).finally(() => { if (refreshing.get(key) === mine) refreshing.delete(key); });
   }
   return p;
+}
+
+// ONE realtime channel per tab for the feed, shared by every reader of it
+// (the side menu, the bell, Home, the inbox...): each reader used to open
+// its own, up to 7 per tab, and each heard every change.
+type FeedChannel = { channel: ReturnType<typeof supabase.channel>; listeners: Set<() => void> };
+const feedChannels = new Map<string, FeedChannel>();
+let feedChannelSeq = 0;
+function subscribeFeed(orgId: string, uid: string, listener: () => void): () => void {
+  const k = `${orgId}|${uid}`;
+  let entry = feedChannels.get(k);
+  if (!entry) {
+    const listeners = new Set<() => void>();
+    const fire = () => { for (const l of [...listeners]) l(); };
+    // A fresh name each time: a channel being removed keeps its name for a moment.
+    const channel = supabase
+      .channel(`attention-${orgId}-${uid}-${++feedChannelSeq}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets', filter: `org_id=eq.${orgId}` }, fire)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `user_id=eq.${uid}` }, fire)
+      .subscribe();
+    entry = { channel, listeners };
+    feedChannels.set(k, entry);
+  }
+  const mine = entry;
+  mine.listeners.add(listener);
+  return () => {
+    mine.listeners.delete(listener);
+    if (mine.listeners.size === 0 && feedChannels.get(k) === mine) {
+      feedChannels.delete(k);
+      void supabase.removeChannel(mine.channel);
+    }
+  };
 }
 
 export function useTicketNotifications() {
@@ -263,9 +300,6 @@ export function useTicketNotifications() {
   // Why the feed couldn't be read (null when it was): surfaces say so
   // instead of showing "nothing needs you".
   const loadError = mine?.err ?? (current?.problems.length ? current.problems[0] : null);
-  // Unique per hook instance so multiple consumers (sidebar/bell/inbox) don't
-  // collide on the same realtime channel name.
-  const channelId = useId().replace(/[^a-z0-9]/gi, '');
 
   useEffect(() => {
     if (!key || !uid || !activeOrgId) return;
@@ -283,18 +317,14 @@ export function useTicketNotifications() {
     // may have started it already.
     void take(sharedLoad(key, load, { maxAgeMs: 1500 }));
 
-    const channel = supabase
-      .channel(`attention-${activeOrgId}-${channelId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets', filter: `org_id=eq.${activeOrgId}` },
-        () => { if (alive) void take(refreshSoon(key, load)); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `user_id=eq.${uid}` },
-        () => { if (alive) void take(refreshSoon(key, load)); })
-      .subscribe();
+    // The tab's one feed channel (shared by every reader); a change reloads
+    // the feed once for all of them, a moment later.
+    const off = subscribeFeed(activeOrgId, uid, () => { if (alive) void take(refreshSoon(key, load)); });
 
-    return () => { alive = false; supabase.removeChannel(channel); };
+    return () => { alive = false; off(); };
   // `key` carries the roles, the workspace and the account.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, channelId]);
+  }, [key]);
 
   const { items, actionRequiredCount, unreadCount, sectionCounts } = useMemo(() => {
     const out: AttentionItem[] = [];
