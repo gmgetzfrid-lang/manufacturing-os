@@ -21,6 +21,7 @@ import { supabase } from "@/lib/supabase";
 import { folderUnitsFrom } from "@/lib/estate/settle";
 import { loadCodebook } from "@/lib/codebook";
 import { fetchAllRows } from "@/lib/fetchAllRows";
+import { assetHref } from "@/lib/equipmentIdentity";
 
 export type GraphNodeType = "document" | "asset" | "unit" | "library" | "project" | "plant" | "plot" | "finding";
 
@@ -75,7 +76,7 @@ interface DocRow {
   sheet_number: number | null; sheet_total: number | null;
 }
 interface AssetRowLite {
-  id: string; tag: string; description: string | null;
+  id: string; tag: string; code?: string | null; description: string | null;
   unit_code: string | null; unit_id: string | null; type_id?: string | null;
   /** "person" when someone chose the type (a folder mark); the codebook's
    *  automatic guess by tag letters does not group the map. */
@@ -131,7 +132,7 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
       .order("updated_at", { ascending: false, nullsFirst: false }).order("id")
       .range(from, Math.min(to, DOC_CAP - 1)), DOC_CAP)),
     supabase.from("assets")
-      .select("id, tag, description, unit_code, unit_id, type_id, type_set:metadata->>typeSetBy")
+      .select("id, tag, code, description, unit_code, unit_id, type_id, type_set:metadata->>typeSetBy")
       .eq("org_id", orgId).eq("archived", false)
       .limit(ASSET_CAP),
     pageRows<{ document_id: string; asset_id: string }>(
@@ -249,7 +250,7 @@ export async function buildOrgGraph(orgId: string): Promise<OrgGraph> {
     nodes.set(`asset:${a.id}`, {
       id: `asset:${a.id}`, type: "asset", label: a.tag, sub: a.description ?? undefined,
       category: a.type_id && a.type_set === "person" ? typeNames.get(a.type_id) : undefined,
-      href: `/assets/${encodeURIComponent(a.tag)}`, degree: 0,
+      href: assetHref(a), degree: 0,
     });
   }
   // Multi-sheet drawing sets are one document number across several rows —

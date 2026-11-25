@@ -17,11 +17,12 @@ import { supabase } from "@/lib/supabase";
 import { createDocumentWithFile } from "@/lib/revisions";
 import { linkDocumentToAsset } from "@/lib/operationalGraph";
 import { linkAssetFile } from "@/lib/assets";
-import { equipDocs, folderForUnit, tagKey, type FindDoc } from "@/lib/findEverywhere";
-import { mutateConfig, readConfig } from "@/lib/woPackages";
+import { docsByIds, equipDocs, folderForUnit, tagKey, type FindDoc } from "@/lib/findEverywhere";
+import { ensureAssetFolder, loadTree, saveTree } from "@/lib/equipmentLibraryPush";
+import type { EquipmentTree } from "@/lib/equipmentLibrary";
 import type { ScopeWO } from "@/lib/woIntake";
 
-export interface PackageAsset { id: string; tag: string; code: string | null; unitCode: string | null; description: string | null }
+export interface PackageAsset { id: string; tag: string; code: string | null; unitCode: string | null; description: string | null; typeId?: string | null }
 
 /** The package's equipment in the registry: by its number, else by its tag
  *  when only one piece has it. Null when the registry doesn't have it (or
@@ -29,9 +30,9 @@ export interface PackageAsset { id: string; tag: string; code: string | null; un
 export async function findPackageAsset(orgId: string, group: ScopeWO[]): Promise<PackageAsset | null> {
   const first = group.find((x) => x.equipment || x.tag);
   if (!first) return null;
-  type Row = { id: string; tag: string; code: string | null; unit_code: string | null; description: string | null };
-  const pick = (r: Row): PackageAsset => ({ id: r.id, tag: r.tag, code: r.code, unitCode: r.unit_code, description: r.description });
-  const cols = "id, tag, code, unit_code, description";
+  type Row = { id: string; tag: string; code: string | null; unit_code: string | null; description: string | null; type_id: string | null };
+  const pick = (r: Row): PackageAsset => ({ id: r.id, tag: r.tag, code: r.code, unitCode: r.unit_code, description: r.description, typeId: r.type_id });
+  const cols = "id, tag, code, unit_code, description, type_id";
   if (first.equipment) {
     const { data } = await supabase.from("assets").select(cols).eq("org_id", orgId).eq("archived", false).eq("code", first.equipment).limit(3);
     const rows = (data ?? []) as Row[];
@@ -49,23 +50,27 @@ export async function findPackageAsset(orgId: string, group: ScopeWO[]): Promise
 /** "X-1 Middle Naphtha Cooler (2030.01)". */
 export const assetWords = (a: PackageAsset) => `${a.tag}${a.description ? ` ${a.description.replace(/\b\w+/g, (w) => w[0] + w.slice(1).toLowerCase())}` : ""}${a.code ? ` (${a.code})` : ""}`;
 
-/** The documents on file for it: tagged by a person or by the drawing reader. */
-export function assetDocs(orgId: string, assetId: string): Promise<FindDoc[]> {
-  return equipDocs(orgId, assetId);
+/** The documents on file for it: tagged by a person or by the drawing
+ *  reader, and everything in its Equipment Files folder. */
+export async function assetDocs(orgId: string, assetId: string): Promise<FindDoc[]> {
+  const [tagged, tree] = await Promise.all([equipDocs(orgId, assetId), loadTree(orgId).catch(() => null)]);
+  const folder = tree?.assets?.[assetId];
+  if (!folder) return tagged;
+  const { data } = await supabase.from("documents").select("id").eq("collection_id", folder).neq("status", "Archived").limit(200);
+  const more = ((data ?? []) as Array<{ id: string }>).map((r) => r.id).filter((id) => !tagged.some((d) => d.id === id));
+  return more.length ? [...tagged, ...(await docsByIds(more))] : tagged;
 }
 
 // ── The workspace's place for equipment files ───────────────────────────
 
-export interface EquipmentFilesPlace { libraryId: string; collectionId: string | null }
-const PLACE_KEY = "equipment_files_place";
-
-export async function loadEquipmentPlace(orgId: string): Promise<EquipmentFilesPlace | null> {
-  const { data } = await readConfig<EquipmentFilesPlace>(orgId, PLACE_KEY);
-  return data?.libraryId ? data : null;
-}
-export function saveEquipmentPlace(orgId: string, place: EquipmentFilesPlace): Promise<EquipmentFilesPlace> {
-  return mutateConfig<EquipmentFilesPlace | null>(orgId, PLACE_KEY, null, () => place).then(() => place);
-}
+/** The place for equipment files: the Equipment Files library pushed
+ *  from Operating areas (with a folder for each piece of equipment), or
+ *  a library picked for now. */
+export type EquipmentFilesPlace = EquipmentTree;
+export const loadEquipmentPlace = loadTree;
+export const saveEquipmentPlace = (orgId: string, place: EquipmentFilesPlace) => saveTree(orgId, place);
+/** The place has the operating areas' folders (pushed from Operating areas). */
+export const hasTree = (p: EquipmentFilesPlace | null | undefined) => !!p?.assets;
 
 export interface LibraryLite { id: string; name: string }
 export async function listLibraries(orgId: string): Promise<LibraryLite[]> {
@@ -80,9 +85,17 @@ export function suggestLibrary(libs: LibraryLite[]): LibraryLite | null {
 
 /** Where a file for this equipment goes: the unit's folder in the place's
  *  library when it has one, else the place's own folder. */
-export async function folderFor(orgId: string, place: EquipmentFilesPlace, asset: PackageAsset): Promise<{ collectionId: string | null; folderPath: string[]; words: string }> {
+export async function folderFor(orgId: string, place: EquipmentFilesPlace, asset: PackageAsset, uid?: string | null): Promise<{ collectionId: string | null; folderPath: string[]; words: string }> {
   const { data: lib } = await supabase.from("libraries").select("name").eq("id", place.libraryId).maybeSingle();
   const libName = String((lib as { name?: string } | null)?.name ?? "the library");
+  // The equipment's own folder in Equipment Files (made when it's new since the push).
+  if (hasTree(place)) {
+    const known = place.assets?.[asset.id];
+    const f = known || uid
+      ? await ensureAssetFolder(orgId, uid ?? "", { id: asset.id, tag: asset.tag, code: asset.code, unitCode: asset.unitCode, typeId: asset.typeId ?? null, description: asset.description }).catch(() => null)
+      : null;
+    if (f) return { collectionId: f.id, folderPath: f.path, words: [libName, ...f.path].join(" › ") };
+  }
   if (asset.unitCode) {
     const unit = await folderForUnit(orgId, asset.unitCode, place.libraryId).catch(() => null);
     if (unit && unit.libraryId === place.libraryId) {
@@ -114,17 +127,26 @@ export async function fileToAsset(input: {
   orgId: string; place: EquipmentFilesPlace; asset: PackageAsset; file: File; number: string; title?: string;
   /** What it came from, kept on the document ("WO 300939 package"). */
   from: string;
+  /** The project whose work package it came from: listed there too. */
+  projectId?: string;
   actorUserId: string; actorEmail?: string;
 }): Promise<{ documentId: string; libraryId: string; versionId: string | null; words: string }> {
-  const where = await folderFor(input.orgId, input.place, input.asset);
+  const where = await folderFor(input.orgId, input.place, input.asset, input.actorUserId);
   const { documentId } = await createDocumentWithFile({
     orgId: input.orgId, libraryId: input.place.libraryId, collectionId: where.collectionId, folderPath: where.folderPath,
     documentNumber: input.number, title: input.title || input.number, file: input.file,
     actorUserId: input.actorUserId, actorEmail: input.actorEmail,
   });
-  // Where it came from, so document control can see it was filed from the field.
-  await supabase.from("documents").update({ metadata: { filed_from: input.from, filed_for: input.asset.tag } }).eq("id", documentId).then(() => undefined, () => undefined);
+  // Where it came from, so document control can see it was filed from the
+  // field; and tagged with the equipment the way every document is (its
+  // page, search and the drawing reader all read the tag).
+  await supabase.from("documents").update({ metadata: { filed_from: input.from, filed_for: input.asset.tag }, asset_tags: [{ tag: input.asset.tag }] }).eq("id", documentId).then(() => undefined, () => undefined);
   await linkDocumentToAsset(input.orgId, documentId, input.asset.id);
+  // On the project's Documents tab and in the graph with the project.
+  if (input.projectId) await supabase.from("project_documents").upsert(
+    { org_id: input.orgId, project_id: input.projectId, document_id: documentId, source: "manual", last_seen_at: new Date().toISOString() },
+    { onConflict: "project_id,document_id", ignoreDuplicates: false },
+  ).then(() => undefined, () => undefined);
   if (input.actorUserId) await linkAssetFile({ orgId: input.orgId, assetId: input.asset.id, documentId, createdBy: input.actorUserId }).catch(() => undefined);
   const { data: d } = await supabase.from("documents").select("current_version_id").eq("id", documentId).maybeSingle();
   return { documentId, libraryId: input.place.libraryId, versionId: (d as { current_version_id?: string | null } | null)?.current_version_id ?? null, words: where.words };

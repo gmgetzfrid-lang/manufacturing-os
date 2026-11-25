@@ -21,6 +21,9 @@ import {
   GraduationCap, Pencil, Square,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
+import EquipmentFilesDialog from "@/components/assets/EquipmentFilesDialog";
+import { loadTree } from "@/lib/equipmentLibraryPush";
+import type { EquipmentTree } from "@/lib/equipmentLibrary";
 import { supabase } from "@/lib/supabase";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, StepLine, heroPrimary } from "@/components/ui/PageHero";
@@ -65,6 +68,15 @@ export default function CodebookPage() {
   const { activeOrgId, uid, activeRole } = useRole();
   const canWrite = !!activeRole && WRITER_ROLES.has(activeRole);
   const [book, setBook] = useState<Codebook | null>(null);
+  // The operating areas pushed to a library (Equipment Files), asked here once units exist.
+  const [efTree, setEfTree] = useState<EquipmentTree | null | undefined>(undefined);
+  const [efOpen, setEfOpen] = useState(false);
+  useEffect(() => {
+    if (!activeOrgId) return;
+    let on = true;
+    void loadTree(activeOrgId).then((t) => { if (on) setEfTree(t); }, () => { if (on) setEfTree(null); });
+    return () => { on = false; };
+  }, [activeOrgId]);
   const [tab, setTabNow] = useState<Tab>("units");
   // Switching sections cross-fades (instant under reduced motion).
   const setTab = (t: Tab) => withViewTransition(() => flushSync(() => setTabNow(t)));
@@ -192,6 +204,19 @@ export default function CodebookPage() {
       <PageBody>
       {error && <Problem>{error}</Problem>}
 
+      {tab === "units" && canWrite && book.units.length > 0 && efTree !== undefined && (
+        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+          <p className="min-w-0 flex-1 basis-64 text-body text-[var(--color-text)]">
+            {efTree?.assets
+              ? <><b>Equipment files</b> are in {efTree.libraryName ?? "their library"}, laid out like these units. Units or equipment added since get their folders when you update it.</>
+              : <><b>Push a library for these operating areas?</b> Equipment Files mirrors them: a folder for each unit, equipment type and piece of equipment, linked to each unit&apos;s page and each piece of equipment. You pick its own library or a folder in one, and its name.</>}
+          </p>
+          <Button variant="secondary" onClick={() => setEfOpen(true)}>{efTree?.assets ? "Update the folders" : "Set it up"}</Button>
+        </div>
+      )}
+      {efOpen && activeOrgId && uid && (
+        <EquipmentFilesDialog orgId={activeOrgId} uid={uid} onClose={() => setEfOpen(false)} onDone={(t) => { setEfTree(t); refresh(); }} />
+      )}
       {tab === "units" && (
         <EntryTable kind="unit" title="Operating areas / units" entries={book.units} canWrite={canWrite}
           codeHint="Unit number, e.g. 20" labelHint="Name, e.g. Crude Unit"

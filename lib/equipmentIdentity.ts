@@ -30,6 +30,11 @@ export const idInTag = (tag: string): string | null => {
 
 export interface EquipmentLabel { tag: string | null; code: string | null }
 
+/** A piece of equipment's page. Its ID rides along, so two tags that read
+ *  the same (X-1 in unit 20, X-01 in unit 30) each open their own page. */
+export const assetHref = (a: { tag: string; code?: string | null }) =>
+  `/assets/${encodeURIComponent(a.tag)}${a.code && a.code !== a.tag ? `?code=${encodeURIComponent(a.code)}` : ""}`;
+
 /** What a label says: "X-31 (2030.31)", "X-31 (2030.31) Charge pump",
  *  "X-31 · 2030.31", "2030.31 X-31", "2030.31" or "X-31". */
 export function parseEquipmentLabel(label: string | null | undefined): EquipmentLabel {

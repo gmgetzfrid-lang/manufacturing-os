@@ -18,6 +18,7 @@
 
 import { PDFDocument, StandardFonts, rgb, PDFFont, PDFPage, PDFImage } from "pdf-lib";
 import { publicOrigin } from "@/lib/publicOrigin";
+import { assetHref } from "@/lib/equipmentIdentity";
 
 const INK = rgb(0.09, 0.12, 0.16);
 const MUTED = rgb(0.42, 0.47, 0.53);
@@ -66,6 +67,8 @@ function fit(text: string, font: PDFFont, size: number, maxWidth: number): strin
 
 export interface LabelAsset {
   tag: string;
+  /** Its ID: the QR opens this piece even when another tag reads the same. */
+  code?: string | null;
   description?: string | null;
   location?: string | null;
 }
@@ -81,7 +84,7 @@ export async function printEquipmentLabels(assets: LabelAsset[]): Promise<void> 
   const drawLabel = async (
     page: PDFPage, x: number, y: number, w: number, h: number, asset: LabelAsset,
   ) => {
-    const url = `${origin()}/assets/${encodeURIComponent(asset.tag)}`;
+    const url = `${origin()}${assetHref(asset)}`;
     const qr = await qrPng(doc, url);
     const pad = 8;
     const qrSize = h - pad * 2;

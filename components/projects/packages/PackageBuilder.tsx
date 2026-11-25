@@ -343,7 +343,7 @@ export default function PackageBuilder({
 
       {/* Files just added, offered to the equipment for good. */}
       {canManage && asset && offer && offer.ids.some((id) => items.some((i) => i.id === id && i.path)) && (
-        <FileToAsset orgId={orgId} asset={asset} uid={uid ?? null} actorEmail={actorEmail}
+        <FileToAsset orgId={orgId} projectId={projectId} asset={asset} uid={uid ?? null} actorEmail={actorEmail}
           items={items.filter((i) => offer.ids.includes(i.id) && i.path && (i.kind === "file" || i.kind === "photo"))}
           nothingOnFile={offer.auto} from={`${title} package, ${projectName}`}
           onFiled={onFiled} onCancel={() => setOffer(null)} />

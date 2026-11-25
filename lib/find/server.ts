@@ -33,6 +33,7 @@ import { nid } from "@/lib/estate/ids";
 import { foldLayers, hideOtherTypes, groupResults, snippetAround, REL_WEIGHT, TEXT_HIT, type LayerAdd } from "./merge";
 import type { FindRequest, FindResponse, FindEntity, FindActivity, FindCoverage, FindLayer } from "./types";
 import { sheetQuarter } from "./types";
+import { assetHref } from "@/lib/equipmentIdentity";
 
 type Role = KnowledgePrincipal["role"];
 
@@ -107,7 +108,7 @@ export async function findEstate(admin: SupabaseClient, principal: KnowledgePrin
   const assetEntity = (asset: AssetLite, via: string): FindEntity => ({
     node: nid.asset(asset.id), kind: "asset", label: asset.tag,
     sub: [asset.type_id ? typeName.get(asset.type_id) : null, asset.description, asset.unit_code ? unitLabel(asset.unit_code) : null].filter(Boolean).join(" · ") || undefined,
-    via, href: `/assets/${encodeURIComponent(asset.tag)}`,
+    via, href: assetHref(asset),
     assetId: asset.id, unitCode: asset.unit_code ?? undefined, unitLabel: asset.unit_code ? unitLabel(asset.unit_code) : undefined,
     description: asset.description ?? undefined, typeName: asset.type_id ? typeName.get(asset.type_id) : undefined, code: asset.code ?? undefined,
   });

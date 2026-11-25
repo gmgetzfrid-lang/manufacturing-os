@@ -25,6 +25,7 @@ import { useToast } from "@/components/providers/ToastProvider";
 import { PageShell } from "@/components/ui/PageShell";
 import { PageHero, PageBody, Card, heroPrimary, heroQuiet } from "@/components/ui/PageHero";
 import type { PlotPlan, PlotPlanMarker, WhiteboardState } from "@/types/schema";
+import { assetHref } from "@/lib/equipmentIdentity";
 
 export default function PlotPlanBoard() {
   const params = useParams();
@@ -335,7 +336,7 @@ export default function PlotPlanBoard() {
                   Mark blocked
                 </button>
               )}
-              <Link href={`/assets/${encodeURIComponent(selAsset.tag)}`} className={`${heroQuiet} w-full`}>
+              <Link href={assetHref(selAsset)} className={`${heroQuiet} w-full`}>
                 Open its page <ExternalLink className="w-4 h-4" />
               </Link>
             </div>

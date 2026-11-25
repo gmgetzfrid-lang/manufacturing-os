@@ -16,7 +16,7 @@ import {
   Tag, Plus, Search, Camera,
   Image as ImageIcon, AlertTriangle,
   Lock, X, Edit3, Trash2,
-  FileText, Upload, QrCode, BookMarked,
+  FileText, Upload, QrCode, BookMarked, FolderTree,
   FolderOpen, Link2, ArrowLeft, Waypoints, RotateCcw, ExternalLink,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
@@ -66,6 +66,10 @@ import { friendlyError } from "@/lib/friendlyError";
 import { transitionPush } from "@/lib/viewTransition";
 import { sheet, link, btnQuiet, btnLink, btnDanger, btnIcon, field, label as labelCls, StatusTag, Problem, Section, shortDate } from "@/components/admin/kit";
 import { bandInput, bandInputIcon, bandSelect, bandSeg, bandSegItem, plural } from "@/components/admin/band";
+import EquipmentFilesDialog from "@/components/assets/EquipmentFilesDialog";
+import { loadTree } from "@/lib/equipmentLibraryPush";
+import { planTree, type EquipmentTree } from "@/lib/equipmentLibrary";
+import { assetHref } from "@/lib/equipmentIdentity";
 
 /** Full-screen overlays live on <body>, above the top bar (the page is its
  *  own stacking layer while it animates between views). */
@@ -133,6 +137,15 @@ function AssetsPageInner() {
   const [csvOpen, setCsvOpen] = useState(false);
   // Start over from the drawings: an admin clears what the reader added.
   const [startOverOpen, setStartOverOpen] = useState(() => searchParams.get("startOver") === "1");
+  // The Equipment Files library: document control laid out like these areas.
+  const [efOpen, setEfOpen] = useState(() => searchParams.get("equipmentFiles") === "1");
+  const [efTree, setEfTree] = useState<EquipmentTree | null | undefined>(undefined);
+  useEffect(() => {
+    if (!activeOrgId) return;
+    let on = true;
+    void loadTree(activeOrgId).then((t) => { if (on) setEfTree(t); }, () => { if (on) setEfTree(null); });
+    return () => { on = false; };
+  }, [activeOrgId]);
 
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
@@ -312,6 +325,7 @@ function AssetsPageInner() {
       const { printEquipmentLabels } = await import("@/lib/physicalBridge");
       await printEquipmentLabels(some.map((a) => ({
         tag: a.tag,
+        code: a.code ?? null,
         description: a.description ?? null,
         location: a.location ?? null,
       })));
@@ -323,6 +337,7 @@ function AssetsPageInner() {
   const moreItems: MoreItem[] = [
     ...(filtered.length > 0 ? [{ icon: <QrCode className="w-4 h-4" />, label: `QR labels (${Math.min(filtered.length, 200)})`, onClick: () => void printLabels() }] : []),
     ...(canEditEquipment ? [{ icon: <Upload className="w-4 h-4" />, label: "Import CSV", onClick: () => setCsvOpen(true) }] : []),
+    ...(canEditEquipment && !unitFilter && assets.length > 0 ? [{ icon: <FolderTree className="w-4 h-4" />, label: efTree?.assets ? "Equipment files library" : "Push to a library (Equipment Files)", onClick: () => setEfOpen(true) }] : []),
     ...(canEditEquipment && activeOrgId && !unitFilter && assets.length > 0 ? [{ icon: <RotateCcw className="w-4 h-4" />, label: "Start over from the drawings", tone: "bad" as const, line: true, onClick: () => setStartOverOpen(true) }] : []),
   ];
 
@@ -377,7 +392,7 @@ function AssetsPageInner() {
   );
 
   // ── Rows of the tree ─────────────────────────────────────────
-  const openAsset = (a: Asset) => transitionPush(router, `/assets/${encodeURIComponent(a.tag)}`);
+  const openAsset = (a: Asset) => transitionPush(router, assetHref(a));
   const openUnit = (code: string) => transitionPush(router, `/admin/assets?unit=${encodeURIComponent(code)}`);
   const typeNameOf = (a: Asset) => (a.type_id ? types.find((t) => t.id === a.type_id)?.name : null) ?? null;
   const assetMenu = (a: Asset): MoreItem[] => {
@@ -628,6 +643,31 @@ function AssetsPageInner() {
       </PageHero>
 
       <PageBody>
+        {/* Document control laid out like these areas: offered until it's made, then where it is and what's new. */}
+        {!unitFilter && !loading && !error && assets.length > 0 && efTree !== undefined && (canEditEquipment || efTree?.assets) && (() => {
+          const fresh = efTree?.assets ? planTree({
+            units: book.units.map((u) => ({ code: u.code, label: u.label })), types: types.map((t) => ({ id: t.id, name: t.name })),
+            assets: assets.filter((a) => !a.archived).map((a) => ({ id: a.id, tag: a.tag, code: a.code ?? null, unitCode: a.unit_code ?? null, typeId: a.type_id, description: a.description })),
+            existing: efTree, equipmentFolders: true,
+          }).folders.length : 0;
+          const open = efTree?.assets ? `/documents/${efTree.libraryId}${efTree.collectionId ? `?folderId=${efTree.collectionId}` : ""}` : "";
+          return (
+            <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+              <FolderTree aria-hidden className="w-5 h-5 text-[var(--color-text-muted)] shrink-0" />
+              {efTree?.assets ? (
+                <>
+                  <p className="min-w-0 flex-1 basis-64 text-body text-[var(--color-text)]"><b>Equipment files</b> live in <a href={open} className="font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">{efTree.libraryName ?? "the library"}</a>, a folder for each unit, type and piece of equipment.{fresh > 0 ? ` ${plural(fresh, "new folder")} to add for equipment added since.` : ""}</p>
+                  {canEditEquipment && fresh > 0 && <Button variant="secondary" onClick={() => setEfOpen(true)}>Add {plural(fresh, "folder")}</Button>}
+                </>
+              ) : (
+                <>
+                  <p className="min-w-0 flex-1 basis-64 text-body text-[var(--color-text)]"><b>Push these areas to a library?</b> Equipment Files: a folder for each unit, equipment type and piece of equipment, linked so each piece shows its documents and work packages file into its folder.</p>
+                  <Button variant="secondary" onClick={() => setEfOpen(true)}>Set it up</Button>
+                </>
+              )}
+            </div>
+          );
+        })()}
         {loading ? (
           <SkeletonRows rows={6} cols={3} what="the equipment" />
         ) : error ? (
@@ -832,6 +872,11 @@ function AssetsPageInner() {
           onClose={() => setUploaderOpenFor(null)}
           onUploaded={() => { void refresh(); }}
         />
+      )}
+
+      {efOpen && canEditEquipment && activeOrgId && uid && (
+        <EquipmentFilesDialog orgId={activeOrgId} uid={uid} email={userEmail ?? undefined} onClose={() => setEfOpen(false)}
+          onDone={(t) => { setEfTree(t); void refresh(); }} />
       )}
 
       {startOverOpen && canEditEquipment && (

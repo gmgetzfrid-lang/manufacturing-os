@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseEquipmentLabel, labelKey, pieces, pickEquipment, readerMatch, lookupOrder, keepOrder, onePerPiece, unitOfId, type IdentityRecord } from "@/lib/equipmentIdentity";
+import { assetHref, parseEquipmentLabel, labelKey, pieces, pickEquipment, readerMatch, lookupOrder, keepOrder, onePerPiece, unitOfId, type IdentityRecord } from "@/lib/equipmentIdentity";
 
 // The live registry's shape: the X-31 a person added (with its ID and three
 // photos) and the copy the drawing reader made without one.
@@ -145,5 +145,23 @@ describe("the drawing reader's matching", () => {
   });
   it("a tag new to the unit, with its ID: new", () => {
     expect(readerMatch(registry, { tag: "X-77", code: "2030.77", unitCode: "20" })).toEqual({ kind: "new" });
+  });
+});
+
+describe("a piece of equipment's page", () => {
+  it("carries its ID, so X-1 and X-01 each open their own", () => {
+    expect(assetHref({ tag: "X-1", code: "2030.01" })).toBe("/assets/X-1?code=2030.01");
+    expect(assetHref({ tag: "X-01", code: "3030.01" })).toBe("/assets/X-01?code=3030.01");
+    expect(assetHref({ tag: "P-101", code: null })).toBe("/assets/P-101");
+    expect(assetHref({ tag: "TK 5 / A" })).toBe("/assets/TK%205%20%2F%20A");
+  });
+  it("two tags that read the same and no ID: a choice, never a guess", () => {
+    const reg: IdentityRecord[] = [
+      { id: "a", tag: "X-1", code: "2030.01", unitCode: "20" },
+      { id: "b", tag: "X-01", code: "3030.01", unitCode: "30" },
+    ];
+    expect(pickEquipment(reg, { label: "X-1" }).why).toBe("ambiguous");
+    expect(pickEquipment(reg, { label: "X-1 (2030.01)" }).asset?.id).toBe("a");
+    expect(pickEquipment(reg, { label: "X-01 (3030.01)" }).asset?.id).toBe("b");
   });
 });

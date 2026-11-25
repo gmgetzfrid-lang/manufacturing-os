@@ -18,6 +18,7 @@ import { TrendChip, MiniBars, Sparkline, SegmentBar, dayBuckets, type Segment } 
 import { StatusTag, LateEdge, WorkBar, rowBtn, link, thead, th, humanDate } from "@/components/cockpit/ui";
 import Timeline, { type TimelineItem } from "@/components/ui/Timeline";
 import { useProjectProgress } from "@/components/cockpit/projectProgress";
+import { assetHref } from "@/lib/equipmentIdentity";
 import {
   useWidget, useSetting, useWidgetData, Tabs, SearchField, useDebounced, Skeleton, Empty, timeAgo,
   headCount, fetchRecentDates, weekSplit, sum, FILL,
@@ -509,7 +510,7 @@ export function AdminAuditBody() {
 
 // ─── Equipment ───────────────────────────────────────────────────
 
-interface AssetRow { id: string; tag: string; description: string | null; location: string | null; updated_at?: string | null }
+interface AssetRow { id: string; tag: string; code?: string | null; description: string | null; location: string | null; updated_at?: string | null }
 
 export function EquipmentBody() {
   const router = useRouter();
@@ -520,7 +521,7 @@ export function EquipmentBody() {
     // each one from counting the whole register.
     const count = await headCount(() => supabase.from("assets").select("id", { count: "estimated", head: true })
       .eq("org_id", orgId).eq("archived", false) as unknown as Promise<{ count: number | null }>);
-    let s = supabase.from("assets").select("id, tag, description, location").eq("org_id", orgId).eq("archived", false);
+    let s = supabase.from("assets").select("id, tag, code, description, location").eq("org_id", orgId).eq("archived", false);
     if (dq) {
       const term = dq.replace(/[%_,()]/g, " ").trim();
       s = s.or(`tag.ilike.%${term}%,description.ilike.%${term}%,location.ilike.%${term}%`).order("tag");
@@ -540,7 +541,7 @@ export function EquipmentBody() {
         </span>
         <div className="flex-1 min-w-0">
           <SearchField value={q} onChange={setQ} placeholder="Find a tag, description or location, like P-101"
-            onSubmit={(v) => { const hit = rows.find((r) => r.tag.toLowerCase() === v.toLowerCase()) ?? rows[0]; if (hit) window.location.href = `/assets/${encodeURIComponent(hit.tag)}`; }} />
+            onSubmit={(v) => { const hit = rows.find((r) => r.tag.toLowerCase() === v.toLowerCase()) ?? rows[0]; if (hit) window.location.href = assetHref(hit); }} />
         </div>
       </div>
       {rows.length === 0 ? (
@@ -557,9 +558,9 @@ export function EquipmentBody() {
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
               {rows.map((a) => (
-                <tr key={a.id} className={wRow} onClick={() => router.push(`/assets/${encodeURIComponent(a.tag)}`)}>
+                <tr key={a.id} className={wRow} onClick={() => router.push(assetHref(a))}>
                   <td className={`${td} whitespace-nowrap`}>
-                    <Link href={`/assets/${encodeURIComponent(a.tag)}`} onClick={(e) => e.stopPropagation()} className="ui-tag">{a.tag}</Link>
+                    <Link href={assetHref(a)} onClick={(e) => e.stopPropagation()} className="ui-tag">{a.tag}</Link>
                   </td>
                   <td className={`${td} max-w-0 w-full`}><span className="block truncate text-[var(--color-text-muted)]">{a.description ?? "–"}</span></td>
                   <td className={`${td} hidden sm:table-cell whitespace-nowrap text-[var(--color-text-muted)]`}>{a.location ?? "–"}</td>

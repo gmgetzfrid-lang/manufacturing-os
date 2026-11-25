@@ -17,15 +17,15 @@ import { sayError } from "@/components/projects/sayError";
 import { deleteFile } from "@/lib/storage";
 import { fetchStored } from "@/lib/packageOps";
 import {
-  assetWords, existingDoc, fileToAsset, folderFor, listLibraries, loadEquipmentPlace, numberFromName, saveEquipmentPlace, suggestLibrary,
+  assetWords, existingDoc, fileToAsset, folderFor, hasTree, listLibraries, loadEquipmentPlace, numberFromName, saveEquipmentPlace, suggestLibrary,
   type EquipmentFilesPlace, type LibraryLite, type PackageAsset,
 } from "@/lib/equipmentFiles";
 import type { PkgItem } from "@/lib/woPackages";
 
 export interface Filed { itemId: string; documentId: string; libraryId: string; versionId: string | null; rev: string | null; title: string; deletePath?: string }
 
-export default function FileToAsset({ orgId, asset, items, nothingOnFile, from, uid, actorEmail, onFiled, onCancel }: {
-  orgId: string; asset: PackageAsset;
+export default function FileToAsset({ orgId, projectId, asset, items, nothingOnFile, from, uid, actorEmail, onFiled, onCancel }: {
+  orgId: string; projectId?: string; asset: PackageAsset;
   /** The package's files and photos to offer. */
   items: PkgItem[];
   /** The equipment has nothing on file: said up front. */
@@ -40,6 +40,8 @@ export default function FileToAsset({ orgId, asset, items, nothingOnFile, from, 
   const [libs, setLibs] = useState<LibraryLite[]>([]);
   const [lib, setLib] = useState("");
   const [changing, setChanging] = useState(false);
+  // No Equipment Files library yet: filed to a library picked for now.
+  const [forNow, setForNow] = useState(false);
   const [where, setWhere] = useState<string | null>(null);
   const [pick, setPick] = useState<Record<string, { on: boolean; number: string }>>(() =>
     Object.fromEntries(items.map((it) => [it.id, { on: it.kind === "file" || it.mime === "application/pdf", number: numberFromName(it.title) }])));
@@ -62,12 +64,16 @@ export default function FileToAsset({ orgId, asset, items, nothingOnFile, from, 
     if (!libId) { setWhere(null); return; }
     let on = true;
     const p: EquipmentFilesPlace = place && !changing ? place : { libraryId: libId, collectionId: null };
+    // Equipment new since the push gets its folder when it's filed: said, not made yet.
+    if (hasTree(p) && !p.assets?.[asset.id]) { setWhere(`${p.libraryName ?? "Equipment Files"} › a new folder for ${asset.tag}`); return; }
     void folderFor(orgId, p, asset).then((w) => { if (on) setWhere(w.words); }, () => { if (on) setWhere(null); });
     return () => { on = false; };
   }, [orgId, libId, place, changing, asset]);
 
   const chosen = items.filter((it) => pick[it.id]?.on);
   const asking = place === null || changing;
+  // Equipment Files isn't set up (and nobody picked a library for now): that comes first.
+  const setUpFirst = place === null && !forNow;
 
   const go = async () => {
     if (!uid) { setErr("Sign in again to file documents."); return; }
@@ -88,7 +94,7 @@ export default function FileToAsset({ orgId, asset, items, nothingOnFile, from, 
         if (there) { clash[it.id] = there; continue; }
         const bytes = await fetchStored(it.path);
         const file = new File([bytes as BlobPart], `${number}.${it.mime === "image/png" ? "png" : it.mime === "image/jpeg" ? "jpg" : "pdf"}`, { type: it.mime || "application/pdf" });
-        const r = await fileToAsset({ orgId, place: p, asset, file, number, title: number, from, actorUserId: uid, actorEmail });
+        const r = await fileToAsset({ orgId, place: p, asset, file, number, title: number, from, projectId, actorUserId: uid, actorEmail });
         words = r.words;
         done.push({ itemId: it.id, documentId: r.documentId, libraryId: r.libraryId, versionId: r.versionId, rev: "0", title: number, deletePath: it.path });
       }
@@ -115,11 +121,19 @@ export default function FileToAsset({ orgId, asset, items, nothingOnFile, from, 
     <section aria-label={`File to ${asset.tag}`} className="rounded-lg border border-[var(--color-border-strong)] p-3 grid gap-3">
       <div>
         <h3 className="text-body font-semibold text-[var(--color-text)]">{nothingOnFile ? `${asset.tag} has no drawings on file yet. File these to it for good?` : `File to ${assetWords(asset)} for good?`}</h3>
-        <p className="text-body text-[var(--color-text-muted)]">They become controlled documents{where ? ` in ${where}` : ""}, tagged to {asset.tag}. Anyone looking at {asset.tag}, the library and the next package find them, at their current revision.</p>
+        <p className="text-body text-[var(--color-text-muted)]">They become controlled documents{where && !setUpFirst ? ` in ${where}` : ""}, tagged to {asset.tag}. Anyone looking at {asset.tag}, the library and the next package find them, at their current revision.</p>
       </div>
 
       {place === undefined ? <p role="status" className="text-body text-[var(--color-text-muted)]">Checking where equipment files go…</p>
-        : asking ? (
+        : setUpFirst ? (
+          <div className="rounded-lg bg-[var(--color-surface-2)] p-3 grid gap-2">
+            <p className="text-body text-[var(--color-text)]"><b>Equipment files don&apos;t have their library yet.</b> Make it once in Operating areas: a library laid out like your units, equipment types and equipment, so this lands in {asset.tag}&apos;s own folder and shows on {asset.tag}&apos;s page. Then come back and file it.</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <a href="/admin/assets?equipmentFiles=1" className="inline-flex items-center min-h-10 pointer-coarse:min-h-11 px-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)]">Set it up in Operating areas</a>
+              <button type="button" onClick={() => setForNow(true)} className="min-h-9 pointer-coarse:min-h-11 text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Or file it to a library for now</button>
+            </div>
+          </div>
+        ) : asking ? (
           <div className="grid gap-1.5">
             <label htmlFor="fta-lib" className="text-body font-medium text-[var(--color-text)]">Where equipment files go <span className="font-normal text-[var(--color-text-muted)]">(set once for the workspace)</span></label>
             {libs.length ? (
@@ -127,7 +141,7 @@ export default function FileToAsset({ orgId, asset, items, nothingOnFile, from, 
                 {libs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
               </select>
             ) : <p className="text-body text-[var(--state-held-text)]">Document control has no library yet. An admin makes one (a &ldquo;Drawings&rdquo; library works), then files can go there.</p>}
-            <p className="text-caption text-[var(--color-text-muted)]">Each file goes in its unit&apos;s folder when the library has one. The equipment registry lists them; it doesn&apos;t keep a second copy.</p>
+            <p className="text-caption text-[var(--color-text-muted)]">Each file goes in its unit&apos;s folder when the library has one. The equipment registry lists them; it doesn&apos;t keep a second copy. The Equipment Files library (Operating areas) gives each piece of equipment its own folder.</p>
           </div>
         ) : (
           <p className="text-body text-[var(--color-text)] inline-flex flex-wrap items-center gap-x-2"><Library aria-hidden className="w-4 h-4 text-[var(--color-text-muted)]" />Goes to {where ?? "…"}
@@ -160,7 +174,7 @@ export default function FileToAsset({ orgId, asset, items, nothingOnFile, from, 
 
       {err && <p className="text-body font-medium text-[var(--state-overdue-text)]">{err}</p>}
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="secondary" onClick={() => void go()} loading={!!busy} disabled={!chosen.length || !libId || place === undefined}><Check className="w-4 h-4" /> {busy && busy !== "Filing" ? busy : `File ${chosen.length || ""} to ${asset.tag}`.replace("  ", " ")}</Button>
+        <Button variant="secondary" onClick={() => void go()} loading={!!busy} disabled={!chosen.length || !libId || place === undefined || setUpFirst}><Check className="w-4 h-4" /> {busy && busy !== "Filing" ? busy : `File ${chosen.length || ""} to ${asset.tag}`.replace("  ", " ")}</Button>
         <Button variant="ghost" onClick={onCancel} disabled={!!busy}>Not now</Button>
       </div>
     </section>

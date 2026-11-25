@@ -10,9 +10,9 @@
 // (about 62%), the things you check at a glance (photos, its work, its other
 // names) on the narrow side.
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { MapPin, AlertOctagon, RefreshCw, Printer, QrCode } from "lucide-react";
 import MoreMenu from "@/components/ui/MoreMenu";
 import SignedImg from "@/components/assets/SignedImg";
@@ -26,7 +26,8 @@ import { SkeletonRows } from "@/components/ui/Skeleton";
 import { Button } from "@/components/ui/Button";
 import { friendlyError } from "@/lib/friendlyError";
 import { transitionPush } from "@/lib/viewTransition";
-import { getAssetByTag, listAssetPhotos, type Asset, type AssetPhoto } from "@/lib/assets";
+import { resolveEquipment, listAssetPhotos, type Asset, type AssetPhoto } from "@/lib/assets";
+import { assetHref } from "@/lib/equipmentIdentity";
 import AliasPanel from "@/components/assets/AliasPanel";
 import MentionsPanel from "@/components/assets/MentionsPanel";
 import EstatePanel from "@/components/assets/EstatePanel";
@@ -41,9 +42,16 @@ interface HubDoc {
 }
 
 export default function AssetHubPage() {
+  // useSearchParams needs a Suspense boundary at build time.
+  return <Suspense fallback={null}><AssetHub /></Suspense>;
+}
+
+function AssetHub() {
   const params = useParams();
   const router = useRouter();
   const tag = decodeURIComponent(String(params?.tag ?? ""));
+  // Its ID, so a tag that reads like another (X-1 and X-01) opens this one.
+  const code = useSearchParams().get("code");
   const { activeOrgId, activeRole, uid, userEmail } = useRole();
   const [packing, setPacking] = useState(false);
   const [packDone, setPackDone] = useState(false);
@@ -51,6 +59,8 @@ export default function AssetHubPage() {
   const [packNote, setPackNote] = useState<{ text: string; bad: boolean } | null>(null);
 
   const [asset, setAsset] = useState<Asset | null>(null);
+  // Two pieces the tag could be, and nothing to tell them apart: asked, never guessed.
+  const [choices, setChoices] = useState<Asset[]>([]);
   const [docs, setDocs] = useState<HubDoc[]>([]);
   const [holdsByDoc, setHoldsByDoc] = useState<Map<string, number>>(new Map());
   const [photos, setPhotos] = useState<AssetPhoto[]>([]);
@@ -58,14 +68,18 @@ export default function AssetHubPage() {
   const [error, setError] = useState<unknown>(null);
   const [partError, setPartError] = useState<string | null>(null);
   const [docLimit, setDocLimit] = useState(25);
+  // Its folder in the Equipment Files library, when there is one.
+  const [folder, setFolder] = useState<{ href: string; words: string } | null>(null);
 
   const refresh = useCallback(async () => {
     if (!activeOrgId || !tag) return;
     setLoading(true); setError(null); setPartError(null);
     const missed: string[] = [];
     try {
-      const a = await getAssetByTag(activeOrgId, tag).catch(() => { missed.push("the equipment record"); return null; });
+      const found = await resolveEquipment(activeOrgId, code ? `${tag} (${code})` : tag).catch(() => { missed.push("the equipment record"); return null; });
+      const a = found?.asset ?? null;
       setAsset(a);
+      setChoices(!a && found?.why === "ambiguous" ? found.candidates : []);
 
       // Every controlled document tagged to this asset (JSONB containment).
       const { data: docRows, error: de } = await supabase
@@ -76,7 +90,36 @@ export default function AssetHubPage() {
         .neq("status", "Archived")
         .limit(500);
       if (de) throw de;
-      const mapped: HubDoc[] = (docRows ?? []).map((r) => {
+      // Its Equipment Files folder (the library pushed from Operating areas)
+      // and documents tagged to it by hand: the same controlled documents,
+      // shown here, never copied.
+      const more: Array<Record<string, unknown>> = [];
+      let folder: { href: string; words: string } | null = null;
+      if (a?.id) {
+        const { loadTree } = await import("@/lib/equipmentLibraryPush");
+        const tree = await loadTree(activeOrgId).catch(() => null);
+        const fid = tree?.assets?.[a.id];
+        const cols = "id, document_number, title, name, rev, status, library_id, checked_out_by_name, updated_at";
+        const [inFolder, linked] = await Promise.all([
+          fid ? supabase.from("documents").select(cols).eq("collection_id", fid).neq("status", "Archived").limit(500) : Promise.resolve({ data: [] as unknown[] }),
+          supabase.from("document_assets").select("document_id").eq("asset_id", a.id).limit(500),
+        ]);
+        more.push(...((inFolder.data ?? []) as Array<Record<string, unknown>>));
+        const have = new Set([...(docRows ?? []), ...more].map((r) => String((r as Record<string, unknown>).id)));
+        const linkIds = ((linked.data ?? []) as Array<{ document_id: string }>).map((r) => r.document_id).filter((id) => !have.has(id));
+        if (linkIds.length) {
+          const { data: lr } = await supabase.from("documents").select(cols).in("id", linkIds.slice(0, 300)).neq("status", "Archived");
+          more.push(...((lr ?? []) as Array<Record<string, unknown>>));
+        }
+        if (fid && tree) {
+          const { data: c } = await supabase.from("collections").select("path_names").eq("id", fid).maybeSingle();
+          const path = ((c as { path_names?: string[] } | null)?.path_names ?? []);
+          folder = { href: `/documents/${tree.libraryId}?folderId=${fid}`, words: [tree.libraryName ?? "Equipment Files", ...path].join(" › ") };
+        }
+      }
+      setFolder(folder);
+      const seen = new Set<string>();
+      const mapped: HubDoc[] = [...(docRows ?? []), ...more].filter((r) => { const id = String((r as Record<string, unknown>).id); if (seen.has(id)) return false; seen.add(id); return true; }).map((r) => {
         const x = r as Record<string, unknown>;
         return {
           id: String(x.id),
@@ -112,7 +155,7 @@ export default function AssetHubPage() {
     } finally {
       setLoading(false);
     }
-  }, [activeOrgId, tag]);
+  }, [activeOrgId, tag, code]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -168,6 +211,7 @@ export default function AssetHubPage() {
       const { printEquipmentLabels } = await import("@/lib/physicalBridge");
       await printEquipmentLabels([{
         tag,
+        code: asset?.code ?? code,
         description: asset?.description ?? null,
         location: asset?.location ?? null,
       }]);
@@ -180,7 +224,8 @@ export default function AssetHubPage() {
   // numbers sit under it. A hold is the one that needs someone, so it leads
   // when there is one.
   const outCount = docs.filter((d) => !!d.checkedOutByName).length;
-  const answerFacts = error && docs.length === 0 ? undefined : [
+  // Until one is picked, a count of 0 would be untrue.
+  const answerFacts = (error || choices.length > 1) && docs.length === 0 ? undefined : [
     { label: "Documents", value: docCount.toLocaleString() },
     // Holds and check-outs show only when there are some (a zero isn't news).
     ...(heldCount > 0 ? [{ label: "On hold", value: heldCount.toLocaleString(), tone: "bad" as const, hero: true }] : []),
@@ -199,7 +244,12 @@ export default function AssetHubPage() {
           factsHero={heldCount > 0 ? "auto" : "none"}
           sub={
             <>
-              {!!error && docs.length === 0 ? "Its documents didn't load." : asset?.description || (asset ? "Registered equipment." : "Not in the equipment list. Showing documents tagged with it.")}
+              {!!error && docs.length === 0 ? "Its documents didn't load."
+                : choices.length > 1 ? <>
+                  {tag} could be {choices.length === 2 ? "either" : "any"} of these. Pick one:{" "}
+                  {choices.map((c, i) => <React.Fragment key={c.id}>{i > 0 && (i === choices.length - 1 ? " or " : ", ")}<Link href={assetHref(c)} className="font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">{c.tag}{c.code ? ` (${c.code})` : ""}{c.unit_code ? ` in unit ${c.unit_code}` : ""}</Link></React.Fragment>)}.
+                </>
+                : asset?.description || (asset ? "Registered equipment." : "Not in the equipment list. Showing documents tagged with it.")}
               {asset?.location && <span className="ml-3 whitespace-nowrap"><MapPin aria-hidden className="inline w-4 h-4 -mt-0.5" /> {asset.location}</span>}
             </>
           }
@@ -251,14 +301,15 @@ export default function AssetHubPage() {
             <section className="min-w-0">
               <div className="flex flex-wrap items-end gap-x-3 gap-y-1 mb-3 min-h-8">
                 <h2 className="font-display text-section leading-tight font-semibold text-[var(--color-text)]">Controlled documents</h2>
-                <span className="ui-count">{docCount.toLocaleString()}</span>
+                {!(choices.length > 1 && docCount === 0) && <span className="ui-count">{docCount.toLocaleString()}</span>}
+                {folder && <a href={folder.href} className="ml-auto inline-flex items-center min-h-9 pointer-coarse:min-h-11 text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2" title={folder.words}>Its folder: {folder.words}</a>}
               </div>
               {!!error ? (
                 <ErrorNote error={error} title="Couldn't load the documents." onRetry={() => void refresh()} />
               ) : (
               <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
               {docs.length === 0 ? (
-                <p className="px-4 py-4 text-reading text-[var(--color-text-muted)]">No controlled documents are tagged to {tag} yet.</p>
+                <p className="px-4 py-4 text-reading text-[var(--color-text-muted)]">{choices.length > 1 ? "Pick which one above to see its documents." : folder ? `Nothing in ${tag}'s folder or tagged to it yet.` : `No controlled documents are tagged to ${tag} yet.`}</p>
               ) : (
                 <table className="w-full text-body tabular-nums">
                   <thead className="bg-[var(--color-surface-2)] text-body text-[var(--color-text-muted)] text-left max-sm:hidden">
