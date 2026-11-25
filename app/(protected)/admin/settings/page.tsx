@@ -165,8 +165,9 @@ export default function WorkspaceSettingsPage() {
         factsHero={failedEmails ? "auto" : "none"}
         facts={memberCount != null && libraryCount != null ? [
           ...(failedEmails ? [{ label: "Emails not sent", value: failedEmails, tone: "bad" as const, hero: true }] : []),
-          { label: "People", value: memberCount },
-          { label: "Libraries", value: libraryCount },
+          // A zero stays out: it isn't news on a settings page.
+          ...(memberCount > 0 ? [{ label: "People", value: memberCount }] : []),
+          ...(libraryCount > 0 ? [{ label: "Libraries", value: libraryCount }] : []),
         ] : undefined}
       />
 

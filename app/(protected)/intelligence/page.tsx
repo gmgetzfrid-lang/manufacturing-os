@@ -212,8 +212,9 @@ export default function IntelligencePage() {
   const ready = known.filter((c) => c.ok && !c.unknown).length;
   const facts = s.countsKnown ? [
     ...(s.pendingProposals > 0 ? [{ label: "Waiting on you", value: s.pendingProposals.toLocaleString(), tone: "warn" as const, hero: true }] : []),
-    { label: "Documents", value: s.docs.toLocaleString() },
-    { label: "Libraries", value: s.libraries.toLocaleString() },
+    // Zeros stay out: "Is it on" below says what's missing, in words.
+    ...(s.docs > 0 ? [{ label: "Documents", value: s.docs.toLocaleString() }] : []),
+    ...(s.libraries > 0 ? [{ label: "Libraries", value: s.libraries.toLocaleString() }] : []),
     ...(s.chunksTotal > 0 ? [{ label: "Indexed", value: `${coveragePct}%` }] : []),
   ] : undefined;
 
@@ -336,8 +337,10 @@ function CheckLine({ c }: { c: CheckRow }) {
     ? <Link href={c.href} className="inline-flex items-center gap-1 text-body font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2 whitespace-nowrap">{c.cta}</Link>
     : null;
   return (
-    <tr className="align-middle">
-      <td className="px-4 py-3 font-medium text-[var(--color-text)]">{c.title}</td>
+    // Top-aligned: with no line under each row, the check's name sits
+    // level with its state, even when the state wraps on a phone.
+    <tr className="align-top">
+      <td className="px-4 py-3 pt-3.5 font-medium text-[var(--color-text)]">{c.title}</td>
       <td className="px-4 py-3">
         {c.pending ? (
           <span role="status" className="flex items-center gap-2.5"><span className="sr-only">Checking</span><Skeleton className="!w-16" /><Skeleton className="!w-56 max-w-full" /></span>

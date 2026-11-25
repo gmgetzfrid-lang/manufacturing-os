@@ -662,7 +662,7 @@ function GraphPageInner() {
   const mapFacts = data ? [
     { label: "Libraries", value: data.libraries.length.toLocaleString() },
     ...(listings.length ? [{ label: "Drives", value: listings.length.toLocaleString() }] : []),
-    { label: "Links", value: data.edges.length.toLocaleString() },
+    ...(data.edges.length > 0 ? [{ label: "Links", value: data.edges.length.toLocaleString() }] : []),
   ] : undefined;
 
   // Where the graph was opened from, and the Table tab's way back to the

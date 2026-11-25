@@ -121,8 +121,9 @@ export default function ConnectorChecksPage() {
   // The count to act on leads; when nothing is open every fact is small.
   const answerFacts = checks ? [
     ...(open > 0 ? [{ label: "To look at", value: open.toLocaleString(), tone: "warn" as const, hero: true }] : []),
-    { label: "Sheets read", value: checks.sheets.toLocaleString() },
-    { label: "Connectors", value: checks.connectors.toLocaleString() },
+    // A zero is not a cell (B7): "No connectors read yet" says it.
+    ...(checks.sheets > 0 ? [{ label: "Sheets read", value: checks.sheets.toLocaleString() }] : []),
+    ...(checks.connectors > 0 ? [{ label: "Connectors", value: checks.connectors.toLocaleString() }] : []),
     ...(checks.connectors > 0 ? [{ label: "Match", value: checks.holds.toLocaleString() }] : []),
   ] : undefined;
 

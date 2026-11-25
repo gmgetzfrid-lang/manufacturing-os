@@ -24,6 +24,8 @@ export interface TimelineItem {
   detail?: React.ReactNode;
   /** Who did it. */
   who?: { uid?: string | null; name?: string | null; email?: string | null } | null;
+  /** Only the day is known (a dated record with no time): no time shown. */
+  dateOnly?: boolean;
 }
 
 const DOT: Record<TimelineTone, string> = {
@@ -76,7 +78,7 @@ export default function Timeline({ items, tz, max, className = "" }: {
                   {it.detail && <div className="text-caption text-[var(--color-text-muted)] break-words">{it.detail}</div>}
                 </div>
                 <div className="flex items-center gap-2 text-caption text-[var(--color-text-muted)] tabular-nums whitespace-nowrap">
-                  {new Date(ms(it.at)).toLocaleTimeString("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" })}
+                  {!it.dateOnly && new Date(ms(it.at)).toLocaleTimeString("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" })}
                   {it.who && (it.who.name || it.who.email) && <UserAvatar uid={it.who.uid} name={it.who.name} email={it.who.email} size={20} title={it.who.name || it.who.email || undefined} />}
                 </div>
               </li>

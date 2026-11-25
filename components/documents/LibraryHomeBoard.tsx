@@ -295,10 +295,9 @@ function PartGrid({
                 <div className="flex flex-wrap gap-2">
                   {pickFolders(rootFolders, p.settings?.folderIds).map((f) => (
                     <button key={f.id} onClick={() => onOpenFolder(f.id!)}
-                      className="group inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-main)] hover:bg-[var(--color-surface-2)] text-body font-medium text-[var(--color-text)] transition-colors hover-lift">
-                      <span className="w-5 h-5 rounded-md grid place-items-center text-white shrink-0 shadow-sm" style={{ background: f.color || "var(--brand-gradient)" }}>
-                        <NodeIcon name={f.icon} className="w-3 h-3" />
-                      </span>
+                      className="group inline-flex items-center gap-2 px-3 min-h-10 pointer-coarse:min-h-11 rounded-lg border border-[var(--color-border)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-2)] text-body font-medium text-[var(--color-text)] transition-colors">
+                      {/* The folder's icon, quiet: no colored tile (C6, B2). */}
+                      <NodeIcon name={f.icon} className="w-4 h-4 shrink-0 text-[var(--color-text-faint)]" />
                       <span className="truncate max-w-[12rem]">{f.name}</span>
                       <ChevronRight className="w-3 h-3 text-[var(--color-text-faint)] -ml-0.5 opacity-0 -translate-x-0.5 group-hover:opacity-100 group-hover:translate-x-0 transition-all" />
                     </button>
@@ -313,7 +312,7 @@ function PartGrid({
               {recent.length === 0 ? (
                 <p className="text-body text-[var(--color-text-muted)]">No documents yet.</p>
               ) : (
-                <ul className="divide-y divide-[var(--color-border)] -my-1">
+                <ul className="grid gap-1 -my-1">
                   {recent.slice(0, p.settings?.count ?? 6).map((d) => (
                     <li key={d.id}>
                       <button onClick={() => onOpenDoc(d)} className="w-full flex items-center gap-3 py-2 text-left hover:bg-[var(--color-surface-2)] rounded-lg px-1 -mx-1">
@@ -337,7 +336,8 @@ function PartGrid({
 
 function Stat({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-xl bg-[var(--color-surface-2)] px-3 py-2.5 flex items-baseline gap-2">
+    // A fact, label beside value: no tile inside the panel (B3).
+    <div className="flex items-baseline gap-2">
       <div className="text-reading font-medium tabular-nums text-[var(--color-text)]">{value}</div>
       <div className="text-body font-medium text-[var(--color-text-muted)]">{label}</div>
     </div>
