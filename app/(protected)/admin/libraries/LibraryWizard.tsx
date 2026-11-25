@@ -387,7 +387,8 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
 
         {/* STEP 4: review before anything is saved */}
         {step === 4 && (
-          <dl className="rounded-xl border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+          // A list of facts: label left, value right, space between, no rule under each (B3).
+          <dl className="grid gap-4">
             {([
               ["Name", <><span className="font-medium">{name.trim()}</span>{description.trim() && <span className="block text-[var(--color-text-muted)]">{description.trim()}</span>}</>, 1],
               ["Kind", typeLabel, 1],
@@ -395,7 +396,7 @@ export default function LibraryWizard({ orgId, isOpen, onClose, onSave, isLoadin
               ["Who can see", viewAccess === "all" ? "Everyone in the workspace" : viewRoles.join(", "), 3],
               ["Who can upload and edit", writers.join(", "), 3],
             ] as const).map(([k, v, s]) => (
-              <div key={k} className="grid grid-cols-1 sm:grid-cols-[180px_1fr_auto] gap-x-4 gap-y-0.5 px-4 py-3 items-start">
+              <div key={k} className="grid grid-cols-1 sm:grid-cols-[180px_1fr_auto] gap-x-4 gap-y-0.5 items-start">
                 <dt className="text-body text-[var(--color-text-muted)]">{k}</dt>
                 <dd className="text-reading text-[var(--color-text)] min-w-0 break-words">{v}</dd>
                 <dd><button type="button" onClick={() => go(s as 1 | 2 | 3 | 4)} className={btnLink} aria-label={`Change ${k.toLowerCase()}`}>Change</button></dd>

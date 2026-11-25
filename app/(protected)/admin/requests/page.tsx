@@ -176,11 +176,6 @@ export default function DraftingConfigPage() {
           title={answer}
           sub={`The drafting request form${extra > 0 ? `, with ${extra} custom section${extra === 1 ? "" : "s"}` : ""}. Changes apply to new requests once saved.`}
           factsHero="none"
-          facts={[
-            { label: "Request types", value: settings.requestTypes.options.length },
-            { label: "Units", value: settings.units.options.length },
-            { label: "Priorities", value: settings.priorities.options.length },
-          ]}
           primary={
             <Button {...saveFx.state} doneLabel="Saved" onClick={() => void handleSave()} disabled={!dirty && !saveFx.done}
               title={!dirty ? "Nothing changed yet" : undefined}>
@@ -337,7 +332,8 @@ function ConfigSection({
         <FormRow label="Form label" htmlFor={`label-${title}`}>
           <input id={`label-${title}`} value={config.label} onChange={(e) => onLabelChange(e.target.value)} className={`${field} font-medium`} />
         </FormRow>
-        <div className="border-t border-[var(--color-border)] px-4 sm:px-5 pt-3 pb-4">
+        {/* The options: a group of their own, split from the label by space. */}
+        <div className="px-4 sm:px-5 pt-2 pb-4">
           <div className="flex items-center gap-2 pb-1.5 text-body font-medium text-[var(--color-text-muted)]">
             <span className="flex-1">Shown as</span>
             <span className="w-24 sm:w-36 shrink-0">Stored as</span>
@@ -500,7 +496,8 @@ function FieldEditor({
 }) {
   const isChoice = field.type === "select" || field.type === "multiselect";
   return (
-    <div className="border border-[var(--color-border)] rounded-md p-3 bg-[var(--color-surface)]">
+    // One field inside the section's sheet: a quiet fill, not a second box (B3).
+    <div className="rounded-lg p-3 bg-[var(--color-surface-2)]">
       <div className="flex items-center gap-2 flex-wrap">
         <input
           value={field.label}

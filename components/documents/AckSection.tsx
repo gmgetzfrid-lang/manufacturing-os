@@ -6,7 +6,7 @@
 // requirement on this doc / its folder / the library, and print the audit report.
 
 import React, { useCallback, useEffect, useState } from "react";
-import { ClipboardCheck, Loader2, Pencil, X, Plus, BellRing, FileDown, CheckCircle2, Clock } from "lucide-react";
+import { ClipboardCheck, Loader2, Pencil, X, Plus, BellRing, FileDown } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import { searchOrgUsers, type OrgUser } from "@/lib/notifications";
@@ -173,9 +173,10 @@ export default function AckSection({ doc, orgId, canManage }: {
   const src: Level | null = docPol ? "document" : folderPol ? "collection" : libPol ? "library" : null;
 
   const statusChip = (r: AckRosterRow) => {
-    if (r.status === "acknowledged") return <span className="inline-flex items-center gap-1 text-body font-medium text-[var(--state-released)]"><CheckCircle2 className="w-3 h-3" /> {humanDate(r.acknowledgedAt)}</span>;
-    if (r.status === "waived") return <span className="text-body font-medium text-[var(--color-text-muted)]">Waived</span>;
-    return <span className="inline-flex items-center gap-1 text-body font-medium text-[var(--state-held)]"><Clock className="w-3 h-3" /> Outstanding</span>;
+    // A dot and a word in text color (S1): the dot carries the state.
+    if (r.status === "acknowledged") return <span className="inline-flex items-center gap-1.5 text-body text-[var(--color-text)]"><span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-released)]" />Acknowledged {humanDate(r.acknowledgedAt)}</span>;
+    if (r.status === "waived") return <span className="text-body text-[var(--color-text-muted)]">Waived</span>;
+    return <span className="inline-flex items-center gap-1.5 text-body font-medium text-[var(--color-text)]"><span aria-hidden className="w-2 h-2 rounded-full bg-[var(--state-held)]" />Outstanding</span>;
   };
 
   return (

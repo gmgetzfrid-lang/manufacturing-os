@@ -282,7 +282,7 @@ export default function AdminTeamsPage() {
                       {members.map((m) => <option key={m.uid} value={m.uid}>{m.display_name || m.email || m.uid}</option>)}
                     </select>
                   </FormRow>
-                  <div className="border-t border-[var(--color-border)]" />
+                  {/* Two facts about the team: space between them, no rule. */}
                   <FormRow label="Owns libraries" hint="Pick a library to give it to this department.">
                     <div className="flex flex-wrap gap-1.5">
                       {libraries.map((l) => {

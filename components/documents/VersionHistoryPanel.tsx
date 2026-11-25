@@ -243,14 +243,14 @@ export default function VersionHistoryPanel({
       more.push({ icon: <RotateCcw className="w-4 h-4" />, label: `Revert to Rev ${label}`, onClick: () => onRevertVersion(v) });
     }
     // What the rev is, in words (each with its reason on hover).
-    const words: Array<{ text: string; tip?: string; warn?: boolean }> = [
+    const words: Array<{ text: string; tip?: string; warn?: boolean; bad?: boolean }> = [
       isCurrent ? { text: "Current" }
         : v.isBranch ? { text: "Branch", tip: "Saved as a branch from an old base. Never made current. See the open items for where it stands.", warn: true }
         : { text: "Superseded" },
       ...(v.issueType ? [{ text: v.issueType }] : []),
       ...(v.changeType ? [{ text: v.changeType }] : []),
       ...(v.revertedFromVersionId ? [{ text: "Revert" }] : []),
-      ...(v.provenance === "unverified" ? [{ text: "Unverified provenance", tip: "Published with no recorded checkout/download trail and no verified base declaration. Document Control reviews these, like QA receiving inspection.", warn: true }] : []),
+      ...(v.provenance === "unverified" ? [{ text: "Unverified provenance", tip: "Published with no recorded checkout/download trail and no verified base declaration. Document Control reviews these, like QA receiving inspection.", bad: true }] : []),
       ...(v.provenance === "session" ? [{ text: "From a checkout", tip: "Published from a checkout: full record of where it came from." }] : []),
       ...(v.provenance === "external" ? [{ text: `External${v.createdByName ? `: ${v.createdByName}` : ""}`, tip: "Submitted by an outside company through a project intake link. External work enters through review (or a trusted link's own documents). The submitting company is on the record." }] : []),
       ...(v.sourceFileKey ? [{ text: "CAD source", tip: "The native CAD source file is stored with this revision." }] : []),
@@ -270,7 +270,7 @@ export default function VersionHistoryPanel({
           {words.map((w, i) => (
             <React.Fragment key={i}>
               {i > 0 && " · "}
-              <span title={w.tip} className={w.warn ? "text-[var(--state-overdue-text)]" : i === 0 && isCurrent ? "text-[var(--color-text)]" : undefined}>{w.text}</span>
+              <span title={w.tip} className={w.bad ? "text-[var(--state-overdue-text)]" : w.warn ? "text-[var(--state-held-text)]" : i === 0 && isCurrent ? "text-[var(--color-text)]" : undefined}>{w.text}</span>
             </React.Fragment>
           ))}
         </span>

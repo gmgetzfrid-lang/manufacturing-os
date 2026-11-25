@@ -159,9 +159,10 @@ export default function PermissionsConsolePage() {
         sub="Who can see and change each library, folder and document. Deny beats allow."
         factsHero="none"
         facts={libs.length > 0 ? [
+          // Zeros that aren't news stay out: the title already says "No special rules."
           { label: "Libraries", value: libs.length },
-          { label: "Folders", value: folders.length },
-          { label: "With their own rules", value: ruled },
+          ...(folders.length > 0 ? [{ label: "Folders", value: folders.length }] : []),
+          ...(ruled > 0 ? [{ label: "With their own rules", value: ruled }] : []),
         ] : undefined}
         tools={
           <button type="button" className={heroQuiet} onClick={() => void refresh()} disabled={loading} aria-label="Check again" title="Check again">

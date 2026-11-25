@@ -88,7 +88,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
       const ok = await appConfirm({
         title: "Change who can act?",
         message: `It takes effect right away:\n\n${changes.slice(0, 8).join("\n")}${changes.length > 8 ? `\nAnd ${changes.length - 8} more.` : ""}`,
-        confirmLabel: "Save",
+        confirmLabel: "Save permissions",
       });
       if (!ok) return;
     }
@@ -125,7 +125,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
 
   return (
     <Section
-      label={<>Action permissions <HelpTooltip>Who may do each workflow action. The server checks it on every action, and every save is written to the audit log. A request&apos;s own requester, drafter and assigned engineer always keep their actions on it; that isn&apos;t set here.</HelpTooltip></>}
+      label={<>Action permissions <HelpTooltip>Who may do each workflow action. The server checks it on every action, and every save is written to the audit log. A request&apos;s own requester, drafter and assigned engineer always keep their actions on it; that isn&apos;t set here. &ldquo;Engineer&rdquo; covers every tier, Engineer-1 to Engineer-4; the tiers are labels and are checked the same way.</HelpTooltip></>}
       action={canEdit ? (
         <div className="flex items-center gap-3">
           {dirty && <span className="text-body text-[var(--color-text-muted)]">Not saved yet</span>}
@@ -190,7 +190,6 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
           </tbody>
         </table>
       </div>
-      <p className="mt-2 text-body text-[var(--color-text-muted)]">&ldquo;Engineer&rdquo; covers every tier, Engineer-1 to Engineer-4; the tiers are labels and are checked the same way.</p>
     </Section>
   );
 }

@@ -338,7 +338,7 @@ export default function LibraryAdminPage() {
                     <tr key={lib.id} className={`${tbl.tr} max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto]`}>
                       <td className={`${tbl.td} min-w-0`}>
                         <div className="min-w-0">
-                          <Link href={`/documents/${lib.id}`} title={`Open ${lib.name}`} className="font-medium text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{lib.name}</Link>
+                          <Link href={`/documents/${lib.id}`} title={`Open ${lib.name}`} className="text-reading font-medium text-[var(--color-text)] hover:text-[var(--color-accent-text)] hover:underline underline-offset-2">{lib.name}</Link>
                           {lib.description && <div className="text-body text-[var(--color-text-muted)] line-clamp-1 max-w-[60ch]">{lib.description}</div>}
                           <div className="md:hidden mt-0.5 text-body text-[var(--color-text-muted)]">
                             {[lib.type ? String(lib.type).replace(/_/g, " ") : null, !roles ? "Everyone can read" : roles.length === 0 ? "Nobody can read yet" : `Read: ${roles.join(", ")}`, neverAi.has(lib.id!) ? "Kept from the AI" : null].filter(Boolean).join(" · ")}
