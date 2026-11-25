@@ -229,8 +229,9 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
             ? { label: "Indexed", value: <>{L.counts.indexed.toLocaleString()}<span className="text-[var(--color-text-muted)] font-medium text-section"> of {L.indexable.toLocaleString()}</span></> }
             : { label: "PDFs indexed", value: <>{report.uploaded.ready.toLocaleString()}<span className="text-[var(--color-text-muted)] font-medium text-section"> of {report.uploaded.total.toLocaleString()}</span></> },
           ...(L ? [{ label: report.sources.length === 1 ? "In the linked source" : "In the linked sources", value: L.total.toLocaleString() }] : []),
-          { label: "To repair", value: fixable.toLocaleString(), tone: fixable > 0 ? "warn" as const : undefined },
-          { label: "Can't be indexed", value: notIndexable.toLocaleString(), hint: "Not PDFs, held back or superseded. Expected." },
+          // "N to repair" is already the verdict beside the heading; a zero
+          // that isn't news stays out (B5, B7).
+          ...(notIndexable > 0 ? [{ label: "Can't be indexed", value: notIndexable.toLocaleString(), hint: "Not PDFs, held back or superseded. Expected." }] : []),
         ]} />
 
         {/* The whole source as one bar: every document is in exactly one color. */}
@@ -383,7 +384,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
                           <tr>
                             <td colSpan={3} className="px-4 pb-3 pt-0">
                               <p className="md:hidden mb-1.5 text-body text-[var(--color-text-muted)]">{EXPLAIN[k]}</p>
-                              <ul className="max-h-56 overflow-auto rounded-md border border-[var(--color-border)] divide-y divide-[var(--color-border)] bg-[var(--color-surface)]">
+                              <ul className="max-h-56 overflow-auto rounded-md bg-[var(--color-surface-2)] py-1">
                                 {items.map((it) => (
                                   <li key={it.id} className="px-3 py-1.5 flex items-center gap-3 text-body">
                                     <span className="font-display tabular-nums truncate flex-1 text-[var(--color-text)]">{it.name}</span>
@@ -415,7 +416,7 @@ export default function HealthPanel({ orgId, libraryId, isController, onRepaired
                       {open === "leftovers" && (
                         <tr>
                           <td colSpan={3} className="px-4 pb-3 pt-0">
-                            <ul className="max-h-56 overflow-auto rounded-md border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+                            <ul className="max-h-56 overflow-auto rounded-md bg-[var(--color-surface-2)] py-1">
                               {L.leftovers.slice(0, 100).map((it) => <li key={it.mirrorId ?? it.id} className="px-3 py-1.5 text-body font-display tabular-nums truncate">{it.name}</li>)}
                             </ul>
                           </td>

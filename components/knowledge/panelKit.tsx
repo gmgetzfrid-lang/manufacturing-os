@@ -32,13 +32,14 @@ export interface Cell {
   bar?: number;
 }
 
-/** A row of ruled cells: a muted label, a big condensed number, an
- *  optional hint. Two across on a phone, one row on a desk. */
+/** A row of cells: a muted label, a big condensed number, an optional
+ *  hint. Two across on a phone, one row on a desk. Space splits the cells;
+ *  no rule between them (design rule B3). */
 export function Cells({ cells, size = "lg" }: { cells: Cell[]; size?: "lg" | "sm" }) {
   // Section-sized figures (the page has one hero number; panels never shout).
   const big = size === "lg" ? "text-section" : "text-section";
   return (
-    <dl className={`grid grid-cols-2 ${cells.length >= 4 ? "md:grid-cols-4" : cells.length === 3 ? "md:grid-cols-3" : ""} [&>div]:border-[var(--color-border)] max-md:[&>div:nth-child(2n)]:border-l md:[&>div+div]:border-l max-md:[&>div:nth-child(n+3)]:border-t`}>
+    <dl className={`grid grid-cols-2 ${cells.length >= 4 ? "md:grid-cols-4" : cells.length === 3 ? "md:grid-cols-3" : ""}`}>
       {cells.map((c, i) => (
         <div key={i} className="min-w-0 px-4 sm:px-5 py-3.5">
           <dt className="text-body text-[var(--color-text-muted)] truncate">{c.label}</dt>
