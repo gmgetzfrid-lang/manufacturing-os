@@ -296,9 +296,27 @@ export function packageGroup(items: ScopeWO[], wo: string): ScopeWO[] {
 export function againstSchedule(items: ScopeWO[], scheduled: Iterable<string>): { on: ScopeWO[]; missing: ScopeWO[]; extra: string[] } {
   const sched = new Set([...scheduled].map((s) => s.trim()).filter(Boolean));
   const mine = new Set(items.map((x) => x.wo));
+  // Work typed in without a work order number can't be matched by number.
+  const numbered = items.filter((x) => !isTypedItem(x.wo));
   return {
-    on: items.filter((x) => sched.has(x.wo)),
-    missing: items.filter((x) => !sched.has(x.wo)),
+    on: numbered.filter((x) => sched.has(x.wo)),
+    missing: numbered.filter((x) => !sched.has(x.wo)),
     extra: [...sched].filter((w) => !mine.has(w)).sort(),
   };
+}
+
+/** A job typed in with no work order number is kept as "item-N". */
+export const isTypedItem = (wo: string) => /^item-\d+$/.test(wo);
+
+/** A job typed in by hand: what, and its equipment and work order number
+ *  when there are any. */
+export function typedItem(v: { what: string; equipment?: string; wo?: string; group?: string }, items: ScopeWO[]): ScopeWO {
+  const wo = clean(v.wo).replace(/^WO\s*/i, "");
+  const used = new Set(items.map((x) => x.wo));
+  let key = wo;
+  if (!key || used.has(key)) { let n = items.filter((x) => isTypedItem(x.wo)).length + 1; while (used.has(`item-${n}`)) n++; key = `item-${n}`; }
+  const eq = clean(v.equipment);
+  const { tag, name } = splitTag(eq);
+  return { wo: key, what: clean(v.what), equipment: eq, tag: tag || (/^[A-Z]{1,4}-?\d{1,4}[A-Z]?$/i.test(eq) ? eq.toUpperCase() : ""), equipmentName: tag ? name : (/^[A-Z]{1,4}-?\d{1,4}[A-Z]?$/i.test(eq) ? "" : eq),
+    category: clean(v.group) || "Work", notes: "", conditional: false, drafted: false, approved: false };
 }

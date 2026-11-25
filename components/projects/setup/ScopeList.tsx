@@ -21,18 +21,22 @@ import { ErrorNote } from "@/components/ui/ErrorNote";
 import { appConfirm } from "@/components/providers/DialogProvider";
 import { sayError } from "@/components/projects/sayError";
 import ProjectFilePlace, { useProjectFileHome } from "@/components/projects/ProjectFilePlace";
+import JobsScheduleDialog from "@/components/projects/setup/JobsScheduleDialog";
 import RfqDialog from "@/components/projects/setup/RfqDialog";
 import { uploadProjectFile } from "@/lib/projectUpload";
-import { againstSchedule, applyScope, byCategory, diffScope, packageGroup, pickSheet, readScope, shared, type ScopeDiff, type ScopeRead, type ScopeWO } from "@/lib/woIntake";
-import { loadScope, readSheets, saveScope, scheduleFacts, LIST_ACCEPT, OPEN_SCHEDULE_IMPORT, type ScopeState } from "@/lib/scopeStore";
+import { againstSchedule, applyScope, byCategory, diffScope, isTypedItem, packageGroup, pickSheet, readScope, shared, typedItem, type ScopeDiff, type ScopeRead, type ScopeWO } from "@/lib/woIntake";
+import { InlineAddRow, type AddField } from "@/components/ui/InlineAddRow";
+import { loadScope, readSheets, saveScope, scheduleFacts, LIST_ACCEPT, OPEN_SCHEDULE_IMPORT, TYPED_SOURCE, type ScopeState } from "@/lib/scopeStore";
 
 const SHOW = 6;
 const when = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
 interface Facts { wos: string[]; crews: string[]; steps: number; awarded: number }
 
-export default function ScopeList({ orgId, projectId, projectName, uid, canManage, noSchedule, actorEmail, finish }: {
+export default function ScopeList({ orgId, projectId, projectName, uid, canManage, noSchedule, actorEmail, finish, tz }: {
   orgId: string; projectId: string; projectName: string; uid: string | null; canManage: boolean; noSchedule: boolean; actorEmail?: string;
+  /** The plant's time zone, for a schedule made from the jobs. */
+  tz: string;
   /** The target completion ("YYYY-MM-DD"), for the RFQ. */
   finish?: string;
 }) {
@@ -44,6 +48,7 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [attaching, setAttaching] = useState<string | null>(null);
   const [rfqOpen, setRfqOpen] = useState(false);
+  const [makeOpen, setMakeOpen] = useState(false);
   const [needPlace, setNeedPlace] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const pkgInput = useRef<HTMLInputElement>(null);
@@ -111,8 +116,8 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
     setAttaching(wo); setError(null);
     try {
       const d = await uploadProjectFile({
-        orgId, projectId, projectName, file, prefix: "PACKAGE", part: `WO ${wo}`,
-        title: `Work package - ${[first.tag, first.equipmentName || first.equipment].filter(Boolean).join(" ")} - WO ${group.map((x) => x.wo).join(", ")}`,
+        orgId, projectId, projectName, file, prefix: "PACKAGE", part: isTypedItem(wo) ? (first.tag || first.what.slice(0, 24)) : `WO ${wo}`,
+        title: `Work package - ${[first.tag, first.equipmentName || first.equipment].filter(Boolean).join(" ") || first.what}${group.some((x) => !isTypedItem(x.wo)) ? ` - WO ${group.filter((x) => !isTypedItem(x.wo)).map((x) => x.wo).join(", ")}` : ""}`,
         actorUserId: uid, actorEmail,
       });
       const pkg = { documentId: d.documentId, label: d.label, href: `/documents/${home?.place?.libraryId ?? ""}?doc=${d.documentId}`, at: new Date().toISOString(), by: actorEmail };
@@ -128,42 +133,64 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
     } catch (e) { setError(sayError(e)); }
   };
 
+  // ── Work typed in (no list, or a job that came in later) ──
+  const blankScope = (): ScopeState => ({ items: [], coming: [], source: TYPED_SOURCE, imports: [] });
+  const addTyped = async (vals: Array<{ what: string; equipment?: string; wo?: string; group?: string }>) => {
+    const base = scope ?? blankScope();
+    let items = base.items;
+    for (const v of vals) if (v.what?.trim()) items = [...items, typedItem(v, items)];
+    if (items.length === base.items.length) return "Say what the work is.";
+    try { await save({ ...base, items }); return { ok: true, text: `Added ${items.length - base.items.length}.` }; }
+    catch (e) { return { ok: false, text: sayError(e) }; }
+  };
+  const ADD_FIELDS: AddField[] = [
+    { key: "what", label: "What the work is", placeholder: "e.g. Replace the 6\" gate valve", required: true },
+    { key: "equipment", label: "Equipment", placeholder: "e.g. P-60" },
+    { key: "wo", label: "WO number", placeholder: "If it has one" },
+  ];
+  // A planning step this job doesn't need (or does after all).
+  const setSkip = async (key: PathKey, on: boolean) => {
+    const base = scope ?? blankScope();
+    const now = new Set(base.skipped ?? []);
+    if (on) now.add(key); else now.delete(key);
+    try { await save({ ...base, skipped: [...now] }); } catch (e) { setError(sayError(e)); }
+  };
+
   if (scope === undefined) return null;
   const fileInput = <input ref={input} type="file" accept={LIST_ACCEPT} className="sr-only" tabIndex={-1} aria-hidden onChange={(e) => { void take(e.target.files?.[0]); e.target.value = ""; }} />;
+  // No work yet: the path still shows (adding the work first), for whoever
+  // can plan it, until the project has a schedule of its own.
+  if (!scope && (!canManage || !noSchedule)) return null;
+  const sc = scope ?? blankScope();
 
-  if (!scope) {
-    if (!canManage || !noSchedule) return null;
-    return (
-      <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 grid gap-2 justify-items-start">
-        {fileInput}
-        <FileSpreadsheet aria-hidden className="w-6 h-6 text-[var(--color-text-muted)]" />
-        <h2 className="font-display text-section font-semibold text-[var(--color-text)]">Start planning: import the work order list</h2>
-        <p className="text-body text-[var(--color-text-muted)] max-w-prose">The Excel list of approved work orders. It becomes the scope; then a package for each piece of equipment, the schedule checked against it, and the RFQ written from it.</p>
-        <Button onClick={() => input.current?.click()} loading={busy}><Upload className="w-4 h-4" /> Import the list</Button>
-        {error && <ErrorNote title={error} />}
-      </section>
-    );
-  }
-
-  const n = scope.items.length;
-  const equipment = new Set(scope.items.map((x) => x.equipment || x.wo)).size;
-  const withPkg = scope.items.filter((x) => x.pkg || x.drafted).length;
-  const approved = scope.items.filter((x) => x.approved).length;
-  const conditional = scope.items.filter((x) => x.conditional).length;
-  const many = shared(scope.items).length;
-  const last = scope.imports[scope.imports.length - 1];
-  const rfqs = scope.rfqs ?? [];
-  const firstWithout = scope.items.find((x) => !x.pkg && !x.drafted);
+  const n = sc.items.length;
+  // "work orders" when the list has numbers; "jobs" for work typed in.
+  const jobWord = sc.items.every((x) => isTypedItem(x.wo)) ? (n === 1 ? "job" : "jobs") : (n === 1 ? "work order" : "work orders");
+  const equipment = new Set(sc.items.map((x) => x.equipment || x.wo)).size;
+  const withPkg = sc.items.filter((x) => x.pkg || x.drafted).length;
+  const approved = sc.items.filter((x) => x.approved).length;
+  const conditional = sc.items.filter((x) => x.conditional).length;
+  const many = shared(sc.items).length;
+  const last = sc.imports[sc.imports.length - 1];
+  const rfqs = sc.rfqs ?? [];
+  const firstWithout = sc.items.find((x) => !x.pkg && !x.drafted);
   const onSched = new Set(vs?.on.map((x) => x.wo) ?? []);
 
   // The planning path (lib/planningPath): where each step stands; the
   // first one not done is next. Here, what each step's button does.
   const path = planningPath(scope, facts);
   const nextIdx = path.next;
-  const actions: Partial<Record<PathKey, { label: string; run?: () => void; href?: string }>> = {
-    pkg: firstWithout ? { label: `Attach the package for ${firstWithout.tag || `WO ${firstWithout.wo}`}`, run: () => { if (home?.place) document.getElementById(`wo-${firstWithout.wo}`)?.scrollIntoView({ behavior: "smooth", block: "center" }); pickPackage(firstWithout.wo); } }
+  // A schedule file to import, or (no file, as on a small job) one made from the jobs.
+  const importSched = () => window.dispatchEvent(new Event(OPEN_SCHEDULE_IMPORT));
+  const canMake = !facts?.steps && n > 0 && !!uid;
+  const typedOnly = n > 0 && sc.items.every((x) => isTypedItem(x.wo));
+  const actions: Partial<Record<PathKey, { label: string; run?: () => void; href?: string; alt?: { label: string; run: () => void } }>> = {
+    scope: n ? undefined : { label: "Add the work", run: () => { document.getElementById("add-work")?.scrollIntoView({ behavior: "smooth", block: "center" }); (document.querySelector("#add-work input") as HTMLInputElement | null)?.focus(); } },
+    pkg: firstWithout ? { label: `Attach the package for ${firstWithout.tag || (isTypedItem(firstWithout.wo) ? firstWithout.what.slice(0, 28) : `WO ${firstWithout.wo}`)}`, run: () => { if (home?.place) document.getElementById(`wo-${firstWithout.wo}`)?.scrollIntoView({ behavior: "smooth", block: "center" }); pickPackage(firstWithout.wo); } }
       : approved < n ? { label: "Approve the packages", run: () => document.getElementById("scope-list")?.scrollIntoView({ behavior: "smooth" }) } : undefined,
-    sched: { label: facts?.steps ? "Import the schedule again" : "Import the schedule", run: () => window.dispatchEvent(new Event(OPEN_SCHEDULE_IMPORT)) },
+    sched: !canMake ? { label: facts?.steps ? "Import the schedule again" : "Import the schedule", run: importSched }
+      : typedOnly ? { label: "Make the schedule from the jobs", run: () => setMakeOpen(true), alt: { label: "Or import a schedule file", run: importSched } }
+      : { label: "Import the schedule", run: importSched, alt: { label: "No schedule file? Make it from the jobs", run: () => setMakeOpen(true) } },
     rfq: { label: rfqs.length ? "Write another RFQ" : "Write the RFQ", run: () => setRfqOpen(true) },
     award: { label: "Open quotes", href: `/projects/${projectId}?tab=costs` },
   };
@@ -202,11 +229,16 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
                   : !s.done && (act.href
                     ? <Link href={act.href} className="inline-flex items-center min-h-9 pointer-coarse:min-h-11 text-caption font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">{act.label}</Link>
                     : <button type="button" onClick={act.run} className="justify-self-start inline-flex items-center min-h-9 pointer-coarse:min-h-11 text-caption font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">{act.label}</button>))}
+                {act?.alt && canManage && now && <button type="button" onClick={act.alt.run} className="justify-self-start inline-flex items-center min-h-9 pointer-coarse:min-h-11 text-caption font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">{act.alt.label}</button>}
+                {/* A small job can do without packages, an RFQ or an award. */}
+                {canManage && s.key !== "scope" && s.key !== "sched" && (s.skipped
+                  ? <button type="button" onClick={() => void setSkip(s.key, false)} className="justify-self-start inline-flex items-center min-h-9 pointer-coarse:min-h-11 text-caption font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2">Needed after all</button>
+                  : !s.done && <button type="button" onClick={() => void setSkip(s.key, true)} className="justify-self-start inline-flex items-center min-h-9 pointer-coarse:min-h-11 text-caption text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline underline-offset-2">Not needed for this job</button>)}
               </li>
             );
           })}
         </ol>
-        <p className="px-1 text-caption text-[var(--color-text-muted)]">{nextIdx < 0 ? "Planning is done. " : ""}After the award: the work (a shift report every shift, on the Shift tab), then close-out. The project takes you to each.</p>
+        <p className="px-1 text-caption text-[var(--color-text-muted)]">{nextIdx < 0 ? "Planning is done. " : ""}Then the work (a shift report every shift, on the Shift tab), then close-out. The project takes you to each.</p>
         {needPlace && home && uid && (
           <div className="rounded-lg border border-[var(--color-border-strong)] p-3 grid gap-2">
             <p className="text-body text-[var(--color-text)]">First, pick where this project&apos;s packages are filed in document control. It&apos;s asked once.</p>
@@ -216,21 +248,34 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
         {error && <ErrorNote title={error} />}
       </section>
 
-      <section id="scope-list" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden" aria-labelledby="scope-title">
+      {n === 0 && (
+        <section id="add-work" aria-labelledby="add-title" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 grid gap-3">
+          <div>
+            <h2 id="add-title" className="font-display text-section font-semibold text-[var(--color-text)]">Add the work</h2>
+            <p className="text-body text-[var(--color-text-muted)] max-w-prose">Each job on its own line: what it is, and its equipment and work order number if it has them. Rows copied from Excel can be pasted into the first box. Or import a work order list.</p>
+          </div>
+          {canManage && <InlineAddRow fields={ADD_FIELDS} what="job" addLabel="Add" wrap
+            onAdd={(v) => addTyped([{ what: v.what, equipment: v.equipment, wo: v.wo }])}
+            onPasteRows={(rows) => addTyped(rows.map((r) => ({ what: r[0] ?? "", equipment: r[1], wo: r[2] })))} />}
+          {canManage && <Button variant="secondary" className="justify-self-start" onClick={() => input.current?.click()} loading={busy}><Upload className="w-4 h-4" /> Import a work order list</Button>}
+        </section>
+      )}
+
+      {n > 0 && scope && <section id="scope-list" className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden" aria-labelledby="scope-title">
         <div className="px-5 pt-4 pb-3 flex flex-wrap items-start gap-x-4 gap-y-2">
           {/* On a phone the button goes under the title, so neither squeezes. */}
           <div className="min-w-0 flex-1 basis-full sm:basis-auto">
-            <h2 id="scope-title" className="font-display text-section font-semibold text-[var(--color-text)]">Scope <span className="font-normal text-[var(--color-text-muted)] tabular-nums">· {n} work orders</span></h2>
-            <p className="text-caption text-[var(--color-text-muted)] break-words">From {scope.source.file}, tab {scope.source.sheet}{last ? `, imported ${when(last.at)}${last.by ? ` by ${last.by}` : ""}` : ""}</p>
+            <h2 id="scope-title" className="font-display text-section font-semibold text-[var(--color-text)]">Scope <span className="font-normal text-[var(--color-text-muted)] tabular-nums">· {n} {jobWord}</span></h2>
+            <p className="text-caption text-[var(--color-text-muted)] break-words">{scope.source.sheet ? `From ${scope.source.file}, tab ${scope.source.sheet}${last ? `, imported ${when(last.at)}${last.by ? ` by ${last.by}` : ""}` : ""}` : "Typed in on this page"}</p>
           </div>
-          {canManage && <Button variant="secondary" onClick={() => input.current?.click()} loading={busy && !incoming}><Upload className="w-4 h-4" /> Import the list again</Button>}
+          {canManage && <Button variant="secondary" onClick={() => input.current?.click()} loading={busy && !incoming}><Upload className="w-4 h-4" /> {scope.source.sheet ? "Import the list again" : "Import a work order list"}</Button>}
         </div>
 
         <div className="px-5 pb-4 flex flex-wrap gap-x-7 gap-y-2">
           <Metric label="Equipment" value={String(equipment)} />
-          <Metric label="Packages" value={`${withPkg} of ${n}`} />
+          {!sc.skipped?.includes("pkg") && <Metric label="Packages" value={`${withPkg} of ${n}`} />}
           {conditional > 0 && <Metric label="Depend on inspection" value={String(conditional)} />}
-          {many > 0 && <Metric label="Pieces with 2+ WOs" value={String(many)} />}
+          {many > 0 && <Metric label={`Pieces with 2+ ${jobWord.startsWith("work") ? "WOs" : "jobs"}`} value={String(many)} />}
           {scope.coming.length > 0 && <Metric label="Still adding scope" value={String(scope.coming.length)} />}
         </div>
 
@@ -276,10 +321,10 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
             return (
               <div key={g.category} className="border-b border-[var(--color-border)] last:border-b-0">
                 <div className="px-5 py-2 bg-[var(--color-surface-2)] text-body font-semibold text-[var(--color-text)]">
-                  {g.category} <span className="font-normal text-[var(--color-text-muted)] tabular-nums">· {g.equipment} piece{g.equipment === 1 ? "" : "s"}, {g.items.length} WO{g.items.length === 1 ? "" : "s"}</span>
+                  {g.category} <span className="font-normal text-[var(--color-text-muted)] tabular-nums">· {g.equipment} piece{g.equipment === 1 ? "" : "s"}, {g.items.length} {g.items.every((x) => isTypedItem(x.wo)) ? "job" : "WO"}{g.items.length === 1 ? "" : "s"}</span>
                 </div>
                 <ul>
-                  {rows.map((x) => <WoRow key={x.wo} x={x} items={scope.items} canManage={canManage} busy={attaching === x.wo} offSchedule={!!vs && !onSched.has(x.wo)}
+                  {rows.map((x) => <WoRow key={x.wo} x={x} items={scope.items} canManage={canManage} busy={attaching === x.wo} offSchedule={!!vs && !isTypedItem(x.wo) && !onSched.has(x.wo)} noPkg={!!sc.skipped?.includes("pkg")}
                     onAttach={() => pickPackage(x.wo)} onApprove={() => void approve(x.wo)} />)}
                 </ul>
                 {g.items.length > SHOW && (
@@ -292,9 +337,21 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
             );
           })}
         </div>
-      </section>
+        {/* A job that came in later, typed in here. */}
+        {canManage && (
+          <div className="px-5 py-4 border-t border-[var(--color-border)]">
+            <InlineAddRow fields={ADD_FIELDS} what="job" addLabel="Add a job" wrap
+              onAdd={(v) => addTyped([{ what: v.what, equipment: v.equipment, wo: v.wo }])}
+              onPasteRows={(rows) => addTyped(rows.map((r) => ({ what: r[0] ?? "", equipment: r[1], wo: r[2] })))} />
+          </div>
+        )}
+      </section>}
 
-      {rfqOpen && (
+      {makeOpen && uid && (
+        <JobsScheduleDialog orgId={orgId} projectId={projectId} uid={uid} actorName={actorEmail} tz={tz} items={sc.items}
+          onClose={() => setMakeOpen(false)} onMade={() => { setMakeOpen(false); load(); }} />
+      )}
+      {rfqOpen && scope && (
         <RfqDialog projectName={projectName} projectId={projectId} scope={scope} crews={facts?.crews ?? []} actorEmail={actorEmail} finish={finish}
           onClose={() => setRfqOpen(false)}
           onMade={(r) => { setRfqOpen(false); void save({ ...scope, rfqs: [...rfqs, { at: new Date().toISOString(), by: actorEmail, service: r.service, to: [r.to] }] }).catch((e) => setError(sayError(e))); }} />
@@ -304,8 +361,10 @@ export default function ScopeList({ orgId, projectId, projectName, uid, canManag
 }
 
 /** One work order: what and where, its number, and its package. */
-function WoRow({ x, items, canManage, busy, offSchedule, onAttach, onApprove }: {
-  x: ScopeWO; items: ScopeWO[]; canManage: boolean; busy: boolean; offSchedule: boolean; onAttach: () => void; onApprove: () => void;
+function WoRow({ x, items, canManage, busy, offSchedule, noPkg, onAttach, onApprove }: {
+  x: ScopeWO; items: ScopeWO[]; canManage: boolean; busy: boolean; offSchedule: boolean;
+  /** Packages marked not needed for this job: no package asks on the row. */
+  noPkg: boolean; onAttach: () => void; onApprove: () => void;
 }) {
   const group = packageGroup(items, x.wo);
   const ask = /need|add .*drawing|missing/i.test(x.notes);
@@ -313,7 +372,7 @@ function WoRow({ x, items, canManage, busy, offSchedule, onAttach, onApprove }: 
   return (
     <li id={`wo-${x.wo}`} className="px-5 py-2.5 border-t border-[var(--color-border)] first:border-t-0 flex flex-wrap sm:flex-nowrap items-start gap-x-4 gap-y-1.5">
       <div className="min-w-0 flex-1">
-        <div className="text-body font-medium text-[var(--color-text)] break-words">{x.tag && <span className="ui-id mr-1.5">{x.tag}</span>}{x.equipmentName || x.equipment}</div>
+        <div className="text-body font-medium text-[var(--color-text)] break-words">{x.tag && <span className="ui-id mr-1.5">{x.tag}</span>}{x.equipmentName || (x.tag ? "" : x.equipment)}</div>
         <div className="text-body text-[var(--color-text)] break-words">{x.what}</div>
         {(noteShown || x.conditional || offSchedule) && (
           <div className="text-caption break-words text-[var(--color-text-muted)]">
@@ -323,8 +382,8 @@ function WoRow({ x, items, canManage, busy, offSchedule, onAttach, onApprove }: 
         )}
       </div>
       <div className="sm:text-right shrink-0 grid gap-1 sm:justify-items-end text-caption text-[var(--color-text-muted)]">
-        <div className="tabular-nums">WO {x.wo}</div>
-        {x.pkg ? (
+        {!isTypedItem(x.wo) && <div className="tabular-nums">WO {x.wo}</div>}
+        {noPkg && !x.pkg ? null : x.pkg ? (
           <>
             <Link href={x.pkg.href} className="inline-flex items-center gap-1 min-h-9 pointer-coarse:min-h-11 font-medium text-[var(--color-accent-text)] hover:underline underline-offset-2"><FileText aria-hidden className="w-3.5 h-3.5" />{x.pkg.label}</Link>
             {x.approved
@@ -335,7 +394,7 @@ function WoRow({ x, items, canManage, busy, offSchedule, onAttach, onApprove }: 
           </>
         ) : canManage ? (
           <button type="button" onClick={onAttach} disabled={busy} className="inline-flex items-center gap-1 min-h-9 pointer-coarse:min-h-11 px-2 rounded-md border border-[var(--color-border-strong)] text-body font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-2)] disabled:opacity-60">
-            <Paperclip aria-hidden className="w-3.5 h-3.5" />{busy ? "Attaching..." : group.length > 1 ? `Attach package (${group.length} WOs)` : "Attach package"}
+            <Paperclip aria-hidden className="w-3.5 h-3.5" />{busy ? "Attaching..." : group.length > 1 ? `Attach package (${group.length} ${group.every((g) => isTypedItem(g.wo)) ? "jobs" : "WOs"})` : "Attach package"}
           </button>
         ) : (
           <span className="inline-flex items-center gap-1.5"><span aria-hidden className="w-2 h-2 rounded-full bg-[var(--color-text-faint)]" />No package yet</span>

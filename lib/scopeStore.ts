@@ -20,7 +20,13 @@ export interface ScopeState {
   imports: ScopeImport[];
   /** RFQs written from this scope. */
   rfqs?: ScopeRfq[];
+  /** Planning steps this job doesn't need (a small in-house job: no
+   *  packages, RFQ or award). */
+  skipped?: import("@/lib/planningPath").PathKey[];
 }
+
+/** Where typed-in work came from (no list file). */
+export const TYPED_SOURCE = { file: "Typed in", sheet: "", headers: [] as string[], map: {} };
 
 const KEY = "scope";
 
@@ -36,11 +42,16 @@ export async function loadScope(projectId: string): Promise<ScopeState | null> {
   return s && Array.isArray(s.items) ? { ...s, coming: s.coming ?? [], imports: s.imports ?? [] } : null;
 }
 
+/** Said on the window when a project's scope is saved, so the page's header
+ *  (the next step) follows at once. */
+export const SCOPE_CHANGED = "scope:changed";
+
 export async function saveScope(projectId: string, scope: ScopeState): Promise<void> {
   const cur = await readSetup(projectId);
   const { data, error } = await supabase.from("projects").update({ setup_state: { ...cur, [KEY]: scope } }).eq("id", projectId).select("id");
   if (error) throw new Error(`The scope didn't save: ${error.message}`);
   if (!data?.length) throw new Error("The scope didn't save: only the project's owner or an admin can change it.");
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(SCOPE_CHANGED, { detail: projectId }));
 }
 
 /** A spreadsheet's tabs as rows of text, as the cells show (a tag typed

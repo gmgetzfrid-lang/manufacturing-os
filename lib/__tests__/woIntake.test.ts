@@ -130,3 +130,79 @@ describe("the planning path says the next step", () => {
     expect(p.next).toBe(-1);
   });
 });
+
+describe("a project with no work order list", () => {
+  it("the path starts with adding the work, and says so in the header's words", async () => {
+    const { planningPath, NEXT_WORDS } = await import("@/lib/planningPath");
+    const p = planningPath(null, null);
+    expect(p.next).toBe(0);
+    expect(p.steps[0].state).toBe("No work added yet");
+    expect(NEXT_WORDS[p.steps[0].key]).toBe("add the work");
+  });
+
+  it("jobs typed in keep their WO number when they have one, and aren't matched to the schedule without one", async () => {
+    const { typedItem, isTypedItem, againstSchedule } = await import("@/lib/woIntake");
+    const a = typedItem({ what: "Replace 6\" gate valve", equipment: "P-60" }, []);
+    expect(a).toMatchObject({ wo: "item-1", tag: "P-60", what: "Replace 6\" gate valve", category: "Work" });
+    expect(isTypedItem(a.wo)).toBe(true);
+    const b = typedItem({ what: "Weld bleeder", wo: "WO 307897", equipment: "LV-431 on the outlet of E-403" }, [a]);
+    expect(b.wo).toBe("307897");
+    const v = againstSchedule([a, b], ["307897"]);
+    expect(v.missing).toEqual([]);
+    expect(v.on.map((x) => x.wo)).toEqual(["307897"]);
+  });
+
+  it("steps a small job doesn't need count as done and say so", async () => {
+    const { planningPath } = await import("@/lib/planningPath");
+    const { typedItem } = await import("@/lib/woIntake");
+    const items = [typedItem({ what: "Swap pump seal", equipment: "P-12" }, [])];
+    const p = planningPath({ items, coming: [], source: { file: "Typed in", sheet: "", headers: [], map: {} }, imports: [], skipped: ["pkg", "rfq", "award"] }, null);
+    expect(p.steps.map((s) => [s.key, s.done, s.state])).toEqual([
+      ["scope", true, "1 job"], ["pkg", true, "Not needed for this job"], ["sched", false, "Not made yet"], ["rfq", true, "Not needed for this job"], ["award", true, "Not needed for this job"],
+    ]);
+    expect(p.steps[p.next].key).toBe("sched");
+  });
+});
+
+describe("a schedule made from the jobs (no schedule file)", () => {
+  it("jobs run one after another on day shifts, the night skipped, under their equipment", async () => {
+    const { jobsSchedule } = await import("@/lib/jobsSchedule");
+    const { typedItem } = await import("@/lib/woIntake");
+    const a = typedItem({ what: "Replace mechanical seal", equipment: "P-60" }, []);
+    const b = typedItem({ what: "Rig in scaffold", equipment: "" }, [a]);
+    const c = typedItem({ what: "Align pump and motor", equipment: "P-60", wo: "307897" }, [a, b]);
+    const w = { dayStart: "06:00", nightStart: "18:00", nights: false };
+    const r = jobsSchedule([{ item: a, hours: 10 }, { item: b, hours: 4 }, { item: c, hours: 3 }], "2027-03-01T06:00", w);
+    // P-60's two jobs together first, then the one with no equipment.
+    expect(r.rows.map((x) => [x.wbs, x.name, x.plannedStartAt, x.plannedAt])).toEqual([
+      ["1", "P-60", "2027-03-01 06:00", "2027-03-02 07:00"],
+      ["1.1", "Replace mechanical seal", "2027-03-01 06:00", "2027-03-01 16:00"],
+      ["1.2", "Align pump and motor", "2027-03-01 16:00", "2027-03-02 07:00"],
+      ["2", "Rig in scaffold", "2027-03-02 07:00", "2027-03-02 11:00"],
+    ]);
+    expect(r.rows[2]).toMatchObject({ workOrderRef: "307897", parentExternalRef: "eq:P-60", dependsOnExternalRefs: ["job:item-1"], durationHours: 3 });
+    expect(r.rows[1].workOrderRef).toBeNull();
+    expect(r.finish).toBe("2027-03-02 11:00");
+  });
+
+  it("around the clock when nights are worked; a job with no hours is left out", async () => {
+    const { jobsSchedule } = await import("@/lib/jobsSchedule");
+    const { typedItem } = await import("@/lib/woIntake");
+    const a = typedItem({ what: "Swap seal", equipment: "" }, []);
+    const b = typedItem({ what: "Test run", equipment: "" }, [a]);
+    const r = jobsSchedule([{ item: a, hours: 14 }, { item: b, hours: NaN }], "2027-03-01T06:00", { dayStart: "06:00", nightStart: "18:00", nights: true });
+    expect(r.rows.map((x) => [x.name, x.plannedAt])).toEqual([["Swap seal", "2027-03-01 20:00"]]);
+  });
+
+  it("a typed-in job's schedule step is made, not imported, and is done once made", async () => {
+    const { planningPath } = await import("@/lib/planningPath");
+    const { typedItem } = await import("@/lib/woIntake");
+    const items = [typedItem({ what: "Swap pump seal", equipment: "P-12" }, [])];
+    const scope = { items, coming: [], source: { file: "Typed in", sheet: "", headers: [], map: {} }, imports: [], skipped: ["pkg" as const, "rfq" as const, "award" as const] };
+    let p = planningPath(scope, { wos: [], steps: 0, awarded: 0 });
+    expect([p.steps[p.next].ask, p.steps[p.next].state]).toEqual(["make the schedule", "Not made yet"]);
+    p = planningPath(scope, { wos: [], steps: 2, awarded: 0 });
+    expect(p.next).toBe(-1);
+    expect(p.steps[2].state).toBe("On the Schedule tab");
+  });
+});

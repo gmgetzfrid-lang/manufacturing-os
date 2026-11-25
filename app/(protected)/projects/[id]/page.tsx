@@ -52,7 +52,7 @@ import EventOrganization from "@/components/projects/EventOrganization";
 import ProjectCoach from "@/components/projects/ProjectCoach";
 import ProjectNeeds from "@/components/projects/ProjectNeeds";
 import ScopeList from "@/components/projects/setup/ScopeList";
-import { loadScope, scheduleFacts } from "@/lib/scopeStore";
+import { loadScope, scheduleFacts, SCOPE_CHANGED } from "@/lib/scopeStore";
 import { planningPath, NEXT_WORDS, STEP_NOUN, type PathStep } from "@/lib/planningPath";
 import SetupHost from "@/components/projects/SetupHost";
 import { isWatching, watch, unwatch } from "@/lib/subscriptions";
@@ -505,18 +505,27 @@ function ProjectDetail() {
   // A project in planning (no schedule yet): where its scope stands, from the
   // work order list (lib/scopeStore), for the header.
   const unscheduled0 = !!stepRows && !!standings && standings.every((s) => s.state === "no schedule");
-  const [planning, setPlanning] = useState<{ wos: number; withPkg: number; next: PathStep | null; step: number; after: string[] } | null>(null);
+  const [planning, setPlanning] = useState<{ wos: number; withPkg: number; pkgSkipped: boolean; next: PathStep | null; step: number; after: string[] } | null>(null);
+  // Read again when the scope is saved on the Plan tab (lib/scopeStore).
+  const [scopeRev, setScopeRev] = useState(0);
+  useEffect(() => {
+    const on = () => setScopeRev((r) => r + 1);
+    window.addEventListener(SCOPE_CHANGED, on);
+    return () => window.removeEventListener(SCOPE_CHANGED, on);
+  }, []);
   useEffect(() => {
     if (!unscheduled0 || !project?.id) return;
     let on = true;
     void Promise.all([loadScope(project.id), scheduleFacts(project.id).catch(() => null)]).then(([s, f]) => {
       if (!on) return;
-      if (!s) { setPlanning(null); return; }
+      // No work added yet: still a path, with adding the work first.
       const p = planningPath(s, f);
-      setPlanning({ wos: s.items.length, withPkg: s.items.filter((x) => x.pkg || x.drafted).length, next: p.next >= 0 ? p.steps[p.next] : null, step: p.next + 1, after: p.next >= 0 ? p.steps.slice(p.next + 1).map((x) => STEP_NOUN[x.key]) : [] });
+      // What follows the next step, leaving out the steps this job doesn't need.
+      setPlanning({ wos: s?.items.length ?? 0, withPkg: s?.items.filter((x) => x.pkg || x.drafted).length ?? 0, pkgSkipped: !!p.steps[1]?.skipped,
+        next: p.next >= 0 ? p.steps[p.next] : null, step: p.next + 1, after: p.next >= 0 ? p.steps.slice(p.next + 1).filter((x) => !x.skipped).map((x) => STEP_NOUN[x.key]) : [] });
     }, () => undefined);
     return () => { on = false; };
-  }, [unscheduled0, project?.id, tab]);
+  }, [unscheduled0, project?.id, tab, scopeRev]);
 
   const goBack = () => { if (window.history.length > 1) router.back(); else router.push("/projects"); };
 
@@ -584,10 +593,11 @@ function ProjectDetail() {
     // Planning from the work order list: the one next step as the answer
     // (lib/planningPath), its own number big, what follows it said after.
     const nx = planning.next;
-    answer = nx ? `Next: ${NEXT_WORDS[nx.key]}.` : "Planning is done.";
-    sub = nx ? `${nx.state}.${planning.after.length ? ` Then ${planning.after.join(", ")}.` : ""}` : "Next: the work, a shift report every shift.";
-    facts = [{ label: "Packages attached", value: `${planning.withPkg} of ${planning.wos}`, tone: planning.withPkg < planning.wos ? "warn" : undefined, hero: true },
-      { label: "Work orders", value: planning.wos }];
+    answer = nx ? `Next: ${nx.ask ?? NEXT_WORDS[nx.key]}.` : "Planning is done.";
+    sub = nx ? `${nx.state}.${planning.after.length ? ` Then ${planning.after.join(", ")}.` : " Then the work."}` : "Next: the work, a shift report every shift.";
+    facts = !planning.wos ? [] : planning.pkgSkipped ? [{ label: "Jobs", value: planning.wos, hero: true }]
+      : [{ label: "Packages attached", value: `${planning.withPkg} of ${planning.wos}`, tone: planning.withPkg < planning.wos ? "warn" : undefined, hero: true },
+        { label: "Jobs", value: planning.wos }];
   }
   else if (noSchedule) { answer = "No schedule yet."; sub = "Import it on Plan to track the work."; }
   else if (workDone) {
@@ -679,7 +689,7 @@ function ProjectDetail() {
       : project.status === "paused" ? { label: "Resume project", tab: "closeout", run: () => setPendingStatus("active") }
       : !standings ? null
       // Planning from the work order list: its next step, on the Plan tab.
-      : noSchedule && planning?.next ? { label: NEXT_WORDS[planning.next.key].replace(/^\w/, (c) => c.toUpperCase()), tab: "plan", run: () => goTab("plan") }
+      : noSchedule && planning?.next ? { label: (planning.next.ask ?? NEXT_WORDS[planning.next.key]).replace(/^\w/, (c) => c.toUpperCase()), tab: "plan", run: () => goTab("plan") }
       : noSchedule ? { label: "Import the schedule", tab: "plan", run: () => goTab("plan") }
         : workDone ? (close && close.open.length === 0 ? { label: "Mark complete", tab: "closeout", run: () => setPendingStatus("completed") } : { label: "Finish close-out", tab: "closeout", run: () => goTab("closeout") })
           : state?.scheduledDone && unscheduled.length ? { label: `Import ${unscheduled[0].name}'s schedule`, tab: "plan", run: () => { setPhase(unscheduled[0].id); goTab("plan"); } }
@@ -902,7 +912,7 @@ function ProjectDetail() {
         )}
         {/* The scope, as the work order list says it (components/projects/setup). */}
         {tab === "plan" && project.id && (
-          <ScopeList orgId={project.orgId} projectId={project.id} projectName={project.name} uid={uid ?? null} canManage={!!canManage} noSchedule={!!noSchedule} actorEmail={userEmail ?? undefined}
+          <ScopeList orgId={project.orgId} projectId={project.id} projectName={project.name} uid={uid ?? null} canManage={!!canManage} noSchedule={!!noSchedule} actorEmail={userEmail ?? undefined} tz={tz}
             finish={project.targetCompletionDate ? String(project.targetCompletionDate).slice(0, 10) : undefined} />
         )}
         {/* Everything this project asks for, from day one, each changed in

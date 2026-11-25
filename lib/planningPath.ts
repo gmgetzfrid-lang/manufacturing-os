@@ -4,16 +4,18 @@
 // page's header says the next step; the Plan tab's path shows all five
 // (components/projects/setup/ScopeList). Pure.
 
-import { againstSchedule } from "@/lib/woIntake";
+import { againstSchedule, isTypedItem } from "@/lib/woIntake";
 import type { ScopeState } from "@/lib/scopeStore";
 
 export type PathKey = "scope" | "pkg" | "sched" | "rfq" | "award";
-export interface PathStep { key: PathKey; name: string; done: boolean; state: string }
+export interface PathStep { key: PathKey; name: string; done: boolean; state: string; skipped?: boolean;
+  /** The task in words when it isn't NEXT_WORDS (jobs typed in make their schedule). */
+  ask?: string }
 export interface PathFacts { wos: string[]; steps: number; awarded: number }
 
 /** What the next step asks, said as a task ("attach the packages"). */
 export const NEXT_WORDS: Record<PathKey, string> = {
-  scope: "import the work order list", pkg: "attach the packages", sched: "import the schedule", rfq: "write the RFQ", award: "award the work",
+  scope: "add the work", pkg: "attach the packages", sched: "import the schedule", rfq: "write the RFQ", award: "award the work",
 };
 
 /** Each step as a noun in a sentence ("Then the schedule, the RFQ, the award"). */
@@ -21,19 +23,27 @@ export const STEP_NOUN: Record<PathKey, string> = { scope: "the scope", pkg: "th
 
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
-export function planningPath(scope: ScopeState, facts: PathFacts | null): { steps: PathStep[]; next: number } {
+export function planningPath(scopeIn: ScopeState | null, facts: PathFacts | null): { steps: PathStep[]; next: number } {
+  // No work added yet: the path still shows, with adding the work first.
+  const scope: ScopeState = scopeIn ?? { items: [], coming: [], source: { file: "", sheet: "", headers: [], map: {} }, imports: [] };
+  const skip = new Set(scope.skipped ?? []);
   const n = scope.items.length;
   const withPkg = scope.items.filter((x) => x.pkg || x.drafted).length;
   const approved = scope.items.filter((x) => x.approved).length;
   const vs = facts?.wos.length ? againstSchedule(scope.items, facts.wos) : null;
   const rfqs = scope.rfqs ?? [];
-  const steps: PathStep[] = [
-    { key: "scope", name: "Scope", done: n > 0, state: `${n} work orders${scope.coming.length ? `, ${scope.coming.length} still adding scope` : ""}` },
-    { key: "pkg", name: "Packages", done: n > 0 && approved === n, state: `${withPkg} of ${n} attached, ${approved} approved` },
-    { key: "sched", name: "Schedule", done: !!vs && vs.missing.length === 0,
-      state: !facts?.steps ? "Not imported yet" : vs ? `${vs.on.length} of ${n} work orders on it${vs.missing.length ? `, ${vs.missing.length} missing` : ""}${vs.extra.length ? `, ${vs.extra.length} not in the list` : ""}` : "Imported, with no work order numbers on it" },
+  // Jobs typed in, with no work order numbers: no schedule file to import, so
+  // the schedule is made from the jobs (lib/jobsSchedule).
+  const typed = n > 0 && scope.items.every((x) => isTypedItem(x.wo));
+  const raw: PathStep[] = [
+    { key: "scope", name: "Scope", done: n > 0, state: n ? `${n} job${n === 1 ? "" : "s"}${scope.coming.length ? `, ${scope.coming.length} still adding scope` : ""}` : "No work added yet" },
+    { key: "pkg", name: "Packages", done: n > 0 && approved === n, state: n ? `${withPkg} of ${n} attached, ${approved} approved` : "After the work is added" },
+    { key: "sched", name: "Schedule", done: typed ? !!facts?.steps : !!vs && vs.missing.length === 0, ...(typed && !facts?.steps ? { ask: "make the schedule" } : {}),
+      state: !facts?.steps ? (typed ? "Not made yet" : "Not imported yet") : typed ? "On the Schedule tab" : vs ? `${vs.on.length} of ${n} work orders on it${vs.missing.length ? `, ${vs.missing.length} missing` : ""}${vs.extra.length ? `, ${vs.extra.length} not in the list` : ""}` : "Imported, with no work order numbers on it" },
     { key: "rfq", name: "RFQ", done: rfqs.length > 0, state: rfqs.length ? `Written for ${[...new Set(rfqs.flatMap((r) => r.to))].join(", ")} (last ${day(rfqs[rfqs.length - 1].at)})` : "Not written yet" },
     { key: "award", name: "Award", done: !!facts?.awarded, state: facts?.awarded ? `${facts.awarded} contract${facts.awarded === 1 ? "" : "s"} awarded` : "Quotes in, then award" },
   ];
+  // A step this job doesn't need counts as done, and says so.
+  const steps = raw.map((x) => (skip.has(x.key) && !x.done ? { ...x, done: true, skipped: true, state: "Not needed for this job" } : x));
   return { steps, next: steps.findIndex((s) => !s.done) };
 }
